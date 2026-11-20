@@ -82,7 +82,9 @@ export function callLead(raw: string): string {
   return CALL_LEAD.test(t) ? t.replace(CALL_LEAD, '').replace(/\s*\?+\s*$/, '').trim() : t
 }
 export function parseCallCommand(raw: string): CallCommand | null {
-  const t = callLead(raw)
+  // The lead-in is dropped only for a new call request. "Can you call them?" is a question, never the yes to a shown plan.
+  const led = callLead(raw)
+  const t = String(raw || '').trim()
   const test = t.match(/^(?:(?:do\s+a\s+)?test\s+call(?:\s+me)?|call\s+me\s+(?:to|for\s+a)\s+test|make\s+a\s+test\s+call)(?:\s+(?:on|at|to)\s+([+\d][\d\s-]{8,16}))?[.!]?$/i)
   if (test) { const n = test[1] ? indianPhoneFrom(test[1]) : null; return n ? { kind: 'test', number: n } : { kind: 'test' } }
   if (/^(?:yes[,!]?\s*)?(?:(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?|place\s+the\s+call|yes,?\s*call)[.!]?$/i.test(t) && /\bcall\b/i.test(t) && !/\bagain\b/i.test(t)) return { kind: 'approve' }
@@ -90,15 +92,15 @@ export function parseCallCommand(raw: string): CallCommand | null {
   if (/^(?:yes|yeah|yep|yup|ok|okay|sure|go\s+ahead|do\s+it|please\s+do|haan|ha)(?:\s+please)?[.!]*$/i.test(t)) return { kind: 'affirm' }
   if (/^(?:please\s+)?(?:call|try)\s+(?:them\s+)?again[.!]?$|^redial[.!]?$/i.test(t)) return { kind: 'redial' }
   if (/^(?:no|don'?t\s+call|do\s+not\s+call|cancel\s+(?:the\s+)?call)[.!]?$/i.test(t)) return { kind: 'decline' }
-  if (/^(?:please\s+)?(?:call|phone|ring)\s+(?!me\b)(?:up\s+)?.{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b/i.test(t)) return { kind: 'book', text: t }
+  if (/^(?:please\s+)?(?:call|phone|ring)\s+(?!me\b)(?:up\s+)?.{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b/i.test(led)) return { kind: 'book', text: led }
   // 17 Nov (owner): calling works for any ask, not only a table. Other verbs need either a phone number in the message
   // or a business-looking name, so "call mom and ask about lunch tomorrow" stays an ordinary reminder.
-  const ask = t.match(CALL_ASK)
+  const ask = led.match(CALL_ASK)
   if (ask) {
     const callee = calleeParts(ask[1])
     // Review (PR #1534): the number must be in the "call <who>" part (never one mentioned later in the ask); a time word
     // there means a note to self ("call the dentist tomorrow to confirm"); a family word is never a business call.
-    if (!TIMEY_CALLEE.test(ask[1]) && !PERSONAL_CALLEE.test(callee.name) && (callee.phone || callee.unreadable || BUSINESS_CALLEE.test(callee.name))) return { kind: 'book', text: t }
+    if (!TIMEY_CALLEE.test(ask[1]) && !PERSONAL_CALLEE.test(callee.name) && (callee.phone || callee.unreadable || BUSINESS_CALLEE.test(callee.name))) return { kind: 'book', text: led }
   }
   return null
 }

@@ -209,19 +209,24 @@ function extractTaskAfterTo(input: string) {
 }
 
 // 20 Nov (owner): a reminder read "…included the note Time is not specified, so use Asia/Kolkata". A note a model
-// wrote about how to schedule is never part of what the person asked to be reminded of.
-const SCHEDULING_NOTE = /[\s,;:(\[–-]*\b(?:(?:and\s+)?(?:i\s+)?included\s+the\s+note\b|note\s*:\s*(?:the\s+)?time(?:\s*zone)?\b|(?:the\s+)?time(?:\s*zone)?\s+(?:is|was)\s+not\s+specified\b|no\s+time(?:\s*zone)?\s+(?:is|was)\s+specified\b|(?:so\s+)?(?:use|using|assume|assuming|default(?:ing)?\s+to)\s+(?:the\s+)?(?:Asia\/Kolkata|IST\s+time\s*zone)\b|time\s*zone\s*[:=]\s*Asia\/Kolkata\b).*$/is
-export function stripSchedulingNote(input: string): string { return String(input || '').replace(SCHEDULING_NOTE, '').trim() }
+// wrote about how to schedule is never part of what the person asked to be reminded of. Only the whole note, at the end:
+// "tell Nithin the time is not specified in the invite" and "set the cron to use Asia/Kolkata" are the person's own words.
+const SCHEDULING_NOTE = /[\s,;:.(\[–-]*(?:\b(?:and\s+)?(?:i\s+)?(?:have\s+)?included\s+(?:the|a)\s+note\s*:?\s*)?\b(?:the\s+)?time(?:\s*zone)?\s+(?:is|was)\s+not\s+specified,?\s+so\s+(?:use|using|used|assume|assuming|i\s+used|i\s+assumed|default(?:ing|ed)?\s+to)\s+[^.]{1,40}[.)\]\s]*$/i
+const TIMEZONE_TAG = /\s*[(\[]\s*time\s*zone\s*[:=]\s*Asia\/Kolkata\s*[)\]]\s*$/i
+export function stripSchedulingNote(input: string): string { return String(input || '').replace(SCHEDULING_NOTE, '').replace(TIMEZONE_TAG, '').trim() }
 // "tomorrow morning", "Sunday evening": the part of day says when, so it is not part of what to do. Only when it sits
-// right beside the day word ("buy the morning paper tomorrow" keeps its morning).
-const DAY_WORD = String.raw`(?:tomorrow|tmrw|tmr|monday|tuesday|wednesday|thursday|friday|saturday|sunday)`
+// right beside the day the reminder is FOR ("watch Saturday Night Live tomorrow" keeps its night and its 9 am).
+const TOMORROW = String.raw`(?:tomorrow|tmrw|tmr)`
 const DAY_PART = String.raw`(?:(?:early\s+)?morning|afternoon|evening|night)`
-const PART_AFTER_DAY = new RegExp(String.raw`\b(${DAY_WORD})\s+(?:in\s+the\s+|at\s+)?${DAY_PART}\b`, 'gi')
-const PART_BEFORE_DAY = new RegExp(String.raw`\b${DAY_PART}\s+(?:of\s+)?(${DAY_WORD})\b`, 'gi')
-export function dropDayPart(input: string): string { return String(input || '').replace(PART_AFTER_DAY, '$1').replace(PART_BEFORE_DAY, '$1') }
-/** The hour a part of day means when no clock time is given, read only beside the day word. */
+/** Removes the part of day beside the given day word (a regex source). Pure. */
+export function dropDayPart(input: string, day: string = TOMORROW): string {
+  return String(input || '')
+    .replace(new RegExp(String.raw`\b(${day})\s+(?:in\s+the\s+|at\s+)?${DAY_PART}\b`, 'gi'), '$1')
+    .replace(new RegExp(String.raw`\b(?:in\s+the\s+)?${DAY_PART}\s+(?:of\s+)?(${day})\b`, 'gi'), '$1')
+}
+/** The hour "tomorrow evening" means when no clock time is given. Only beside tomorrow, never a weekday in the task. */
 function dayPartHour(text: string): number | null {
-  const m = text.match(new RegExp(String.raw`\b${DAY_WORD}\s+(?:in\s+the\s+|at\s+)?(${DAY_PART})\b|\b(${DAY_PART})\s+(?:of\s+)?${DAY_WORD}\b`, 'i'))
+  const m = text.match(new RegExp(String.raw`\b${TOMORROW}\s+(?:in\s+the\s+|at\s+)?(${DAY_PART})\b|\b(${DAY_PART})\s+(?:of\s+)?${TOMORROW}\b`, 'i'))
   const part = (m?.[1] || m?.[2] || '').toLowerCase()
   return !part ? null : /afternoon/.test(part) ? 14 : /evening/.test(part) ? 18 : /night/.test(part) ? 21 : /early/.test(part) ? 7 : 9
 }
@@ -450,7 +455,8 @@ function parseSpecificWeekdayReminder(text: string): ParsedReminder {
   if (delta === 0 && targetMinutes <= currentMinutes) delta = 7
   const targetDate = addIstDays(nowIst, delta)
   const when = istWallTimeToUtcDate(targetDate.year, targetDate.month, targetDate.day, time.hour, time.minute)
-  return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
+  // The part of day beside the day this reminder is for ("Sunday evening") is its time, not its text.
+  return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(dropDayPart(text, weekdayName)) }
 }
 
 function parseWeekdayRecurring(text: string): ParsedReminder {
