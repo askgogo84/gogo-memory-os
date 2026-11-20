@@ -308,7 +308,7 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     const callCommand=/^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
-      || (/^\s*(?:please\s+)?(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m=>m.parseCallCommand(text)?.kind==='book',()=>false))
+      || (/^\s*(?:[a-z,!']+\s+){0,6}(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m=>m.parseCallCommand(text)?.kind==='book',()=>false))
     // Goal-to-Done (Addendum 5): a message with several goals becomes one plan of who does what, as on WhatsApp, and
     // the same open plan is continued from either place. Owners in both GOGO_GOAL_INTAKE and GOGO_GOAL_INTAKE_WEB; null means routing continues
     // unchanged. Every goal it starts goes through its own tool's approvals. Results that take longer than the reply
@@ -398,7 +398,7 @@ async function handleChatPost(req: NextRequest) {
       return NextResponse.json(instamart)
     }
     // Phone calls (Bolna): a call plan needs an explicit "yes call"; "test call me" rings the owner's own phone.
-    const voiceMod:any=(/^\s*(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?(?:call|redial|phone|ring|test\s+call|do\s+a\s+test\s+call|make\s+a\s+test\s+call|place\s+the\s+call|try\s+again)\b|^\s*(?:no|don'?t\s+call|do\s+not\s+call|cancel\s+(?:the\s+)?call)[.!]?\s*$/i.test(text)||(/^\s*(?:yes|yeah|yep|yup|ok|okay|sure|go\s+ahead|do\s+it|please\s+do|haan|ha)(?:\s+please)?[.!]*\s*$/i.test(text)&&await callPlanWasLastReply(user.telegram_id)))?await import('@/lib/agent/voice-call').catch(()=>null):null
+    const voiceMod:any=(/^\s*(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?(?:call|redial|phone|ring|test\s+call|do\s+a\s+test\s+call|make\s+a\s+test\s+call|place\s+the\s+call|try\s+again)\b|^\s*(?:no|don'?t\s+call|do\s+not\s+call|cancel\s+(?:the\s+)?call)[.!]?\s*$/i.test(text) || callCommand || (/^\s*(?:yes|yeah|yep|yup|ok|okay|sure|go\s+ahead|do\s+it|please\s+do|haan|ha)(?:\s+please)?[.!]*\s*$/i.test(text)&&await callPlanWasLastReply(user.telegram_id)))?await import('@/lib/agent/voice-call').catch(()=>null):null
     const voice=typeof voiceMod?.tryVoiceCall==='function'?await Promise.resolve().then(()=>voiceMod.tryVoiceCall({actor,text,surface:'web'})).catch((err:any)=>{console.error('VOICE_CALL_FAILED:',String(err?.message||err).slice(0,160));return null}):null
     if(voice){
       await saveConversation(user.telegram_id,text,voice.text)

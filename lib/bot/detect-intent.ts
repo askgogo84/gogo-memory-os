@@ -1,4 +1,5 @@
 import { isDriveWriteRequest } from './drive-write-request'
+import { isStopOneReminder } from './stop-reminder-phrase'
 import { isConnectMailAsk } from '../email/connect-phrases'
 import { isTimeFirstReminder, isContentlessReminderRequest } from './reminder-command'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
@@ -226,7 +227,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (isReferralIntent(lower)) return { type: 'referral_flow', confidence: 'high' }
 
-  if (lower === 'show reminders' || lower === 'show my reminders' || lower === 'my reminders' || lower === 'pending reminders' || lower === 'active reminders' || lower === 'list reminders' || lower === 'what are my reminders' || lower === 'what reminders do i have' || lower.includes('show pending reminders') || (/^(?:cancel|delete|remove)\b/i.test(lower) && leadingVerbEditsReminder(lower)) || /^clear reminder\b/i.test(lower) || /^stop reminder\b/i.test(lower) || /^done\s+\d+\b/i.test(lower) || /^complete\s+\d+\b/i.test(lower) || /^mark\s+\d+\s+done\b/i.test(lower) || /^snooze\s+\d+\s+(for\s+)?\d+\s*(minute|minutes|min|mins|hour|hours)\b/i.test(lower) || lower === 'done' || lower === 'mark done' || lower === 'completed' || lower === 'complete' || lower === 'finished' || lower === 'mark as done' || /^snooze\b/i.test(lower) || /^move it\b/i.test(lower) || /^move reminder\b/i.test(lower) || /^reschedule\b/i.test(lower) || /^tomorrow instead$/i.test(lower) || /^change it to\b/i.test(lower) || (/^skip\b/i.test(lower) && leadingVerbEditsReminder(lower)) || lower === 'not today') return { type: 'edit_reminder', confidence: 'high' }
+  if (lower === 'show reminders' || lower === 'show my reminders' || lower === 'my reminders' || lower === 'pending reminders' || lower === 'active reminders' || lower === 'list reminders' || lower === 'what are my reminders' || lower === 'what reminders do i have' || lower.includes('show pending reminders') || (/^(?:cancel|delete|remove)\b/i.test(lower) && leadingVerbEditsReminder(lower)) || /^clear reminder\b/i.test(lower) || /^stop reminder\b/i.test(lower) || isStopOneReminder(lower) || /^done\s+\d+\b/i.test(lower) || /^complete\s+\d+\b/i.test(lower) || /^mark\s+\d+\s+done\b/i.test(lower) || /^snooze\s+\d+\s+(for\s+)?\d+\s*(minute|minutes|min|mins|hour|hours)\b/i.test(lower) || lower === 'done' || lower === 'mark done' || lower === 'completed' || lower === 'complete' || lower === 'finished' || lower === 'mark as done' || /^snooze\b/i.test(lower) || /^move it\b/i.test(lower) || /^move reminder\b/i.test(lower) || /^reschedule\b/i.test(lower) || /^tomorrow instead$/i.test(lower) || /^change it to\b/i.test(lower) || (/^skip\b/i.test(lower) && leadingVerbEditsReminder(lower)) || lower === 'not today') return { type: 'edit_reminder', confidence: 'high' }
 
   if (isBriefingSettingsIntent(lower)) return { type: 'set_briefing_time', confidence: 'high' }
 

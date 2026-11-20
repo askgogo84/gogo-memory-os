@@ -1,4 +1,5 @@
 import { readScopedReminders, reminderTimezoneMetadata } from './reminder-read'
+import { stripSchedulingNote } from '@/lib/bot/handlers/reminders'
 import { isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
@@ -147,7 +148,8 @@ function reminderMessage(step:MissionStep,missionText:string,hours?:number){
   const generic=/^(?:set|create|add|schedule)\b[^.]{0,40}\breminder\b/i.test(step.title)
   // Red #1132: a plan with two reminders ("remind me to call Alice … and remind me to buy milk …") gives each step its
   // own instruction; that step's own words win over the first reminder in the whole mission text.
-  return safe((generic&&(reminderTaskFromRequest(step.instruction)||reminderTaskFromRequest(missionText)))||step.title,500)
+  // 20 Nov (owner): a reminder read "…included the note Time is not specified, so use Asia/Kolkata".
+  return safe(stripSchedulingNote((generic&&(reminderTaskFromRequest(step.instruction)||reminderTaskFromRequest(missionText)))||step.title)||step.title,500)
 }
 
 const REMINDER_DAY=String.raw`(?:(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day)?|weekend|week|month|morning|afternoon|evening|night|noon|midnight|end\s+of)\b`

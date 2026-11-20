@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isStopOneReminder, stopReminderCore } from '@/lib/bot/stop-reminder-phrase'
 import { isReminderReadQuestion } from '@/lib/bot/detect-intent'
 import {
   stopReminderSeries,
@@ -178,6 +179,8 @@ function isShowReminderCommand(input: string) {
   )
 }
 
+export { isStopOneReminder } from '@/lib/bot/stop-reminder-phrase'
+
 export function isCancelReminderCommand(input: string) {
   const lower = input.toLowerCase().trim()
 
@@ -186,7 +189,8 @@ export function isCancelReminderCommand(input: string) {
     /^delete\b/i.test(lower) ||
     /^remove\b/i.test(lower) ||
     /^clear reminder\b/i.test(lower) ||
-    /^stop reminder\b/i.test(lower)
+    /^stop reminder\b/i.test(lower) ||
+    isStopOneReminder(lower)
   )
 }
 
@@ -343,6 +347,19 @@ export function strictlyByWhen(matches: any[], input: string): any[] {
 }
 
 /** The single active reminder whose name appears in Gogo's most recent reply (within 30 minutes). */
+/** The reminder that went off in the last 30 minutes, if nothing Gogo said in the chat is newer than it. */
+export async function reminderFiredSinceLastReply(telegramId: number): Promise<any | null> {
+  const cut = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+  const { data: fired } = await supabaseAdmin.from('reminders').select('id, message, remind_at, sent_at, recurring_pattern')
+    .eq('telegram_id', telegramId).not('sent_at', 'is', null).gte('sent_at', cut).order('sent_at', { ascending: false }).limit(1)
+  const f = (fired || [])[0] as any
+  if (!f) return null
+  const { data: said } = await supabaseAdmin.from('conversations').select('created_at')
+    .eq('telegram_id', telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1)
+  const last = Date.parse(String((said || [])[0]?.created_at || ''))
+  return Number.isFinite(last) && last > Date.parse(String(f.sent_at)) ? null : f
+}
+
 export async function reminderNamedInLastReply(telegramId: number, reminders: any[]): Promise<any | 'ambiguous' | null> {
   const { data } = await supabaseAdmin.from('conversations').select('role, content, created_at')
     .eq('telegram_id', telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1)
@@ -535,15 +552,36 @@ export async function cancelReminder(telegramId: number, input: string) {
     return `No active reminders to cancel.`
   }
 
-  const lower = normalizeNumberWords(input.toLowerCase().trim())
+  // Review (20 Nov): "please stop this reminder now." must not search for "stop", "now" or "." as a reminder name.
+  const stopOne = isStopOneReminder(input)
+  const lower = normalizeNumberWords((stopOne ? stopReminderCore(input) : input).toLowerCase().trim())
   let reminder: any | null = null
 
-  const index = extractReminderIndex(lower)
+  // "Stop this reminder" right after one went off means THAT one. The reminder job does not write to the chat history,
+  // so the last-reply lookup below cannot see it (and could pick a different reminder Gogo mentioned earlier).
+  if (stopOne && isDeicticReminderRef(lower)) {
+    const fired = await reminderFiredSinceLastReply(telegramId)
+    if (fired) {
+      const same = reminders.filter((item: any) => cleanReminderName(item.message).toLowerCase() === cleanReminderName(fired.message).toLowerCase() && String(item.recurring_pattern || '') === String(fired.recurring_pattern || ''))
+      if (same.length > 1) return reminderDisambiguation('cancel', reminders, same)
+      if (!same.length) {
+        // A snoozed copy of a repeating reminder is a one-off row: never say "won't repeat" while the series is still running.
+        const name = cleanReminderName(fired.message)
+        const series = reminders.some((item: any) => item.recurring_pattern && cleanReminderName(item.message).toLowerCase() === name.toLowerCase())
+        return series
+          ? `That *${name}* reminder has already gone off. The repeating one is still on. To stop it, say *cancel ${name.toLowerCase()} reminder*.`
+          : `*${name}* has already gone off, so there’s nothing to stop.`
+      }
+      reminder = same[0]
+    }
+  }
+
+  const index = reminder ? null : extractReminderIndex(lower)
   if (index !== null) {
     reminder = reminders[index] || null
   }
 
-  if (!reminder) {
+  if (!reminder && !(stopOne && isDeicticReminderRef(lower))) {
     const query = extractCancelQuery(lower.replace(/\b(?:all|every|each)\b/g, ' ').replace(/\breminders\b/g, 'reminder'))
     // "cancel all packing session reminders": every pending reminder with that name, not just the first page.
     if (query && /\b(?:all|every|each)\b/.test(lower)) {
