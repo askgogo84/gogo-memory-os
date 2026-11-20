@@ -1,0 +1,27 @@
+name: KeenAble Public Search Shadow
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/research/keenable-public.ts'
+      - 'scripts/verify-keenable-public.mts'
+      - 'docs/research/keenable-evaluation-20261116.md'
+      - '.github/workflows/keenable-public-shadow.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install tsx scripts/verify-keenable-public.mts
+      - run: npm run typecheck
