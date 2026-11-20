@@ -114,12 +114,45 @@ export function billAmountOf(text: string): { value: number; text: string } | nu
 // from a person's name with no list headers, so it scores as a person. It is not someone waiting on a reply.
 const ONBOARDING = /\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registering|subscribing|trying|creating\s+(?:an|your)\s+account|your\s+interest)\b|\bwelcome\s+(?:to|aboard)\b|\b(?:just\s+)?sign\s+up\s+here\b|\bbook\s+(?:a|some)\s+(?:time|call|slot|demo)\b|\b(?:grab|pick)\s+a\s+(?:time|slot)\b|\bcalendly\.com\b|\bcal\.com\/|\b(?:i|we)\s+meet\s+with\s+(?:users|customers|founders)\b|\bhelp\s+(?:you\s+)?get\s+(?:started|the\s+most)\b|\bget\s+started\s+with\b|\bfree\s+trial\b|\bunsubscribe\b/i
 
+// 20 Nov live: "Ready to Go from #MidSeMoreTak?" from HSBC Mutual Fund ("Dear Investor, …") went out as a reply waiting.
+// Mail addressed to a class of people is a broadcast, whoever's name is on it.
+const BROADCAST = /\bdear\s+(?:valued\s+)?(?:investors?|customers?|members?|users?|subscribers?|shareholders?|unit\s*holders?|policy\s*holders?|card\s*(?:holders?|members?)|account\s*holders?|patrons?)\b/i
+// A bulk sending address is a generic mailbox ON a sending subdomain ("mail@mail.mf.example.co.in"). Either alone is how
+// plenty of real people write ("mail@drrao.example", "sen@mail.university.example"), so both are required.
+const BULK_LOCAL = /^(?:e?-?mail(?:er)?s?|communications?|comms|campaigns?|marketing|announcements?|news(?:letters?)?)$/i
+const BULK_HOST = /^(?:e?-?mail(?:er)?|em|news(?:letters?)?|marketing|mkt|campaigns?|comms|mailing)\d*\.[^.]+\.[^.]+/i
+/** Not a person waiting on a reply, whatever the classifier made of it: the mail opens by addressing a class of people,
+ * or (when Gmail has not filed it as personal) it comes from a bulk sending address. Only ever used to withhold "Reply waiting". Pure. */
+export function looksBroadcast(s: ScoredEmail): boolean {
+  if (BROADCAST.test(String(s.email.snippet || '').slice(0, 100))) return true
+  if ((s.email.labelIds || []).includes('CATEGORY_PERSONAL')) return false
+  const [local = '', host = ''] = String(s.senderEmail || '').toLowerCase().split('@')
+  return BULK_LOCAL.test(local) && BULK_HOST.test(host)
+}
+// 20 Nov live: a person chasing "outstanding dues of ₹35841.29" on a thread titled "…membership renews" was worded as a renewal.
+// A dues chase names an unpaid sum AND asks you to pay it. "Please" alone is not a request to pay (cart-abandonment mail says
+// "your payment is pending, please complete your purchase"); money on its way to you, or a colleague asking whether to release
+// a payment, is not dues either.
+const DUES_NOUN = /\b(?:outstanding|pending|unpaid|overdue)\s+(?:dues?|balance|amount|payment|invoice)s?\b|\bpayment\s+(?:is\s+)?(?:still\s+)?(?:pending|outstanding|overdue)\b/i
+const DUES_REQUEST = /\b(?:clear(?:ing)?|settl(?:e|ing)|pay(?:ing)?|make\s+the\s+payment|prioriti[sz]e|at\s+the\s+earliest|confirm\s+(?:once|when|if)\s+(?:the\s+)?(?:payment|paid|you(?:'ve|\s+have)\s+paid))\b/i
+const OWED_TO_YOU = /\b(?:we|i)(?:\s+(?:will|shall)|'ll)\s+(?:clear|pay|settle|release|transfer)\b|\bwill\s+(?:reach|be\s+(?:paid|credited|transferred)\s+to)\s+you\b|\bbeing\s+processed\b/i
+/** Text in which someone asks you to pay an unpaid sum. Pure. */
+export const isDuesChase = (text: string) => { const t = String(text || ''); return DUES_NOUN.test(t) && DUES_REQUEST.test(t) && !OWED_TO_YOU.test(t) && !INCOMING_TRANSACTION.test(t) }
+/** A dues chase worth a "Money leaving" message: from a person, a receipt or an update; from list mail only when Gmail filed it
+ * as personal (an account manager's CRM adds list headers); never a promotion, a mandate, a bank alert or a bill the bill rules own. Pure. */
+function duesChaseOf(s: ScoredEmail, text: string): boolean {
+  const c = s.category
+  if (!(c === 'person' || c === 'update' || c === 'receipt' || (c === 'newsletter' && (s.email.labelIds || []).includes('CATEGORY_PERSONAL')))) return false
+  return isDuesChase(text) && !!amountOf(text) && !MANDATE.test(text) && !SECURITY.test(text) && !FAILED.test(text)
+}
+
 /** Which alert an email is, or null when it should wait for "any important emails?". Pure. */
 export function alertKindOf(s: ScoredEmail): AlertKind | null {
   const e = s.email, text = `${e.subject} ${e.snippet}`.replace(/\s+/g, ' ')
   const c = s.category
   if (c === 'otp' || c === 'social' || c === 'order_update') return null
   if (s.score === 0 && c !== 'transaction_alert') return null // the person's own mail, or AskGogo's own digests
+  if (duesChaseOf(s, text)) return 'money_leaving'
   if (c === 'newsletter' || c === 'promotion') return 'newsletter'
   if (c === 'security' || SECURITY.test(text)) return 'security'
   if (c === 'service_risk' || FAILED.test(text)) return 'payment_failed'
@@ -147,7 +180,7 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
     if (RENEW.test(text) && amountOf(text)) return 'money_leaving'
     if (DEADLINE.test(text) && DEADLINE_SUBJECT.test(text)) return 'deadline'
     if (ONBOARDING.test(text)) return null
-    return s.score >= 0.6 ? 'reply_waiting' : null
+    return s.score >= 0.6 && !looksBroadcast(s) ? 'reply_waiting' : null
   }
   return null
 }
@@ -269,7 +302,11 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
     else body = `${name}${who} says a payment${amt ? ` of *${amt.text}*` : ''} failed${/\b(?:failed\s+again|again\s+failed|second\s+(?:attempt|time)|twice|repeated(?:ly)?)\b/i.test(text) ? ' again' : ''}${/insufficient/i.test(text) ? ' for insufficient funds' : ''}. "${subject}".`
     body += /\b(?:suspend|pause|interrupt|shutdown|shut down|disconnect|cancel)/i.test(text) ? ' The email says the service may be paused, so update the payment method first.' : " The email doesn't say whether it was paid another way, so check before paying again."
   } else if (kind === 'money_leaving') {
-    if (CONFIRM_CHARGE.test(text)) body = `${name}${who} is asking you to confirm a${amt ? ` *${amt.text}*` : ''} payment. "${subject}". If you don't recognise it, don't confirm; contact them through their own app or site.`
+    if (duesChaseOf(s, text)) {
+      const full = String(e.subject || '').replace(/^(?:(?:re|fwd?|fw):\s*)+/i, '').replace(/\s+/g, ' ').trim()
+      const title = full.length > 90 ? `${full.slice(0, 90).replace(/\s+\S*$/, '').replace(/\s*\([^)]*$/, '')}…` : full
+      body = `${name}${who} is following up on${amt ? ` *${amt.text}*` : ''} in outstanding dues: "${title}". I can't tell whether you've already paid it.`
+    } else if (CONFIRM_CHARGE.test(text)) body = `${name}${who} is asking you to confirm a${amt ? ` *${amt.text}*` : ''} payment. "${subject}". If you don't recognise it, don't confirm; contact them through their own app or site.`
     else if (MANDATE.test(text)) body = `${name}${who} reports a new recurring-payment mandate${amt ? ` with a *${amt.text}* maximum` : ''}. "${subject}". If you didn't set this up, cancel it from your bank's app.`
     else if (RENEW.test(text)) body = `${name}your ${subject.replace(/\byour\b/gi, '').trim()} renews${day ? ` on ${day}` : ' soon'}${amt ? ` for *${amt.text}*` : ''}, from ${who}. Say "remind me to decide on this" with a date if you want a nudge first.`
     else {
@@ -337,7 +374,8 @@ export function toAttentionEmail(m: any): AttentionEmail | null {
     from: String(m.from || ''), to: m.to ? String(m.to) : null, subject: String(m.subject || '(No subject)'), snippet: String(m.snippet || ''),
     internalDate: Number(m.internalDate) || (Date.parse(String(m.date || '')) || null), date: m.date ? String(m.date) : null,
     labelIds: Array.isArray(m.labelIds) ? m.labelIds.map(String) : [], isUnread: m.isUnread === true || (Array.isArray(m.labelIds) && m.labelIds.includes('UNREAD')),
-    listId: m.listId ? String(m.listId) : null, listUnsubscribe: m.listUnsubscribe ? String(m.listUnsubscribe) : null, source: 'gmail',
+    listId: m.listId ? String(m.listId) : null, listUnsubscribe: m.listUnsubscribe ? String(m.listUnsubscribe) : null,
+    precedence: m.precedence ? String(m.precedence) : null, autoSubmitted: m.autoSubmitted ? String(m.autoSubmitted) : null, source: 'gmail',
   }
 }
 export { classifyEmail, scoreEmail }

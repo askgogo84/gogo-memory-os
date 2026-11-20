@@ -159,8 +159,22 @@ function header(headers:any[], name:string) {
   return String((headers || []).find((x:any) => String(x?.name || '').toLowerCase() === name.toLowerCase())?.value || '')
 }
 
+/** What the mail classifier needs beyond subject and sender: Gmail's own labels and whether list headers are present.
+ * 20 Nov: without these a promotion from "mail@…" was read as a person waiting on a reply.
+ * Presence only for the list headers: their values are often per-recipient tokenised links and are never needed. Pure. */
+export function gmailClassifierFields(data:any) {
+  const headers=Array.isArray(data?.payload?.headers)?data.payload.headers:[]
+  return {
+    labelIds:Array.isArray(data?.labelIds)?data.labelIds.map(String).slice(0,40):[] as string[],
+    listUnsubscribe:header(headers,'List-Unsubscribe')?'present':null,
+    listId:header(headers,'List-Id')?'present':null,
+    precedence:clean(header(headers,'Precedence'),80)||null,
+    autoSubmitted:clean(header(headers,'Auto-Submitted'),80)||null,
+  }
+}
+
 async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null) {
-  const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
+  const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   const response=await workspaceFetch(actor,url,{},account)
   if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
@@ -179,6 +193,7 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, accou
     to:formatEmailSnippet(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
     snippet:formatEmailSnippet(data?.snippet||''),
+    ...gmailClassifierFields(data),
     ...(account?{account:account.email}:{}),
     ...(auditBody?{evidence:formatEmailSnippet(body||data?.snippet||'',5000)}:{}),
   }
