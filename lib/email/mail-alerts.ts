@@ -116,23 +116,35 @@ const ONBOARDING = /\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registe
 
 // 20 Nov live: "Ready to Go from #MidSeMoreTak?" from HSBC Mutual Fund ("Dear Investor, …") went out as a reply waiting.
 // Mail addressed to a class of people is a broadcast, whoever's name is on it.
-const BROADCAST = /\bdear\s+(?:valued\s+)?(?:investors?|customers?|members?|users?|subscribers?|shareholders?|unit\s*holders?|policy\s*holders?|card\s*(?:holders?|members?)|account\s*holders?|patrons?)\s*[,:!]/i
-// A bulk sending address: a generic mailbox ("mail@", "communications@") or a sending subdomain ("mail.mf.example.co.in").
-const BULK_LOCAL = /^(?:e?-?mail(?:er)?s?|communications?|comms|campaigns?|connect|customer-?(?:care|service|connect)|care|marketing|announcements?)$/i
-const BULK_HOST = /^(?:e?-?mail(?:er)?|em|news(?:letters?)?|marketing|mkt|campaigns?|comms|notify|notifications?|bounce|mailing)\d*\.[^.]+\.[^.]+/i
-/** Not a person waiting on a reply, whatever the classifier made of it: a broadcast salutation in the opening, or a bulk sending address. Pure. */
+const BROADCAST = /\bdear\s+(?:valued\s+)?(?:investors?|customers?|members?|users?|subscribers?|shareholders?|unit\s*holders?|policy\s*holders?|card\s*(?:holders?|members?)|account\s*holders?|patrons?)\b/i
+// A bulk sending address is a generic mailbox ON a sending subdomain ("mail@mail.mf.example.co.in"). Either alone is how
+// plenty of real people write ("mail@drrao.example", "sen@mail.university.example"), so both are required.
+const BULK_LOCAL = /^(?:e?-?mail(?:er)?s?|communications?|comms|campaigns?|marketing|announcements?|news(?:letters?)?)$/i
+const BULK_HOST = /^(?:e?-?mail(?:er)?|em|news(?:letters?)?|marketing|mkt|campaigns?|comms|mailing)\d*\.[^.]+\.[^.]+/i
+/** Not a person waiting on a reply, whatever the classifier made of it: the mail opens by addressing a class of people,
+ * or (when Gmail has not filed it as personal) it comes from a bulk sending address. Only ever used to withhold "Reply waiting". Pure. */
 export function looksBroadcast(s: ScoredEmail): boolean {
+  if (BROADCAST.test(String(s.email.snippet || '').slice(0, 100))) return true
+  if ((s.email.labelIds || []).includes('CATEGORY_PERSONAL')) return false
   const [local = '', host = ''] = String(s.senderEmail || '').toLowerCase().split('@')
-  return BROADCAST.test(String(s.email.snippet || '').slice(0, 160)) || BULK_LOCAL.test(local) || BULK_HOST.test(host)
+  return BULK_LOCAL.test(local) && BULK_HOST.test(host)
 }
 // 20 Nov live: a person chasing "outstanding dues of ₹35841.29" on a thread titled "…membership renews" was worded as a renewal.
-// A dues chase names an unpaid sum AND asks you to pay it; a colleague asking whether to release a pending payment, or someone
-// promising to clear what they owe you, is neither.
+// A dues chase names an unpaid sum AND asks you to pay it. "Please" alone is not a request to pay (cart-abandonment mail says
+// "your payment is pending, please complete your purchase"); money on its way to you, or a colleague asking whether to release
+// a payment, is not dues either.
 const DUES_NOUN = /\b(?:outstanding|pending|unpaid|overdue)\s+(?:dues?|balance|amount|payment|invoice)s?\b|\bpayment\s+(?:is\s+)?(?:still\s+)?(?:pending|outstanding|overdue)\b/i
-const DUES_REQUEST = /\b(?:follow(?:ing)?[- ]?up|reminder|request\s+you|kindly|please|prioriti[sz]e|at\s+the\s+earliest|clear(?:ing)?\s+(?:the|your|this)|settl(?:e|ing)\s+(?:the|your|this)|make\s+the\s+payment|confirm\s+(?:once|when|if)\b)/i
-const OWED_TO_YOU = /\b(?:we|i)(?:\s+(?:will|shall)|'ll)\s+(?:clear|pay|settle|release|transfer|process)\b|\bwill\s+(?:reach|be\s+(?:paid|credited|transferred)\s+to)\s+you\b|\bshould\s+(?:i|we)\b/i
-/** Someone asking you to pay an unpaid sum. Pure. */
-export const isDuesChase = (text: string) => { const t = String(text || ''); return DUES_NOUN.test(t) && DUES_REQUEST.test(t) && !OWED_TO_YOU.test(t) }
+const DUES_REQUEST = /\b(?:clear(?:ing)?|settl(?:e|ing)|pay(?:ing)?|make\s+the\s+payment|prioriti[sz]e|at\s+the\s+earliest|confirm\s+(?:once|when|if)\s+(?:the\s+)?(?:payment|paid|you(?:'ve|\s+have)\s+paid))\b/i
+const OWED_TO_YOU = /\b(?:we|i)(?:\s+(?:will|shall)|'ll)\s+(?:clear|pay|settle|release|transfer)\b|\bwill\s+(?:reach|be\s+(?:paid|credited|transferred)\s+to)\s+you\b|\bbeing\s+processed\b/i
+/** Text in which someone asks you to pay an unpaid sum. Pure. */
+export const isDuesChase = (text: string) => { const t = String(text || ''); return DUES_NOUN.test(t) && DUES_REQUEST.test(t) && !OWED_TO_YOU.test(t) && !INCOMING_TRANSACTION.test(t) }
+/** A dues chase worth a "Money leaving" message: from a person, a receipt or an update; from list mail only when Gmail filed it
+ * as personal (an account manager's CRM adds list headers); never a promotion, a mandate, a bank alert or a bill the bill rules own. Pure. */
+function duesChaseOf(s: ScoredEmail, text: string): boolean {
+  const c = s.category
+  if (!(c === 'person' || c === 'update' || c === 'receipt' || (c === 'newsletter' && (s.email.labelIds || []).includes('CATEGORY_PERSONAL')))) return false
+  return isDuesChase(text) && !!amountOf(text) && !MANDATE.test(text) && !SECURITY.test(text) && !FAILED.test(text)
+}
 
 /** Which alert an email is, or null when it should wait for "any important emails?". Pure. */
 export function alertKindOf(s: ScoredEmail): AlertKind | null {
@@ -140,9 +152,7 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
   const c = s.category
   if (c === 'otp' || c === 'social' || c === 'order_update') return null
   if (s.score === 0 && c !== 'transaction_alert') return null // the person's own mail, or AskGogo's own digests
-  // Someone chasing dues with an amount is money (not a reply, not a renewal, whatever the thread is called),
-  // and a list header on an account manager's mail must not silence it. Promotions never qualify.
-  if ((c === 'person' || c === 'update' || c === 'receipt' || c === 'newsletter') && isDuesChase(text) && amountOf(text) && !MANDATE.test(text)) return 'money_leaving'
+  if (duesChaseOf(s, text)) return 'money_leaving'
   if (c === 'newsletter' || c === 'promotion') return 'newsletter'
   if (c === 'security' || SECURITY.test(text)) return 'security'
   if (c === 'service_risk' || FAILED.test(text)) return 'payment_failed'
@@ -292,7 +302,7 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
     else body = `${name}${who} says a payment${amt ? ` of *${amt.text}*` : ''} failed${/\b(?:failed\s+again|again\s+failed|second\s+(?:attempt|time)|twice|repeated(?:ly)?)\b/i.test(text) ? ' again' : ''}${/insufficient/i.test(text) ? ' for insufficient funds' : ''}. "${subject}".`
     body += /\b(?:suspend|pause|interrupt|shutdown|shut down|disconnect|cancel)/i.test(text) ? ' The email says the service may be paused, so update the payment method first.' : " The email doesn't say whether it was paid another way, so check before paying again."
   } else if (kind === 'money_leaving') {
-    if (s.category !== 'bill_due' && s.category !== 'transaction_alert' && isDuesChase(text) && !MANDATE.test(text)) {
+    if (duesChaseOf(s, text)) {
       const full = String(e.subject || '').replace(/^(?:(?:re|fwd?|fw):\s*)+/i, '').replace(/\s+/g, ' ').trim()
       const title = full.length > 90 ? `${full.slice(0, 90).replace(/\s+\S*$/, '').replace(/\s*\([^)]*$/, '')}…` : full
       body = `${name}${who} is following up on${amt ? ` *${amt.text}*` : ''} in outstanding dues: "${title}". I can't tell whether you've already paid it.`

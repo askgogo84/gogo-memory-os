@@ -42,7 +42,7 @@ console.log('✓ a dues follow-up says what it is, with the amount; a real renew
 // Review findings (20 Nov): the dues wording must not depend on the mail being classed as a person,
 // a list header must not silence it, and a broadcast salutation must not silence money or deadlines.
 {
-  const variants: any[] = [{ labelIds: ['INBOX', 'CATEGORY_UPDATES'] }, { listUnsubscribe: 'present' }, { from: 'WeWork Billing <billing@wework.example>' }]
+  const variants: any[] = [{ labelIds: ['INBOX', 'CATEGORY_UPDATES'] }, { listUnsubscribe: 'present', labelIds: ['INBOX', 'CATEGORY_PERSONAL'] }, { from: 'WeWork Billing <billing@wework.example>' }]
   for (const v of variants) {
     const sc = scoreEmail(ma.toAttentionEmail({ ...dues, labelIds: [], ...v })! as any, { now })
     assert.equal(ma.alertKindOf(sc), 'money_leaving', JSON.stringify(v))
@@ -63,6 +63,21 @@ console.log('✓ a dues follow-up says what it is, with the amount; a real renew
   assert.equal(kindOf(raw('b2', 'Asha Rao <asha@fund.example>', 'A question for you?', 'Dear Member, this is a gentle follow-up regarding the outstanding dues of ₹35841.29. Kindly clear the payment.')), 'money_leaving')
   assert.equal(kindOf(raw('b3', 'Divya <divya@example.com>', 'Is this mail real?', 'Hi, hope you are doing well. I wanted your help with something that came in from my bank this morning and has been worrying me since then. It says Dear Customer, your account is blocked. Can you check if it is real?')), 'reply_waiting')
   assert.equal(kindOf(raw('b4', 'Rishi <rishi@ondc.example>', 'Provider sheet', 'Dear Partner, could you please share the pending provider sheet by tomorrow?')), 'reply_waiting')
+  // Second review (20 Nov): "please" is not a request to pay; marketing, refunds, failed payments and security keep their own handling.
+  const promo = (snippet: string, subject = 'A quick note') => raw('p', 'Shop <hello@shop.example>', subject, snippet, { listUnsubscribe: 'present' })
+  assert.equal(kindOf(promo('Your payment is pending! Please complete your purchase of ₹4,999 and unlock free shipping.')), 'newsletter')
+  assert.equal(kindOf(promo('Reminder: your pending payment of ₹5,000 for the new SIP is one click away. Kindly invest now.')), 'newsletter')
+  assert.equal(kindOf(promo('This is a follow-up on the outstanding dues of ₹35841.29. Kindly clear the payment.')), 'newsletter', 'list mail Gmail did not file as personal stays a newsletter')
+  assert.equal(kindOf(raw('f1', 'Host <billing@host.example>', 'Payment failed', 'Your payment of ₹2,400 failed. Please clear the outstanding balance to avoid interruption.')), 'payment_failed')
+  assert.notEqual(kindOf(raw('f2', 'Airline <updates@airline.example>', 'Refund update', 'Your refund of ₹6,200 is in process. The pending amount will be credited within 7 days. Please do not raise a duplicate request.')), 'money_leaving')
+  assert.equal(kindOf(raw('f3', 'Divya <divya@example.com>', 'Security alert', 'Reminder, pending invoice of ₹900, please pay. Also there was a new sign-in on your account.')), 'security')
+  assert.equal(kindOf(raw('f4', 'Nithin K L <nithin@tipplr.in>', 'Printer payment', 'The pending payment of ₹12,000 to the printer is ready. Please advise if I can release it today.')), 'reply_waiting')
+  assert.notEqual(kindOf(raw('f5', 'Divya <divya@example.com>', 'Your invoice', 'The pending amount of ₹50,000 is being processed from our side. Kindly bear with us till Friday.')), 'money_leaving')
+  // Real people on generic mailboxes or mail subdomains are still people.
+  for (const from of ['Meera Stores <care@meerastores.example>', 'Anil K <connect@anilk.example>', 'Dr Rao <mail@drrao.example>', 'Prof Sen <sen@mail.university.example>', 'Rao <r@news.co.in>'])
+    assert.equal(kindOf(raw('q', from, 'Friday?', 'Could you confirm your appointment for Friday?')), 'reply_waiting', from)
+  // A salutation with no comma (Gmail drops line breaks) is still a broadcast.
+  assert.equal(kindOf(raw('b5', 'R Kumar <rm.kumar@bank.example>', 'Upgrade?', 'Dear Customer Are you ready to upgrade your account?')), null)
   // A bulk sending address with no label, no list header and no salutation is still not a reply waiting; mail.com users are people.
   assert.equal(kindOf(raw('s1', 'HSBC Mutual Fund <mail@mail.mf.assetmanagement.hsbc.co.in>', 'Ready to Go?', 'Are you ready to invest?')), null)
   assert.equal(kindOf(raw('s2', 'Divya <divya@mail.com>', 'Goa dates?', 'Can you confirm the Goa dates?')), 'reply_waiting')
