@@ -116,10 +116,23 @@ const ONBOARDING = /\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registe
 
 // 20 Nov live: "Ready to Go from #MidSeMoreTak?" from HSBC Mutual Fund ("Dear Investor, …") went out as a reply waiting.
 // Mail addressed to a class of people is a broadcast, whoever's name is on it.
-const BROADCAST = /\bdear\s+(?:valued\s+)?(?:investors?|customers?|members?|users?|subscribers?|clients?|partners?|shareholders?|unit\s*holders?|policy\s*holders?|card\s*(?:holders?|members?)|account\s*holders?|patrons?)\b/i
+const BROADCAST = /\bdear\s+(?:valued\s+)?(?:investors?|customers?|members?|users?|subscribers?|shareholders?|unit\s*holders?|policy\s*holders?|card\s*(?:holders?|members?)|account\s*holders?|patrons?)\s*[,:!]/i
+// A bulk sending address: a generic mailbox ("mail@", "communications@") or a sending subdomain ("mail.mf.example.co.in").
+const BULK_LOCAL = /^(?:e?-?mail(?:er)?s?|communications?|comms|campaigns?|connect|customer-?(?:care|service|connect)|care|marketing|announcements?)$/i
+const BULK_HOST = /^(?:e?-?mail(?:er)?|em|news(?:letters?)?|marketing|mkt|campaigns?|comms|notify|notifications?|bounce|mailing)\d*\.[^.]+\.[^.]+/i
+/** Not a person waiting on a reply, whatever the classifier made of it: a broadcast salutation in the opening, or a bulk sending address. Pure. */
+export function looksBroadcast(s: ScoredEmail): boolean {
+  const [local = '', host = ''] = String(s.senderEmail || '').toLowerCase().split('@')
+  return BROADCAST.test(String(s.email.snippet || '').slice(0, 160)) || BULK_LOCAL.test(local) || BULK_HOST.test(host)
+}
 // 20 Nov live: a person chasing "outstanding dues of ₹35841.29" on a thread titled "…membership renews" was worded as a renewal.
-const DUES_CHASE = /\b(?:outstanding|pending|unpaid|overdue)\s+(?:dues?|balance|amount|payment|invoice)s?\b|\b(?:clear(?:ing)?|settle|settling)\s+(?:the|your)\s+(?:dues?|payment|balance|invoice|outstanding)\b|\bpayment\s+(?:is\s+)?(?:still\s+)?(?:pending|outstanding)\b/i
-export const isDuesChase = (text: string) => DUES_CHASE.test(String(text || ''))
+// A dues chase names an unpaid sum AND asks you to pay it; a colleague asking whether to release a pending payment, or someone
+// promising to clear what they owe you, is neither.
+const DUES_NOUN = /\b(?:outstanding|pending|unpaid|overdue)\s+(?:dues?|balance|amount|payment|invoice)s?\b|\bpayment\s+(?:is\s+)?(?:still\s+)?(?:pending|outstanding|overdue)\b/i
+const DUES_REQUEST = /\b(?:follow(?:ing)?[- ]?up|reminder|request\s+you|kindly|please|prioriti[sz]e|at\s+the\s+earliest|clear(?:ing)?\s+(?:the|your|this)|settl(?:e|ing)\s+(?:the|your|this)|make\s+the\s+payment|confirm\s+(?:once|when|if)\b)/i
+const OWED_TO_YOU = /\b(?:we|i)(?:\s+(?:will|shall)|'ll)\s+(?:clear|pay|settle|release|transfer|process)\b|\bwill\s+(?:reach|be\s+(?:paid|credited|transferred)\s+to)\s+you\b|\bshould\s+(?:i|we)\b/i
+/** Someone asking you to pay an unpaid sum. Pure. */
+export const isDuesChase = (text: string) => { const t = String(text || ''); return DUES_NOUN.test(t) && DUES_REQUEST.test(t) && !OWED_TO_YOU.test(t) }
 
 /** Which alert an email is, or null when it should wait for "any important emails?". Pure. */
 export function alertKindOf(s: ScoredEmail): AlertKind | null {
@@ -127,6 +140,9 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
   const c = s.category
   if (c === 'otp' || c === 'social' || c === 'order_update') return null
   if (s.score === 0 && c !== 'transaction_alert') return null // the person's own mail, or AskGogo's own digests
+  // Someone chasing dues with an amount is money (not a reply, not a renewal, whatever the thread is called),
+  // and a list header on an account manager's mail must not silence it. Promotions never qualify.
+  if ((c === 'person' || c === 'update' || c === 'receipt' || c === 'newsletter') && isDuesChase(text) && amountOf(text) && !MANDATE.test(text)) return 'money_leaving'
   if (c === 'newsletter' || c === 'promotion') return 'newsletter'
   if (c === 'security' || SECURITY.test(text)) return 'security'
   if (c === 'service_risk' || FAILED.test(text)) return 'payment_failed'
@@ -150,14 +166,11 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
     return null
   }
   if (c === 'person') {
-    if (BROADCAST.test(text)) return null
-    // Someone chasing dues with an amount is money, not a reply (and not a renewal, whatever the thread is called).
-    if (DUES_CHASE.test(text) && amountOf(text)) return 'money_leaving'
     // A renewal notice signed by a person (an account manager) is still money leaving.
     if (RENEW.test(text) && amountOf(text)) return 'money_leaving'
     if (DEADLINE.test(text) && DEADLINE_SUBJECT.test(text)) return 'deadline'
     if (ONBOARDING.test(text)) return null
-    return s.score >= 0.6 ? 'reply_waiting' : null
+    return s.score >= 0.6 && !looksBroadcast(s) ? 'reply_waiting' : null
   }
   return null
 }
@@ -279,9 +292,12 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
     else body = `${name}${who} says a payment${amt ? ` of *${amt.text}*` : ''} failed${/\b(?:failed\s+again|again\s+failed|second\s+(?:attempt|time)|twice|repeated(?:ly)?)\b/i.test(text) ? ' again' : ''}${/insufficient/i.test(text) ? ' for insufficient funds' : ''}. "${subject}".`
     body += /\b(?:suspend|pause|interrupt|shutdown|shut down|disconnect|cancel)/i.test(text) ? ' The email says the service may be paused, so update the payment method first.' : " The email doesn't say whether it was paid another way, so check before paying again."
   } else if (kind === 'money_leaving') {
-    if (CONFIRM_CHARGE.test(text)) body = `${name}${who} is asking you to confirm a${amt ? ` *${amt.text}*` : ''} payment. "${subject}". If you don't recognise it, don't confirm; contact them through their own app or site.`
+    if (s.category !== 'bill_due' && s.category !== 'transaction_alert' && isDuesChase(text) && !MANDATE.test(text)) {
+      const full = String(e.subject || '').replace(/^(?:(?:re|fwd?|fw):\s*)+/i, '').replace(/\s+/g, ' ').trim()
+      const title = full.length > 90 ? `${full.slice(0, 90).replace(/\s+\S*$/, '').replace(/\s*\([^)]*$/, '')}…` : full
+      body = `${name}${who} is following up on${amt ? ` *${amt.text}*` : ''} in outstanding dues: "${title}". I can't tell whether you've already paid it.`
+    } else if (CONFIRM_CHARGE.test(text)) body = `${name}${who} is asking you to confirm a${amt ? ` *${amt.text}*` : ''} payment. "${subject}". If you don't recognise it, don't confirm; contact them through their own app or site.`
     else if (MANDATE.test(text)) body = `${name}${who} reports a new recurring-payment mandate${amt ? ` with a *${amt.text}* maximum` : ''}. "${subject}". If you didn't set this up, cancel it from your bank's app.`
-    else if (s.category === 'person' && DUES_CHASE.test(text)) body = `${name}${who} is following up on${amt ? ` *${amt.text}*` : ''} in outstanding dues: "${subject}". I can't tell whether you've already paid it.`
     else if (RENEW.test(text)) body = `${name}your ${subject.replace(/\byour\b/gi, '').trim()} renews${day ? ` on ${day}` : ' soon'}${amt ? ` for *${amt.text}*` : ''}, from ${who}. Say "remind me to decide on this" with a date if you want a nudge first.`
     else {
       const due = dueWords(text, ctx.now ?? Date.now()) || (dateInText(text) ? '' : s.due || '')
