@@ -1,5 +1,5 @@
 import { isDriveWriteRequest } from './drive-write-request'
-import { isConnectMailAsk } from '@/lib/email/connect-phrases'
+import { isConnectMailAsk } from '../email/connect-phrases'
 import { isTimeFirstReminder, isContentlessReminderRequest } from './reminder-command'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { classifyCheckVerb } from '@/lib/data/lists-core'

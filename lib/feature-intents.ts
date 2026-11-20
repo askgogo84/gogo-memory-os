@@ -3,7 +3,7 @@
 // Muse-style Agent handling runs ONLY when legacy routing declines the turn.
 
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
-import { isConnectMailAsk } from '@/lib/email/connect-phrases'
+import { isConnectMailAsk } from './email/connect-phrases'
 import { isPlainInfoQuestion } from '@/lib/agent/plain-question'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'

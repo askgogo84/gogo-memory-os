@@ -53,7 +53,9 @@ export async function buildGmailConnectReply(telegramId:number, text=''){
   if(access.connected){
     const extras=await import('@/lib/agent/gmail-accounts').then(m=>m.listExtraGmailAccounts(telegramId),()=>[])
     const also=extras.length?`\nAlso reading: ${extras.map(a=>`*${a.email}*`).join(', ')}. Say "connect another gmail" to add one or "disconnect <address>" to remove one. If one has stopped working, say "reconnect <address>" and pick it again on Google's screen.`:'\nSay "connect another gmail" to add a second account (work mail, say).'
-    return `✅ *Google Workspace is connected*${access.email?` as *${access.email}*`:''}.${also}\n\nGogo can use the read-only Gmail context you approved. Sending or modifying email is still a separate approval-gated action.`
+    // 20 Nov review: "reconnect my mail" must not end at a status line with no way to act.
+    const refresh=/\bre[- ]?connect\b|\bagain\b/i.test(text)?'\nTo refresh the main account, reconnect it at app.askgogo.in/dashboard/settings/email.':''
+    return `✅ *Google Workspace is connected*${access.email?` as *${access.email}*`:''}.${also}${refresh}\n\nGogo can use the read-only Gmail context you approved. Sending or modifying email is still a separate approval-gated action.`
   }
   const url=buildGmailConnectUrl(telegramId)
   if(!url)return 'Google Workspace connection is temporarily unavailable.'

@@ -20,6 +20,7 @@
  *  - This module only blocks. It never grants execution authority to the classifier.
  */
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
+import { isConnectMailAsk } from '../email/connect-phrases'
 
 export type RuleCapability =
   | 'reminder_create' | 'reminder_edit' | 'calendar' | 'email' | 'list' | 'memory' | 'nutrition'
@@ -88,6 +89,8 @@ export function isExactCommand(text: string): boolean {
   if (/^(?:[1-9]\d?|y|yes|yep|yeah|no|nope|ok|okay|sure|cancel|stop|done|skip|confirm|approve|never mind|nevermind)$/.test(lower)) return true
   if (/^(?:done|cancel|snooze|skip|complete)\s+\d+\b/.test(lower) || /^mark\s+\d+\s+(?:as\s+)?done$/.test(lower)) return true
   if (/^link\s+creditiq\s+\d{6}$/.test(lower)) return true
+  // 20 Nov: a connect-mail ask is the connect handler's, however it is worded; no model reading may re-label it.
+  if (isConnectMailAsk(lower)) return true
   return false
 }
 
