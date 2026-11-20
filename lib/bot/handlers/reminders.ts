@@ -224,9 +224,10 @@ export function dropDayPart(input: string, day: string = TOMORROW): string {
     .replace(new RegExp(String.raw`\b(${day})\s+(?:in\s+the\s+|at\s+)?${DAY_PART}\b`, 'gi'), '$1')
     .replace(new RegExp(String.raw`\b(?:in\s+the\s+)?${DAY_PART}\s+(?:of\s+)?(${day})\b`, 'gi'), '$1')
 }
-/** The hour "tomorrow evening" means when no clock time is given. Only beside tomorrow, never a weekday in the task. */
-function dayPartHour(text: string): number | null {
-  const m = text.match(new RegExp(String.raw`\b${TOMORROW}\s+(?:in\s+the\s+|at\s+)?(${DAY_PART})\b|\b(${DAY_PART})\s+(?:of\s+)?${TOMORROW}\b`, 'i'))
+/** The hour "tomorrow evening" means when no clock time is given. Only beside the day the reminder is for
+ * (tomorrow by default, or the weekday a recurring reminder names), never a weekday inside the task. */
+function dayPartHour(text: string, day: string = TOMORROW): number | null {
+  const m = text.match(new RegExp(String.raw`\b${day}\s+(?:in\s+the\s+|at\s+)?(${DAY_PART})\b|\b(${DAY_PART})\s+(?:of\s+)?${day}\b`, 'i'))
   const part = (m?.[1] || m?.[2] || '').toLowerCase()
   return !part ? null : /afternoon/.test(part) ? 14 : /evening/.test(part) ? 18 : /night/.test(part) ? 21 : /early/.test(part) ? 7 : 9
 }
@@ -464,7 +465,8 @@ function parseWeekdayRecurring(text: string): ParsedReminder {
   if (!match) return null
   if (getAmbiguousReminderTime(text)) return null
   const weekdayName = match[1].toLowerCase()
-  const time = parseTimePart(match[2] || text) || { hour: 9, minute: 0 }
+  // 20 Nov: "every Monday evening" with no clock time is 6 pm, not a silent 9 am.
+  const time = parseTimePart(match[2] || text) || { hour: dayPartHour(text, `every\\s+${weekdayName}`) ?? 9, minute: 0 }
   const nowIst = istNowParts()
   const targetDay = WEEKDAYS.indexOf(weekdayName)
   const currentDayIndex = WEEKDAYS.indexOf(nowIst.weekday)
@@ -478,7 +480,7 @@ function parseWeekdayRecurring(text: string): ParsedReminder {
   return {
     kind: 'recurring',
     remindAtIso: when.toISOString(),
-    message: cleanMessageText(text),
+    message: cleanMessageText(dropDayPart(text, weekdayName)),
     pattern: `weekly:${weekdayName}:${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`,
   }
 }

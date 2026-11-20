@@ -151,8 +151,27 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
     response = await run(token)
   }
   if ((response.status === 403 || response.status === 401) && viaComposio) return viaComposio(url)
-  if (response.status === 403) throw new Error('workspace_scope_required')
+  if (response.status === 403) {
+    // 20 Nov: 123 of these in two days all read "workspace_scope_required", though a 403 is also a rate limit, a disabled
+    // API or a Workspace admin block. The error thrown is unchanged; Google's own reason is logged so the next one can be told apart.
+    console.error('WORKSPACE_403:', JSON.stringify(await google403Reason(response, url)))
+    throw new Error('workspace_scope_required')
+  }
   return response
+}
+
+/** Google's stated reason for a 403: API family, status and reason codes only. Never the message text, URL query or any token. Pure apart from reading the body. */
+export async function google403Reason(response:{clone?:()=>any,text?:()=>Promise<string>}, url:string) {
+  let api='other'
+  try { const u=new URL(url); api=u.hostname.split('.')[0]+':'+(u.pathname.split('/').filter(Boolean).slice(0,2).join('/')) } catch {}
+  let status='', reasons:string[]=[]
+  try {
+    const body=JSON.parse(String(await (response.clone?response.clone():response).text()).slice(0,4000))
+    status=String(body?.error?.status||'').replace(/[^A-Z_]/g,'').slice(0,40)
+    const found=[...(Array.isArray(body?.error?.errors)?body.error.errors.map((e:any)=>e?.reason):[]),...(Array.isArray(body?.error?.details)?body.error.details.map((d:any)=>d?.reason):[])]
+    reasons=[...new Set(found.map((r:any)=>String(r||'').replace(/[^A-Za-z_]/g,'').slice(0,50)).filter(Boolean))].slice(0,4)
+  } catch {}
+  return {api:api.slice(0,60),status,reasons}
 }
 
 function header(headers:any[], name:string) {
