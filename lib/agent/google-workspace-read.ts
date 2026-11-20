@@ -160,7 +160,7 @@ function header(headers:any[], name:string) {
 }
 
 async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null) {
-  const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
+  const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   const response=await workspaceFetch(actor,url,{},account)
   if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
@@ -179,6 +179,12 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, accou
     to:formatEmailSnippet(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
     snippet:formatEmailSnippet(data?.snippet||''),
+    // 20 Nov: without Gmail's own labels and list headers a promotion from "mail@…" was read as a person waiting on a reply.
+    labelIds:Array.isArray(data?.labelIds)?data.labelIds.map(String).slice(0,40):[],
+    listUnsubscribe:clean(header(headers,'List-Unsubscribe'),300)||null,
+    listId:clean(header(headers,'List-Id'),200)||null,
+    precedence:clean(header(headers,'Precedence'),80)||null,
+    autoSubmitted:clean(header(headers,'Auto-Submitted'),80)||null,
     ...(account?{account:account.email}:{}),
     ...(auditBody?{evidence:formatEmailSnippet(body||data?.snippet||'',5000)}:{}),
   }

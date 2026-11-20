@@ -114,6 +114,13 @@ export function billAmountOf(text: string): { value: number; text: string } | nu
 // from a person's name with no list headers, so it scores as a person. It is not someone waiting on a reply.
 const ONBOARDING = /\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registering|subscribing|trying|creating\s+(?:an|your)\s+account|your\s+interest)\b|\bwelcome\s+(?:to|aboard)\b|\b(?:just\s+)?sign\s+up\s+here\b|\bbook\s+(?:a|some)\s+(?:time|call|slot|demo)\b|\b(?:grab|pick)\s+a\s+(?:time|slot)\b|\bcalendly\.com\b|\bcal\.com\/|\b(?:i|we)\s+meet\s+with\s+(?:users|customers|founders)\b|\bhelp\s+(?:you\s+)?get\s+(?:started|the\s+most)\b|\bget\s+started\s+with\b|\bfree\s+trial\b|\bunsubscribe\b/i
 
+// 20 Nov live: "Ready to Go from #MidSeMoreTak?" from HSBC Mutual Fund ("Dear Investor, …") went out as a reply waiting.
+// Mail addressed to a class of people is a broadcast, whoever's name is on it.
+const BROADCAST = /\bdear\s+(?:valued\s+)?(?:investors?|customers?|members?|users?|subscribers?|clients?|partners?|shareholders?|unit\s*holders?|policy\s*holders?|card\s*(?:holders?|members?)|account\s*holders?|patrons?)\b/i
+// 20 Nov live: a person chasing "outstanding dues of ₹35841.29" on a thread titled "…membership renews" was worded as a renewal.
+const DUES_CHASE = /\b(?:outstanding|pending|unpaid|overdue)\s+(?:dues?|balance|amount|payment|invoice)s?\b|\b(?:clear(?:ing)?|settle|settling)\s+(?:the|your)\s+(?:dues?|payment|balance|invoice|outstanding)\b|\bpayment\s+(?:is\s+)?(?:still\s+)?(?:pending|outstanding)\b/i
+export const isDuesChase = (text: string) => DUES_CHASE.test(String(text || ''))
+
 /** Which alert an email is, or null when it should wait for "any important emails?". Pure. */
 export function alertKindOf(s: ScoredEmail): AlertKind | null {
   const e = s.email, text = `${e.subject} ${e.snippet}`.replace(/\s+/g, ' ')
@@ -143,6 +150,9 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
     return null
   }
   if (c === 'person') {
+    if (BROADCAST.test(text)) return null
+    // Someone chasing dues with an amount is money, not a reply (and not a renewal, whatever the thread is called).
+    if (DUES_CHASE.test(text) && amountOf(text)) return 'money_leaving'
     // A renewal notice signed by a person (an account manager) is still money leaving.
     if (RENEW.test(text) && amountOf(text)) return 'money_leaving'
     if (DEADLINE.test(text) && DEADLINE_SUBJECT.test(text)) return 'deadline'
@@ -271,6 +281,7 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
   } else if (kind === 'money_leaving') {
     if (CONFIRM_CHARGE.test(text)) body = `${name}${who} is asking you to confirm a${amt ? ` *${amt.text}*` : ''} payment. "${subject}". If you don't recognise it, don't confirm; contact them through their own app or site.`
     else if (MANDATE.test(text)) body = `${name}${who} reports a new recurring-payment mandate${amt ? ` with a *${amt.text}* maximum` : ''}. "${subject}". If you didn't set this up, cancel it from your bank's app.`
+    else if (s.category === 'person' && DUES_CHASE.test(text)) body = `${name}${who} is following up on${amt ? ` *${amt.text}*` : ''} in outstanding dues: "${subject}". I can't tell whether you've already paid it.`
     else if (RENEW.test(text)) body = `${name}your ${subject.replace(/\byour\b/gi, '').trim()} renews${day ? ` on ${day}` : ' soon'}${amt ? ` for *${amt.text}*` : ''}, from ${who}. Say "remind me to decide on this" with a date if you want a nudge first.`
     else {
       const due = dueWords(text, ctx.now ?? Date.now()) || (dateInText(text) ? '' : s.due || '')
@@ -337,7 +348,8 @@ export function toAttentionEmail(m: any): AttentionEmail | null {
     from: String(m.from || ''), to: m.to ? String(m.to) : null, subject: String(m.subject || '(No subject)'), snippet: String(m.snippet || ''),
     internalDate: Number(m.internalDate) || (Date.parse(String(m.date || '')) || null), date: m.date ? String(m.date) : null,
     labelIds: Array.isArray(m.labelIds) ? m.labelIds.map(String) : [], isUnread: m.isUnread === true || (Array.isArray(m.labelIds) && m.labelIds.includes('UNREAD')),
-    listId: m.listId ? String(m.listId) : null, listUnsubscribe: m.listUnsubscribe ? String(m.listUnsubscribe) : null, source: 'gmail',
+    listId: m.listId ? String(m.listId) : null, listUnsubscribe: m.listUnsubscribe ? String(m.listUnsubscribe) : null,
+    precedence: m.precedence ? String(m.precedence) : null, autoSubmitted: m.autoSubmitted ? String(m.autoSubmitted) : null, source: 'gmail',
   }
 }
 export { classifyEmail, scoreEmail }
