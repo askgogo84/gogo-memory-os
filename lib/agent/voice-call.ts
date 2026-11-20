@@ -74,8 +74,15 @@ export function genericCallee(name: string): boolean {
 }
 
 /** "Call District 6 and book a table for 2 Saturday 8pm", "test call me", "yes call", "call again". Pure. */
-export function parseCallCommand(raw: string): CallCommand | null {
+// 20 Nov (handoff): "Can you call Novotel on … and book a room?" was not picked up. A polite lead-in before call/phone/ring
+// is dropped (with a closing question mark) so every rule below reads the same sentence. Pure.
+const CALL_LEAD = /^\s*(?:(?:hey|hi|ok(?:ay)?)\s+(?:gogo\s*)?[,!]?\s*|gogo[,!]?\s+)?(?:(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+|pls\s+|kindly\s+)?|(?:pls|kindly)\s+|i\s+(?:want|need|would\s+like)\s+you\s+to\s+)(?=(?:call|phone|ring)\b)/i
+export function callLead(raw: string): string {
   const t = String(raw || '').trim()
+  return CALL_LEAD.test(t) ? t.replace(CALL_LEAD, '').replace(/\s*\?+\s*$/, '').trim() : t
+}
+export function parseCallCommand(raw: string): CallCommand | null {
+  const t = callLead(raw)
   const test = t.match(/^(?:(?:do\s+a\s+)?test\s+call(?:\s+me)?|call\s+me\s+(?:to|for\s+a)\s+test|make\s+a\s+test\s+call)(?:\s+(?:on|at|to)\s+([+\d][\d\s-]{8,16}))?[.!]?$/i)
   if (test) { const n = test[1] ? indianPhoneFrom(test[1]) : null; return n ? { kind: 'test', number: n } : { kind: 'test' } }
   if (/^(?:yes[,!]?\s*)?(?:(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?|place\s+the\s+call|yes,?\s*call)[.!]?$/i.test(t) && /\bcall\b/i.test(t) && !/\bagain\b/i.test(t)) return { kind: 'approve' }

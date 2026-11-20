@@ -85,6 +85,8 @@ export function isRecallQuestion(lower: string): boolean {
 const REMINDER_WORD_RE = /\b(?:reminders?|alarms?|nudges?|alerts?)\b/
 const NON_REMINDER_OBJECT_RE = /\b(?:lists?|grocer(?:y|ies)|shopping|duplicates?|dupes?|subscriptions?|memberships?|accounts?|drafts?|e-?mails?|mails?|orders?|bookings?|tickets?|expenses?|notes?)\b/
 const STATEMENT_CLAUSE_RE = /,\s*(?:i|we)\b|\b(?:because|since|as i|i'm|i am|i'll|i will|i have|i've|we're|we are)\b/
+// Kept in step with isStopOneReminder in handlers/edit-reminder.ts (this file stays free of handler imports).
+const STOP_ONE_REMINDER_LOCAL = /^(?:please\s+|pls\s+)?stop\s+(?:(?:this|that|the|my)\s+)?(?!(?:.*\s)?(?:all|every|any|sending|getting|these|those)\s)(?:[a-z0-9'’-]+\s+){0,3}?reminder\b(?!s)(?:\s+(?:please|pls|now))?\s*[.!]*$/i
 export function leadingVerbEditsReminder(lower: string): boolean {
   if (REMINDER_WORD_RE.test(lower)) return true
   if (STATEMENT_CLAUSE_RE.test(lower)) return false
@@ -226,7 +228,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (isReferralIntent(lower)) return { type: 'referral_flow', confidence: 'high' }
 
-  if (lower === 'show reminders' || lower === 'show my reminders' || lower === 'my reminders' || lower === 'pending reminders' || lower === 'active reminders' || lower === 'list reminders' || lower === 'what are my reminders' || lower === 'what reminders do i have' || lower.includes('show pending reminders') || (/^(?:cancel|delete|remove)\b/i.test(lower) && leadingVerbEditsReminder(lower)) || /^clear reminder\b/i.test(lower) || /^stop reminder\b/i.test(lower) || /^done\s+\d+\b/i.test(lower) || /^complete\s+\d+\b/i.test(lower) || /^mark\s+\d+\s+done\b/i.test(lower) || /^snooze\s+\d+\s+(for\s+)?\d+\s*(minute|minutes|min|mins|hour|hours)\b/i.test(lower) || lower === 'done' || lower === 'mark done' || lower === 'completed' || lower === 'complete' || lower === 'finished' || lower === 'mark as done' || /^snooze\b/i.test(lower) || /^move it\b/i.test(lower) || /^move reminder\b/i.test(lower) || /^reschedule\b/i.test(lower) || /^tomorrow instead$/i.test(lower) || /^change it to\b/i.test(lower) || (/^skip\b/i.test(lower) && leadingVerbEditsReminder(lower)) || lower === 'not today') return { type: 'edit_reminder', confidence: 'high' }
+  if (lower === 'show reminders' || lower === 'show my reminders' || lower === 'my reminders' || lower === 'pending reminders' || lower === 'active reminders' || lower === 'list reminders' || lower === 'what are my reminders' || lower === 'what reminders do i have' || lower.includes('show pending reminders') || (/^(?:cancel|delete|remove)\b/i.test(lower) && leadingVerbEditsReminder(lower)) || /^clear reminder\b/i.test(lower) || /^stop reminder\b/i.test(lower) || STOP_ONE_REMINDER_LOCAL.test(lower) || /^done\s+\d+\b/i.test(lower) || /^complete\s+\d+\b/i.test(lower) || /^mark\s+\d+\s+done\b/i.test(lower) || /^snooze\s+\d+\s+(for\s+)?\d+\s*(minute|minutes|min|mins|hour|hours)\b/i.test(lower) || lower === 'done' || lower === 'mark done' || lower === 'completed' || lower === 'complete' || lower === 'finished' || lower === 'mark as done' || /^snooze\b/i.test(lower) || /^move it\b/i.test(lower) || /^move reminder\b/i.test(lower) || /^reschedule\b/i.test(lower) || /^tomorrow instead$/i.test(lower) || /^change it to\b/i.test(lower) || (/^skip\b/i.test(lower) && leadingVerbEditsReminder(lower)) || lower === 'not today') return { type: 'edit_reminder', confidence: 'high' }
 
   if (isBriefingSettingsIntent(lower)) return { type: 'set_briefing_time', confidence: 'high' }
 

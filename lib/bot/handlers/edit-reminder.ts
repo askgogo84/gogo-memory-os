@@ -178,6 +178,14 @@ function isShowReminderCommand(input: string) {
   )
 }
 
+// 19 Nov live: "Stop this reminder" was read as chat. One reminder, said with "stop": "stop reminder", "stop this
+// reminder", "stop the water reminder". Never the plural or "all" (that is the opt-out's), never "stop reminding me".
+const STOP_ONE_REMINDER = /^(?:please\s+|pls\s+)?stop\s+(?:(?:this|that|the|my)\s+)?(?:[a-z0-9'’-]+\s+){0,3}?reminder\b(?!s)(?:\s+(?:please|pls|now))?\s*[.!]*$/i
+export function isStopOneReminder(input: string): boolean {
+  const t = String(input || '').trim()
+  return t.length <= 80 && STOP_ONE_REMINDER.test(t) && !/\b(?:all|every|any|sending|getting|these|those)\b/i.test(t)
+}
+
 export function isCancelReminderCommand(input: string) {
   const lower = input.toLowerCase().trim()
 
@@ -186,7 +194,7 @@ export function isCancelReminderCommand(input: string) {
     /^delete\b/i.test(lower) ||
     /^remove\b/i.test(lower) ||
     /^clear reminder\b/i.test(lower) ||
-    /^stop reminder\b/i.test(lower)
+    isStopOneReminder(lower)
   )
 }
 
