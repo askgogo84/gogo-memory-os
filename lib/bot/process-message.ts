@@ -36,7 +36,7 @@ import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from 
 import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand, pendingReminderTimingProblem } from './pending-followup'
 import { tryResolvePendingQuestion } from './pending-question-resolver'
 import { styleReplyByIntent } from './handlers/response-style'
-import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime, reminderTimingProblem, isContentlessReminderRequest } from './handlers/reminders'
+import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime, reminderTimingProblem, isContentlessReminderRequest, stripSchedulingNote } from './handlers/reminders'
 import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice, amPmReminderTimingProblem } from './handlers/reminder-ampm-followup'
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
@@ -379,6 +379,9 @@ async function createReminder(
   pattern?: string,
   whatsappTo?: string | null
 ) {
+  // 20 Nov (owner): a reminder read "…included the note Time is not specified, so use Asia/Kolkata". Every reminder saved
+  // from chat passes through here, whichever parser or model wrote its text.
+  message = stripSchedulingNote(message) || message
   message = await resolvePronounReminder(chatId, message)
   const timezone = await resolveReminderTimezone(telegramId)
   if (pattern) {
