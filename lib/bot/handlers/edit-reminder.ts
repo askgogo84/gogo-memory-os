@@ -564,7 +564,14 @@ export async function cancelReminder(telegramId: number, input: string) {
     if (fired) {
       const same = reminders.filter((item: any) => cleanReminderName(item.message).toLowerCase() === cleanReminderName(fired.message).toLowerCase() && String(item.recurring_pattern || '') === String(fired.recurring_pattern || ''))
       if (same.length > 1) return reminderDisambiguation('cancel', reminders, same)
-      if (!same.length) return `*${cleanReminderName(fired.message)}* has already gone off and won’t repeat, so there’s nothing to stop.`
+      if (!same.length) {
+        // A snoozed copy of a repeating reminder is a one-off row: never say "won't repeat" while the series is still running.
+        const name = cleanReminderName(fired.message)
+        const series = reminders.some((item: any) => item.recurring_pattern && cleanReminderName(item.message).toLowerCase() === name.toLowerCase())
+        return series
+          ? `That *${name}* reminder has already gone off. The repeating one is still on. To stop it, say *cancel ${name.toLowerCase()} reminder*.`
+          : `*${name}* has already gone off, so there’s nothing to stop.`
+      }
       reminder = same[0]
     }
   }

@@ -25,6 +25,7 @@ runInNewContext(js, {
   // Pure placeholder for the two unrelated presentation helpers.
   safe: (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim(),
   destinationLabel: () => 'trip',
+  stripSchedulingNote: (v: unknown) => String(v ?? ''),
 }, { timeout: 2000, filename: 'shipped-reminder-helper-inert.js' })
 
 const parseTask = mockExports.reminderTaskFromRequest as (text: string) => string | null

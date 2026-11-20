@@ -78,6 +78,7 @@ const fakes: Record<string, unknown> = {
     return mockQuery()
   } } },
   '@/lib/bot/detect-intent': { isReminderReadQuestion: () => false },
+  '@/lib/bot/stop-reminder-phrase': { isStopOneReminder: () => false, stopReminderCore: (v: unknown) => String(v ?? '') },
   '@/lib/bot/reminder-dedup': { isInternalPlanStepReminder: () => false },
   '@/lib/services/reminder-series': {
     stopReminderSeries: async (telegramId: number, reminder: Row) => {
