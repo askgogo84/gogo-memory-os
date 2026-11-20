@@ -8,6 +8,7 @@
 // to phrase the request for the existing handlers, which keep every approval and Sentinel check. Short replies
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
+import { isConnectMailAsk } from '../email/connect-phrases'
 import { tripAsk } from '@/lib/agent/trip-plan'
 import { personAsk } from '@/lib/agent/people'
 import { ORDER_LIST_RE } from './order-tracking'
@@ -97,6 +98,8 @@ export function isExactCommand(text: string): boolean {
     || PAYMENT_GATE.test(t)
     // 7 Nov live: a trip with a place and dates has a plan handler; the brain asked what it should include.
     || !!tripAsk(t)
+    // 20 Nov live: "Connect my mail" was told to type the exact command. The connect handler owns every connect ask.
+    || isConnectMailAsk(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,

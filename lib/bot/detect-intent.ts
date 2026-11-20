@@ -1,4 +1,5 @@
 import { isDriveWriteRequest } from './drive-write-request'
+import { isConnectMailAsk } from '../email/connect-phrases'
 import { isTimeFirstReminder, isContentlessReminderRequest } from './reminder-command'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { classifyCheckVerb } from '@/lib/data/lists-core'
@@ -231,7 +232,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (isDetailedBriefingReadRequest(lower) || lower === 'today' || lower === 'today summary' || lower === 'today briefing' || lower === 'what is today' || lower === 'morning briefing' || lower === 'daily briefing' || lower === 'good morning' || lower === 'brief me' || lower === "what's my day today" || lower === 'whats my day today' || lower === "what's my day" || lower === 'my day today' || lower === 'my briefing' || lower === 'my day') return { type: 'morning_briefing', confidence: 'high' }
 
-  if (lower.includes('connect my gmail') || lower.includes('connect to my gmail') || lower.includes('connect gmail') || lower.includes('connect to gmail') || lower.includes('link gmail') || lower.includes('gmail connect')) return { type: 'connect_gmail', confidence: 'high' }
+  if (lower.includes('connect my gmail') || lower.includes('connect to my gmail') || lower.includes('connect gmail') || lower.includes('connect to gmail') || lower.includes('link gmail') || lower.includes('gmail connect') || isConnectMailAsk(lower)) return { type: 'connect_gmail', confidence: 'high' }
 
   // Muse case 18 (11 Oct): "Draft replies to my unread work emails from today" went to web search.
   if (/\bdraft\s+(?:some\s+)?repl(?:y|ies)\s+(?:to|for)\s+(?:all\s+)?(?:my\s+)?(?:unread|new|latest|today'?s|work)\b[^.?!]{0,30}\b(?:e-?mails?|mails?|inbox)\b/i.test(lower)) return { type: 'read_gmail', confidence: 'high' }
