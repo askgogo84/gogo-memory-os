@@ -11,6 +11,14 @@ COPY api/ ./api/
 COPY src/lib/ ./src/lib/
 COPY src/stm/ ./src/stm/
 
+# Pinned upstream v0.4.0 uses an Express 4 catch-all route. Express 5 requires
+# a named wildcard; join captured path segments for the existing path validator.
+# Keep this change inside the isolated third-party lab image only.
+RUN sed -i "s|researchRoutes.get('/batch/\\*'|researchRoutes.get('/batch/*file'|" api/routes/research.ts \\
+ && sed -i "s|const filePath = req.params\\[0\\]|const filePath = Array.isArray(req.params.file) ? req.params.file.join('/') : req.params.file|" api/routes/research.ts \\
+ && grep -Fq "researchRoutes.get('/batch/*file'" api/routes/research.ts \\
+ && grep -Fq "req.params.file.join('/')" api/routes/research.ts
+
 ENV NODE_ENV=production PORT=7860
 EXPOSE 7860
 USER node
