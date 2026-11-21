@@ -81,23 +81,23 @@ eq(oauth.codeChallengeMethod, 'S256')
 eq(oauth.codeChallenge.length > 35, true)
 eq(oauth.state.length > 35, true)
 eq(oauth.expiresAt, now + 600_000)
-await blocked(() => consumePartnerOAuthCallback({store: oauthStore, principal: other,
+await blocked(() => consumePartnerOAuthCallback({source, store: oauthStore, principal: other,
   provider: 'zomato', state: oauth.state, code: 'mock-code', redirectUri: callback, now}), 'owner_mismatch')
 // Deliberately consumed on wrong owner; state is one-time even on rejection.
-await blocked(() => consumePartnerOAuthCallback({store: oauthStore, principal,
+await blocked(() => consumePartnerOAuthCallback({source, store: oauthStore, principal,
   provider: 'zomato', state: oauth.state, code: 'mock-code', redirectUri: callback, now}), 'invalid_oauth_state')
 const oauth2 = await issuePartnerOAuthIntent({source, store: oauthStore, principal,
   provider: 'zomato', scopes: ['read:restaurant'], redirectUri: callback, now})
-const finalized = await consumePartnerOAuthCallback({store: oauthStore, principal,
+const finalized = await consumePartnerOAuthCallback({source, store: oauthStore, principal,
   provider: 'zomato', state: oauth2.state, code: 'mock-code', redirectUri: callback, now})
 eq(finalized.code, 'mock-code')
 eq(finalized.scopes, ['read:restaurant'])
 eq(finalized.codeVerifier.length > 40, true)
-await blocked(() => consumePartnerOAuthCallback({store: oauthStore, principal,
+await blocked(() => consumePartnerOAuthCallback({source, store: oauthStore, principal,
   provider: 'zomato', state: oauth2.state, code: 'mock-code', redirectUri: callback, now}), 'invalid_oauth_state')
 const oauth3 = await issuePartnerOAuthIntent({source, store: oauthStore, principal,
   provider: 'zomato', scopes: ['read:restaurant'], redirectUri: callback, now})
-await blocked(() => consumePartnerOAuthCallback({store: oauthStore, principal,
+await blocked(() => consumePartnerOAuthCallback({source, store: oauthStore, principal,
   provider: 'zomato', state: oauth3.state, code: 'mock-code', redirectUri: callback, now: now + 601_000}),
   'expired_oauth_state')
 
