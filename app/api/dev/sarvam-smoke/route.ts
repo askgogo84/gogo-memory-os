@@ -14,7 +14,7 @@ const clip = (v: unknown, n = 220) => String(v ?? '').replace(/\s+/g, ' ').trim(
 
 async function run(name: string, fn: () => Promise<Record<string, unknown>>): Promise<Check> {
   const t0 = Date.now()
-  try { return { name, ok: true, ms: Date.now() - t0, detail: await fn() } }
+  try { const detail = await fn(); return { name, ok: true, ms: Date.now() - t0, detail } }
   catch (e) { return { name, ok: false, ms: Date.now() - t0, detail: { error: e instanceof SarvamProviderError ? e.message : 'unexpected_error' } } }
 }
 
