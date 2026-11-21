@@ -1,0 +1,28 @@
+name: G0DM0D3 local lab static validation
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/g0dm0d3-lab/**'
+      - 'docs/evaluations/g0dm0d3-isolated-lab.md'
+      - '.github/workflows/g0dm0d3-lab-static.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate scripts without credentials or network calls
+        run: |
+          bash -n scripts/g0dm0d3-lab/install.sh
+          node --check scripts/g0dm0d3-lab/smoke.mjs
+          grep -Fq 'f6301765fb90eb7b336bdf365319cd2fe44b1187' scripts/g0dm0d3-lab/install.sh
+          grep -Fq 'contribute_to_dataset: false' scripts/g0dm0d3-lab/smoke.mjs
+          grep -Fq 'godmode: false' scripts/g0dm0d3-lab/smoke.mjs
+          grep -Fq 'parseltongue: false' scripts/g0dm0d3-lab/smoke.mjs
+          grep -Fq '127.0.0.1:' scripts/g0dm0d3-lab/install.sh
