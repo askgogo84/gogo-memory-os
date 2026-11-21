@@ -43,14 +43,22 @@ console.log('✓ the five global switches and the Prism shadow reach only listed
 }
 console.log('✓ the person served is read from the request, and concurrent requests stay separate')
 
-// The brain switch keeps its own owner canary and the base gate, exactly as before.
-assert.equal(gate.sarvamEnabled('GOGO_SARVAM_BRAIN', on('GOGO_SARVAM_BRAIN'), null), true)
-assert.equal(gate.sarvamEnabled('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_BRAIN: 'on', SARVAM_API_KEY: 'k', VERCEL_ENV: 'production' }, OWNER), false)
+// The brain switch needs the list too (its own canary lists phones and may include other people), and its canary still runs first.
+assert.equal(gate.sarvamEnabled('GOGO_SARVAM_BRAIN', on('GOGO_SARVAM_BRAIN'), OWNER), false, 'brain with no list: nobody')
+assert.equal(gate.sarvamEnabled('GOGO_SARVAM_BRAIN', on('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_USERS: OWNER }), OWNER), true)
+assert.equal(gate.sarvamEnabled('GOGO_SARVAM_BRAIN', on('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_USERS: OWNER }), OTHER), false)
 for (const env of [{}, { GOGO_SARVAM_BRAIN: 'on' }, on('GOGO_SARVAM_BRAIN'), { GOGO_SARVAM_BRAIN: 'on', SARVAM_API_KEY: 'k' }, { GOGO_SARVAM_BRAIN: 'on', SARVAM_API_KEY: 'k', VERCEL_ENV: 'production' }])
   assert.equal(gate.sarvamBaseEnabled('GOGO_SARVAM_BRAIN', env as any), base.sarvamEnabled('GOGO_SARVAM_BRAIN', env as any), JSON.stringify(env))
 const brain = readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8')
-assert.match(brain, /if \(!brainEnabledFor\(p\.phone\) \|\| isExactCommand\(p\.text\)\) return null/, 'the brain owner canary still runs first')
-console.log('✓ the brain switch is unchanged: its own owner canary plus the base gate')
+assert.match(brain, /if \(!brainEnabledFor\(p\.phone\) \|\| isExactCommand\(p\.text\)\) return null/, 'the brain canary still runs first')
+// A phone number in the list is not an id and serves nobody; a numeric id matches its text form.
+assert.equal(gate.sarvamEnabled('GOGO_SARVAM_STT', on('GOGO_SARVAM_STT', { GOGO_SARVAM_USERS: '918884500000' }), '-884500000'), false)
+assert.equal(gate.sarvamEnabled('GOGO_SARVAM_STT', on('GOGO_SARVAM_STT', { GOGO_SARVAM_USERS: '-884500000' }), -884500000), true)
+// The production path sets the person with meterAs after an await, once per request; requests stay separate.
+{ const flag = 'GOGO_SARVAM_TTS', env = on(flag, { GOGO_SARVAM_USERS: OWNER })
+  const request = (who: string, ms: number) => meter.runMeteredAs('', async () => { await new Promise(r => setTimeout(r, 1)); meter.meterAs(who, 'whatsapp'); await new Promise(r => setTimeout(r, ms)); return gate.sarvamEnabled(flag, env) })
+  assert.deepEqual(await Promise.all([request(OWNER, 20), request(OTHER, 5), request(OWNER, 1)]), [true, false, true]) }
+console.log('✓ the brain switch needs the list too; phone numbers are not ids; meterAs per request stays separate')
 
 // Every call site uses the one shared gate; no private copy can drift.
 for (const [file, from] of [['lib/agent/brain.ts', '../services/sarvam-gate'], ['lib/agent/planner-provider.ts', '../services/sarvam-gate'], ['lib/services/claude.ts', './sarvam-gate'], ['lib/services/voice-reply.ts', './sarvam-gate'], ['lib/services/voice-transcription.ts', './sarvam-gate'], ['lib/services/whisper.ts', './sarvam-gate']] as const) {

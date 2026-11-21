@@ -47,12 +47,16 @@ Coordination: issue #274. Separate files from Claude's Nov 17 voice-call, remind
 
 `GOGO_SARVAM_DIALOGUE`, `GOGO_SARVAM_WEB_ANSWER`, `GOGO_SARVAM_PLANNER`, `GOGO_SARVAM_STT`, `GOGO_SARVAM_TTS` and
 `GOGO_SARVAM_PRISM_SHADOW` were global: "on" meant every user. They now also require the person being served to be listed in
-`GOGO_SARVAM_USERS` (comma-separated ids as used by the metering context, for example the owner's `-884501501`).
+`GOGO_SARVAM_USERS`. `GOGO_SARVAM_BRAIN` needs the list too, on top of its own canary.
+
+The list takes `users.telegram_id` values (comma-separated), NOT phone numbers: `GOGO_BRAIN_USERS` takes phones, this list does
+not. Copy the id from the person's `users` row or from `cost_events.telegram_id`. A phone number here matches nobody.
 
 - Unset or empty list: the switch reaches nobody, even when it is "on" and production is approved.
 - Unknown person (a job with no metering context, such as a cron): the existing provider is used.
 - No wildcard. `*` and `all` are ignored.
-- `GOGO_SARVAM_BRAIN` is unchanged: it stays behind the brain's own owner canary.
+- Only WhatsApp inbound and dashboard chat set the person served. Telegram voice, the dashboard Listen button and crons have
+  no person, so they keep the existing provider even for a listed id. A speech-to-text canary therefore covers WhatsApp voice notes.
 - The gate lives in `lib/services/sarvam-gate.ts`; all six call sites import it. It chooses a model only and grants no permission.
 
 Order for a canary, one switch at a time, each with the owner's explicit approval:

@@ -7,8 +7,8 @@
 // Unknown person, empty list or unset list means the existing provider is used. Nothing here grants any permission:
 // it only chooses which model answers, and every approval gate downstream is untouched.
 //
-// GOGO_SARVAM_BRAIN is the exception by design: it already sits behind the brain's own owner canary
-// (brainEnabledFor), so it keeps the base gate only.
+// GOGO_SARVAM_BRAIN applies the same list, on top of the brain's own canary (brainEnabledFor). That canary lists phones in
+// GOGO_BRAIN_USERS and may include people other than the owner, so the brain needs the list too (review, 21 Nov).
 //
 // Pure: no Supabase, no provider import. Ids are compared as strings and never converted to a number.
 import { currentMeterContext } from '../metering/core'
@@ -25,12 +25,9 @@ export function sarvamAllowlist(env: Env = process.env): Set<string> {
   return new Set(String(env.GOGO_SARVAM_USERS || '').split(',').map(s => s.trim()).filter(s => /^-?\d{3,20}$/.test(s) || /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(s)).slice(0, 200))
 }
 
-const OWNER_CANARIED = new Set(['GOGO_SARVAM_BRAIN'])
-
 /** Whether this Sarvam switch applies to the person this request serves. `who` defaults to the metering context. */
 export function sarvamEnabled(flag: string, env: Env = process.env, who: string | number | null | undefined = currentMeterContext()?.telegramId): boolean {
   if (!sarvamBaseEnabled(flag, env)) return false
-  if (OWNER_CANARIED.has(flag)) return true
   const id = who == null ? '' : String(who).trim()
   return !!id && sarvamAllowlist(env).has(id)
 }

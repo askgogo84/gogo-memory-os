@@ -47,6 +47,7 @@ function validToolInput(value: unknown, schema: unknown, depth = 0): boolean {
   return false
 }
 
+/** Base gate only, kept for the #1536 test. Call sites must use sarvamEnabled from './sarvam-gate', which also checks GOGO_SARVAM_USERS. */
 export const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
   env[flag] === 'on' && !!env.SARVAM_API_KEY && (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
 
