@@ -10,9 +10,10 @@ import { beginApprovedVoiceCall, voicePlanHash, voiceAttemptId } from './voice-c
 import { capabilityPaused, capabilityPausedText } from './policy'
 
 const BOLNA = 'https://api.bolna.ai'
-export const CALL_AGENT_NAME = 'AskGogo booking caller v2'
+// v3 (21 Nov): phone-menu rule. A new name makes Bolna create the agent with the new instructions on the next call.
+export const CALL_AGENT_NAME = 'AskGogo booking caller v3'
 // 17 Nov: a second agent for any other ask (room, appointment, enquiry). Its instructions come from the plan itself.
-export const GENERAL_CALL_AGENT_NAME = 'AskGogo general caller v2'
+export const GENERAL_CALL_AGENT_NAME = 'AskGogo general caller v3'
 export const DEFAULT_FROM_NUMBER = '+918065539020'
 export const PLAN_STATE = 'voice_call_plan'
 export const MAX_REDIALS = 2
@@ -247,6 +248,7 @@ Rules:
 - Speak briefly and politely, one question at a time, in simple English (switch to Hindi or Kannada if they do).
 - Answer only from the details above. If they ask for anything else (advance, deposit, card, UPI, payment, OTP), say {guest_name} will handle that directly, and do not agree to it.
 - If they want to speak to {guest_name} directly or ask you to call later, thank them, ask the best time to call back, and end the call.
+- If a recorded phone menu answers instead of a person: if it lets you speak, say the option that fits the task (for example \"reservations\", \"front desk\", \"appointments\") or \"speak to a person\". You cannot press keypad keys. If the menu only accepts key presses, or repeats twice without reaching a person, say thank you and end the call. Never invent an answer from a recorded message.
 - Before ending, repeat the final details back (day, time, people, name) and ask for the staff member's name.
 - End politely once the booking is confirmed or refused.`
 
@@ -260,6 +262,7 @@ Rules:
 - Use only the task and details above. Never guess or invent a fact. If they ask for anything you were not given (ID numbers, date of birth, insurance, medical history, address, payment, advance, deposit, card, UPI, OTP), say {guest_name} will share or handle that directly, and do not agree to it.
 - If they offer choices (times, dates, room types, prices), accept one only if it matches the task exactly. Otherwise note the choices, say {guest_name} will confirm, and ask how long they can hold it.
 - If they want to speak to {guest_name} directly or ask you to call later, thank them, ask the best time to call back, and end the call.
+- If a recorded phone menu answers instead of a person: if it lets you speak, say the option that fits the task (for example \"reservations\", \"front desk\", \"appointments\") or \"speak to a person\". You cannot press keypad keys. If the menu only accepts key presses, or repeats twice without reaching a person, say thank you and end the call. Never invent an answer from a recorded message.
 - Before ending, repeat back exactly what was agreed and ask for the person's name.
 - End politely once the request is confirmed, refused, or needs {guest_name}.`
 
@@ -716,8 +719,8 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
       // 21 Oct live: Mercury spent its whole 300-token budget on reasoning and returned nothing, so a finished
       // call read as "couldn't read a clear answer". Claude Haiku reads it; Mercury (bigger budget) is the fallback.
       const prompt = plan.kind === 'general'
-        ? `Read this phone call transcript. The caller's task was: ${plan.purpose}\nReply with JSON only: {"done": true if the other side clearly confirmed or completed that task, or clearly answered the question (a clear no or not available is still an answer), "confirmed": "exactly what they said or confirmed (day, time, room, doctor, price, yes or no) in a few words" or null, "staff_name": name or null, "callback_time": when they asked to be called back or null, "notes": one short plain sentence on what happened}.\n\nTranscript:\n${transcript.slice(-6000)}`
-        : `Read this restaurant booking phone call transcript. Reply with JSON only: {"booked": true only if the restaurant clearly confirmed a table, "confirmed_time": "8:00 pm" or null, "staff_name": name or null, "callback_time": when they asked to be called back or null, "notes": one short plain sentence on what happened}.\nRequested: table for ${plan.partySize} ${plan.dateLabel} at ${plan.timeLabel}.\nTranscript:\n${transcript.slice(-6000)}`
+        ? `Read this phone call transcript. The caller's task was: ${plan.purpose}\nReply with JSON only: {"done": true if the other side clearly confirmed or completed that task, or clearly answered the question (a clear no or not available is still an answer), "confirmed": "exactly what they said or confirmed (day, time, room, doctor, price, yes or no) in a few words" or null, "staff_name": name or null, "callback_time": when they asked to be called back or null, "notes": one short plain sentence on what happened; if a recorded phone menu answered and no person came on, say exactly that}.\n\nTranscript:\n${transcript.slice(-6000)}`
+        : `Read this restaurant booking phone call transcript. Reply with JSON only: {"booked": true only if the restaurant clearly confirmed a table, "confirmed_time": "8:00 pm" or null, "staff_name": name or null, "callback_time": when they asked to be called back or null, "notes": one short plain sentence on what happened; if a recorded phone menu answered and no person came on, say exactly that}.\nRequested: table for ${plan.partySize} ${plan.dateLabel} at ${plan.timeLabel}.\nTranscript:\n${transcript.slice(-6000)}`
       try {
         const { default: Anthropic } = await import('@anthropic-ai/sdk')
         const res: any = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({ model: 'claude-haiku-4-5', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
