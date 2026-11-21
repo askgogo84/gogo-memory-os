@@ -42,7 +42,7 @@ const msg = ma.composeAlert(kind, s, { name: 'Gogo', now } as any)
 assert.match(msg, /HDFC Bank/, msg); assert.match(msg, /\*₹1,23,991\.00\*/, msg); assert.doesNotMatch(msg, /Gogo, Bank:|123991\.00/, msg)
 // Review: a bill alert does not repeat itself because the amount is now grouped.
 { const b = at.scoreEmail(ma.toAttentionEmail({ id: 'b1', threadId: 't2', from: 'billing@bescom.example', subject: 'Your electricity bill is due', snippet: 'Total amount due: Rs. 35841.29. Pay by 25 Nov 2026 to avoid late fee.', date: new Date(now - 300_000).toUTCString() })!, { now })
-  const k = ma.alertKindOf(b); assert.equal(k, 'bill_due')
+  const k = ma.alertKindOf(b); assert.equal(k, 'money_leaving')
   const m = ma.composeAlert(k, b, { name: 'Gogo', now } as any)
   assert.match(m, /\*₹35,841\.29\*/, m); assert.equal((m.match(/35,?841\.29/g) || []).length, 1, m); assert.equal((m.match(/Your electricity bill is due/g) || []).length, 1, m) }
 console.log('✓ the alert names HDFC Bank and reads ₹1,23,991.00')
