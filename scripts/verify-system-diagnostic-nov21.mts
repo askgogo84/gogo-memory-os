@@ -272,7 +272,8 @@ console.log('✓ every agent_runs / agent_approvals / agent_watchers column the 
 assert.equal(d.classifyDiagnosticAsk('diagnostic details'), 'diagnostic')
 assert.equal(d.wantsDiagnosticDetails('diagnostic details'), true)
 assert.equal(d.wantsDiagnosticDetails('Show me the full self-diagnostic report'), true)
-assert.equal(d.wantsDiagnosticDetails('full diagnostic'), true)
+assert.equal(d.wantsDiagnosticDetails('full diagnostic'), false, 'needs self or system')
+
 assert.equal(d.wantsDiagnosticDetails('Run a self-diagnostic'), false)
 {
   const { db } = fakeDb(healthy)
@@ -282,3 +283,44 @@ assert.equal(d.wantsDiagnosticDetails('Run a self-diagnostic'), false)
   assert.match(short.text, /All 8 checks OK/)
 }
 console.log('✓ summary first, only problems listed, quiet items in one line, last-3-days alerts and open follow-ups; details on request')
+// ---- Review of PR #1563 ---------------------------------------------------------------------------------------------
+{
+  // A call stuck as running is never 'nothing to test'.
+  const stuck: Tables = { ...healthy, agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'running', updated_at: ago(3), started_at: ago(3) }] }
+  let out = await d.runSystemDiagnostic(actor, { ...fakeDb(stuck), now: NOW, env, ...probes, full: true })
+  let voice = out.checks.find((c: any) => c.key === 'voice'); assert.equal(voice.status, 'degraded'); assert.ok(!voice.quiet)
+  const fresh: Tables = { ...healthy, agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'running', updated_at: ago(0.1), started_at: ago(0.1) }] }
+  out = await d.runSystemDiagnostic(actor, { ...fakeDb(fresh), now: NOW, env, ...probes, full: true })
+  voice = out.checks.find((c: any) => c.key === 'voice'); assert.equal(voice.status, 'unverified'); assert.equal(voice.quiet, false, 'a call in progress is not quiet')
+  // Approvals: a failed decisions read is never hidden as quiet.
+  const db0 = fakeDb({ ...healthy, agent_approvals: [] }).db
+  const failing = { from: (t: string) => { const q = db0.from(t); if (t !== 'agent_approvals') return q; const orig = q.in; q.in = (...a: any[]) => { const r = orig(...a); r.then = (res: any) => Promise.resolve({ data: null, error: { message: 'x' } }).then(res); return r }; return q } }
+  const ap = await d.approvalsCheck(failing, OWNER, NOW)
+  assert.equal(ap.status, 'unverified'); assert.equal(ap.quiet, false)
+}
+{
+  // Housekeeping rows never fill the alerts; markdown characters are stripped; spacing is single.
+  const t: Tables = { ...healthy,
+    agent_activity: [
+      { telegram_id: OWNER, event_type: 'watcher_triggered', created_at: ago(1), message: 'Merged duplicate watch: iPhone', metadata_json: { reason: 'duplicate' } },
+      { telegram_id: OWNER, event_type: 'watcher_triggered', created_at: ago(2), message: 'Contextual watch expired: BLR to BOM', metadata_json: {} },
+      { telegram_id: OWNER, event_type: 'watcher_triggered', created_at: ago(3), message: 'Background Gogo saw the gold rate cross your level: _24K_ ~gold~', metadata_json: { type: 'gold' } },
+    ] }
+  const out = await d.runSystemDiagnostic(actor, { ...fakeDb(t), now: NOW, env, ...probes })
+  assert.doesNotMatch(out.text, /Merged duplicate|Contextual watch expired/)
+  assert.match(out.text, /Background Gogo saw the gold rate cross your level: 24K gold/)
+  assert.doesNotMatch(out.text, /\n\n\n/, 'never two blank lines')
+  assert.match(out.text, /All 8 checks OK, checked just now\.\n\n\*In the last 3 days\*/)
+}
+{
+  const one = d.formatDiagnosticSummary([{ key: 'm', label: 'Memory', status: 'operational', evidence: 'x', at: null }], NOW)
+  assert.match(one, /1 check OK, checked just now\./)
+  const none = d.formatDiagnosticSummary([{ key: 'w', label: 'Background watchers', status: 'unverified', evidence: 'x', at: null, quiet: true }], NOW)
+  assert.match(none, /Nothing failed, and there was nothing recent to test\.\nNothing recent to test: Background watchers\./)
+  assert.doesNotMatch(none, /All 0/)
+}
+// "diagnostic report?" may be a lab or car report: ambiguous, never the check outright.
+for (const t of ['diagnostic report', 'the diagnostic report', 'show me the diagnostic report', 'diagnostic report?', 'diagnostics report', 'run a full diagnostic', 'full diagnostic']) assert.notEqual(d.classifyDiagnosticAsk(t), 'diagnostic', t)
+for (const t of ['send me the diagnostic report', 'car diagnostic report', 'my diagnostic report', 'lab diagnostic report', 'what did the diagnostic report say']) assert.equal(d.classifyDiagnosticAsk(t), null, t)
+for (const t of ['diagnostic details', 'self-diagnostic report', 'full self-diagnostic', 'system diagnostic report']) { assert.equal(d.classifyDiagnosticAsk(t), 'diagnostic', t); assert.equal(d.wantsDiagnosticDetails(t), true, t) }
+console.log('✓ review fixes: stuck calls and failed reads are never quiet, housekeeping is not an alert, bare "diagnostic report" asks first')

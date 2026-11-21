@@ -32,7 +32,7 @@ const SELF_CHECK = new RegExp(String.raw`^${RUN}(?:(?:askgogo|gogo|system)\s+)?(
   + String.raw`|^(?:diagnose|check|test|verify)\s+${SELF_OBJ}$`, 'i')
 const RUNNING = /^(?:are\s+you|is\s+(?:askgogo|gogo)|is\s+everything|are\s+all\s+(?:your\s+)?(?:systems|services))\s+(?:working|running|up|healthy)(?:\s+(?:properly|correctly|fine|normally|ok|okay))?$|^(?:are\s+you|is\s+(?:askgogo|gogo))\s+(?:ok|okay|fine)$/i
 // Bare words with no object: ask which check is meant.
-const BARE = new RegExp(String.raw`^${RUN}(?:diagnostics?|health\s+check|status\s+check|sanity\s+check)$`, 'i')
+const BARE = new RegExp(String.raw`^(?:show\s+(?:me\s+)?)?${RUN}(?:diagnostics?(?:\s+report)?|health\s+check|status\s+check|sanity\s+check)$`, 'i')
 // A checklist of AskGogo's own parts ("check WhatsApp pairing, connected services, memory persistence …").
 // Only the exact names of AskGogo's own parts (re-review, PR #1559: bare "memory", "voice" and "integrations" took
 // "check the memory, voice and integrations sections in the PRD").
@@ -68,7 +68,8 @@ export function classifyDiagnosticAsk(raw: string): DiagnosticIntent {
 }
 
 // "diagnostic details", "full self-diagnostic", "show the diagnostic report": every check with its evidence.
-const DETAILS = /^(?:show\s+(?:me\s+)?)?(?:the\s+)?(?:full\s+)?(?:self[\s-]?)?diagnostics?\s+(?:details|report|in\s+full)$|^(?:run\s+(?:a\s+)?)?full\s+(?:self[\s-]?)?diagnostics?$|^(?:self[\s-]?)?diagnostic\s+with\s+details$/i
+// Review (PR #1563): "diagnostic report?" or "full diagnostic" can be a lab or car report, so those need self/system.
+const DETAILS = /^(?:show\s+(?:me\s+)?)?(?:the\s+)?(?:full\s+)?(?:self[\s-]?|system\s+)?diagnostics?\s+details$|^(?:show\s+(?:me\s+)?)?(?:the\s+)?(?:full\s+)?(?:self[\s-]?|system\s+)diagnostics?\s+(?:report|in\s+full)$|^(?:run\s+(?:a\s+)?)?full\s+(?:self[\s-]?|system\s+)diagnostics?$|^(?:self[\s-]?|system\s+)?diagnostic\s+with\s+details$/i
 export function wantsDiagnosticDetails(raw: string): boolean {
   const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
   return DETAILS.test(t)
@@ -110,7 +111,7 @@ export function formatDiagnostic(checks: DiagnosticCheck[], now: Date, tz = 'Asi
   ].join('\n')
 }
 
-const clipLine = (v: unknown, n: number) => { const t = String(v ?? '').replace(/\s+/g, ' ').replace(/\*/g, '').trim().replace(/\b\d{9,20}\b/g, d => '••••' + d.slice(-4)); return t.length > n ? t.slice(0, n - 1).replace(/[\s,;:—-]+$/, '') + '…' : t }
+const clipLine = (v: unknown, n: number) => { const t = String(v ?? '').replace(/\s+/g, ' ').replace(/[*_~`]/g, '').trim().replace(/\b\d{9,20}\b/g, d => '••••' + d.slice(-4)); return t.length > n ? t.slice(0, n - 1).replace(/[\s,;:—-]+$/, '') + '…' : t }
 
 /** 21 Nov (owner, after comparing with Instinct): one line first, only what needs a look, then what came in. */
 export function formatDiagnosticSummary(checks: DiagnosticCheck[], now: Date, tz = 'Asia/Kolkata', queued: QueuedItem[] = []): string {
@@ -119,7 +120,8 @@ export function formatDiagnosticSummary(checks: DiagnosticCheck[], now: Date, tz
   const look = checks.filter(c => c.status !== 'operational' && !(c.status === 'unverified' && c.quiet))
   const head = look.length
     ? `${ICON.degraded} ${ok.length} OK, ${look.length} need${look.length === 1 ? 's' : ''} a look:`
-    : `${ICON.operational} All ${ok.length} checks OK, checked just now.`
+    : ok.length >= 2 ? `${ICON.operational} All ${ok.length} checks OK, checked just now.`
+    : ok.length === 1 ? `${ICON.operational} 1 check OK, checked just now.` : 'Nothing failed, and there was nothing recent to test.'
   const lines = look.map(c => `${ICON[c.status]} *${c.label}*: ${WORD[c.status]}${c.at ? ` (${whenLabel(c.at, tz)})` : ''}. ${c.evidence}`)
   const alerts = queued.filter(q => q.kind === 'alert'), open = queued.filter(q => q.kind === 'open')
   return [
@@ -131,18 +133,19 @@ export function formatDiagnosticSummary(checks: DiagnosticCheck[], now: Date, tz
     open.length ? `\n*Still open*\n${open.map(q => `• ${clipLine(q.text, 120)}${q.at ? ` (due ${whenLabel(q.at, tz)})` : ''}`).join('\n')}` : '',
     '',
     'Reply *diagnostic details* for every check and its evidence. This was read-only: nothing was sent, called, scheduled, approved, bought or changed.',
-  ].filter((l, i, a) => l !== '' || (i > 0 && a[i - 1] !== '')).join('\n')
+  ].join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
 /** Read-only: watcher alerts from the last 3 days and the top open follow-ups. Failures give an empty list. */
 export async function queuedForYou(db: Db, owner: string, now: Date): Promise<QueuedItem[]> {
   const since = new Date(now.getTime() - 3 * DAY).toISOString()
   const [alerts, loops] = await Promise.all([
-    rows(db.from('agent_activity').select('message,created_at').eq('telegram_id', owner).eq('event_type', 'watcher_triggered').gte('created_at', since).order('created_at', { ascending: false }).limit(3)),
+    rows(db.from('agent_activity').select('message,metadata_json,created_at').eq('telegram_id', owner).eq('event_type', 'watcher_triggered').gte('created_at', since).order('created_at', { ascending: false }).limit(12)),
     rows(db.from('agent_open_loops').select('title,due_at').eq('telegram_id', owner).eq('status', 'active').in('kind', ['followup', 'waiting_on', 'commitment']).order('priority', { ascending: false }).limit(3)),
   ])
   return [
-    ...(alerts.ok ? alerts.data : []).filter((a: any) => a?.message).map((a: any) => ({ kind: 'alert' as const, at: a.created_at || null, text: String(a.message) })),
+    // Review (PR #1563): watch housekeeping (merged, stopped, expired) shares the event type; it is not an alert.
+    ...(alerts.ok ? alerts.data : []).filter((a: any) => a?.message && !a?.metadata_json?.reason && !/^(?:Merged duplicate watch|Stopped watch whose date passed|Contextual watch expired)\b/.test(String(a.message))).slice(0, 3).map((a: any) => ({ kind: 'alert' as const, at: a.created_at || null, text: String(a.message) })),
     ...(loops.ok ? loops.data : []).filter((l: any) => l?.title).map((l: any) => ({ kind: 'open' as const, at: l.due_at || null, text: String(l.title) })),
   ]
 }
@@ -273,7 +276,7 @@ export async function approvalsCheck(db: Db, owner: string, now: Date): Promise<
   const lastAt = last?.resolved_at && Number.isFinite(Date.parse(last.resolved_at)) ? String(last.resolved_at) : null
   if (lastAt && now.getTime() - Date.parse(lastAt) <= 7 * DAY) return check('approvals', L, 'operational', `${waiting} Your latest decision (${last.status}) was recorded at the time shown.`, lastAt)
   // Nothing waiting and no recent decision: nothing to test, not a problem (owner, 21 Nov).
-  return { ...check('approvals', L, 'unverified', `${waiting} No approval decision in the last 7 days confirms the approval flow.`, lastAt), quiet: n === 0 }
+  return { ...check('approvals', L, 'unverified', `${waiting} No approval decision in the last 7 days confirms the approval flow.`, lastAt), quiet: n === 0 && decided.ok }
 }
 
 export async function voiceCheck(db: Db, owner: string, env: Record<string, string | undefined>, now: Date): Promise<DiagnosticCheck> {
@@ -285,7 +288,12 @@ export async function voiceCheck(db: Db, owner: string, env: Record<string, stri
   const r = await rows(db.from('agent_runs').select('status,completed_at,updated_at,started_at').eq('telegram_id', owner).eq('type', 'voice_call').order('started_at', { ascending: false }).limit(5))
   if (!r.ok) return check('voice', L, 'unverified', `Configured, but I couldn't read your call history.${hours}`)
   const last = r.data.find((x: any) => ['completed', 'failed', 'outcome_unknown'].includes(String(x.status)))
-  if (!last) return { ...check('voice', L, 'unverified', `Configured, but no call has a provider-confirmed result yet.${hours}`), quiet: true }
+  // Review (PR #1563): quiet only when there is no call at all. A call still marked running after an hour needs a look.
+  const running = r.data.find((x: any) => String(x.status) === 'running')
+  const runningAt = running ? (running.updated_at || running.started_at || null) : null
+  if (running && runningAt && now.getTime() - Date.parse(runningAt) > HOUR && (!last || Date.parse(String(runningAt)) > Date.parse(String(last.completed_at || last.updated_at || last.started_at || 0))))
+    return check('voice', L, 'degraded', `A call has been marked as in progress for over an hour without a result.${hours}`, runningAt)
+  if (!last) return { ...check('voice', L, 'unverified', r.data.length ? `A call is in progress; no provider result yet.${hours}` : `Configured, but no call has a provider-confirmed result yet.${hours}`, runningAt), quiet: r.data.length === 0 }
   // 21 Nov live: agent_runs has started_at, not created_at; the first version's query failed and read as unverified.
   const at = last.completed_at || last.updated_at || last.started_at || null
   if (last.status === 'completed') return check('voice', L, 'operational', `The calling provider reported your latest call as completed.${hours}`, at)
