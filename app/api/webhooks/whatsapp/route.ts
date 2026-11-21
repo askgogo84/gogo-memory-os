@@ -1137,6 +1137,18 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // an ordinary "call mom and ask about lunch" keeps the brain and the reminder path (review, PR #1534).
     const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
       || (/^\s*(?:[a-z,!']+\s+){0,6}(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m => m.parseCallCommand(text)?.kind === 'book', () => false))
+    // 21 Nov: "run a self-diagnostic" / "health check" gets a read-only report before goal intake, the brain or the
+    // planner can turn it into a plan or a task (lib/agent/system-diagnostic). Review (PR #1559): never for a forwarded
+    // message, a friend-reminder flow or an approval reply, which keep their own handlers. Imported only on a likely ask.
+    if (!preserveFriendFlow && !forwardedMessage && !approvalIntent(text) && text.length <= 400 && /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|running|up|healthy)|are\s+you\s+(?:working|up|ok|okay|fine|running|healthy)|(?:askgogo|gogo)\s+(?:working|up|ok|okay|fine|running|healthy|status)|yourself|pairing|persistence|watchers|integrations|connected\s+services|approvals|memory|voice/i.test(text)) {
+      const diag: any = await import('@/lib/agent/system-diagnostic').then(async m => m.trySystemDiagnostic(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' }), text), () => null)
+      if (diag) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', diag.text)
+        await sendWhatsAppMessage(from, diag.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // Goal-to-Done (Addendum 5): a message with several goals ("organize a birthday, check flight prices, prepare three
     // emails…") becomes one plan of who does what, before any single-goal hook (Events included) takes one piece of it.
     // Also its replies (missing details, "get it done") while that plan is open. Owners in GOGO_GOAL_INTAKE only; null
