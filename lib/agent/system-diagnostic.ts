@@ -16,52 +16,58 @@ export type DiagnosticCheck = { key: string; label: string; status: DiagnosticSt
 export type DiagnosticIntent = 'diagnostic' | 'ambiguous' | null
 
 // ---- intent (pure) ----------------------------------------------------------------------------------------------
-// Words that name a check of a system. A bare "diagnose" (why am I tired?) or "diagnosis" (the doctor's) is not one.
-const DIAG_WORD = /\b(?:self[\s-]?(?:diagnos\w*|tests?|checks?)|diagnostics?|health[\s-]?checks?|system\s+(?:checks?|status|health|tests?)|status\s+checks?|sanity\s+checks?)\b/i
-const DIAGNOSE_VERB = /\bdiagnose\b/i
-const RUNNING_ASK = /\b(?:is|are)\s+(?:everything|all\s+(?:your\s+|the\s+)?(?:systems?|services?))\s+(?:working|ok|okay|fine|up|running|healthy)\b|^(?:are\s+you|is\s+(?:askgogo|gogo))\s+(?:working|up|running|ok|okay|fine|healthy)(?:\s+(?:properly|correctly|fine|normally|right\s+now|now))?\s*\??$/i
-const STRONG_SYSTEM = /\b(?:askgogo|gogo|yourself|self[\s-]?(?:diagnos\w*|tests?|checks?)|system|systems)\b/i
-const SYSTEM_OBJ = /\b(?:askgogo|gogo|yourself|your\s+(?:systems?|services?|setup)|the\s+(?:bot|assistant|app)|everything|all\s+(?:your\s+|the\s+)?(?:systems?|services?)|system|systems)\b/i
+// Review (PR #1559): matching words anywhere took real requests ("remind me to do a system check tomorrow", "Tipplr
+// system status", "is everything ok with Divya", "sanity check my resume"). Only a whole message that asks AskGogo to
+// check itself counts. Anything else (a time, an action, another subject, extra words) falls through untouched.
+const LEAD = /^(?:(?:hey|hi|ok|okay)\s+)?(?:(?:ask)?gogo\s*[,:]\s*)?(?:(?:please|pls|kindly)\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?/i
+const TAIL = /(?:\s+(?:please|pls|now|right\s+now|for\s+me))*\s*[?.!]*$/i
+const SELF_OBJ = String.raw`(?:yourself|askgogo|gogo|your\s+(?:systems?|services|setup|connections)|all\s+(?:of\s+)?(?:your\s+)?(?:systems|services))`
+const RUN = String.raw`(?:(?:run|do|start|perform|give\s+me)\s+)?(?:(?:a|an|the|your)\s+)?(?:(?:full|quick|complete|proper)\s+)?`
+// "run a self-diagnostic", "full system health check", "askgogo health check", "run diagnostics on yourself"
+const SELF_CHECK = new RegExp(String.raw`^${RUN}(?:(?:askgogo|gogo|system)\s+)?(?:self[\s-]?(?:diagnostics?|tests?|checks?)|system\s+(?:health\s+)?(?:checks?|status|diagnostics?|tests?)|(?:askgogo|gogo)\s+(?:health\s+check|status|diagnostics?))(?:\s+(?:on|of|for)\s+${SELF_OBJ})?$`
+  + String.raw`|^${RUN}(?:askgogo|gogo|system)\s+health\s+check$`
+  + String.raw`|^${RUN}(?:diagnostics?|health\s+check|status\s+check)\s+(?:on|of|for)\s+${SELF_OBJ}$`
+  + String.raw`|^(?:diagnose|check|test|verify)\s+${SELF_OBJ}$`, 'i')
+const RUNNING = /^(?:are\s+you|is\s+(?:askgogo|gogo)|is\s+everything|are\s+all\s+(?:your\s+)?(?:systems|services))\s+(?:working|running|up|healthy)(?:\s+(?:properly|correctly|fine|normally|ok|okay))?$|^(?:are\s+you|is\s+(?:askgogo|gogo))\s+(?:ok|okay|fine)$/i
+// Bare words with no object: ask which check is meant.
+const BARE = new RegExp(String.raw`^${RUN}(?:diagnostics?|health\s+check|status\s+check|sanity\s+check)$`, 'i')
+// A checklist of AskGogo's own parts ("check WhatsApp pairing, connected services, memory persistence …").
 const COMPONENTS = [
-  /\bwhatsapp(?:\s+(?:pairing|link(?:ing)?|connection|delivery))?\b/i,
-  /\bconnected\s+(?:services|accounts|apps)\b|\b(?:connections|integrations)\b/i,
-  /\bmemory(?:\s+persistence)?\b/i,
-  /\b(?:background\s+)?watch(?:ers|es)\b/i,
-  /\b(?:pending\s+)?approvals?\b/i,
+  /\bwhatsapp\s+(?:pairing|link(?:ing)?|connection)\b/i,
+  /\bconnected\s+(?:services|accounts|apps)\b|\bintegrations\b/i,
+  /\bmemory\s+persistence\b|\bmemory\b/i,
+  /\b(?:background\s+)?watchers\b/i,
+  /\bpending\s+approvals\b|\bapprovals?\s+queue\b/i,
   /\bvoice(?:\s+calls?)?\b/i,
-  /\bscheduled\s+(?:tasks|jobs|reminders)\b|\bschedulers?\b|\bcron\b|\breminder\s+delivery\b/i,
+  /\bscheduled\s+(?:tasks|jobs|reminders)\b|\bschedulers?\b|\breminder\s+delivery\b/i,
 ]
-// Something other than AskGogo being checked: a person's health, a vehicle, a device, an order, a trip.
-const OTHER_SUBJECT = /\b(?:body|blood|bp|sugar|heart|doctor|clinic|hospital|check[\s-]?up|medical|ecg|thyroid|cholesterol|lab|annual|preventive|master\s+health|pregnan\w*|baby|kid|son|daughter|mom|mum|dad|mother|father|wife|husband|car|bike|scooter|vehicle|laptop|phone|computer|pc|mac|printer|router|wifi|website|site|server|order|flight|pnr|train|booking|parcel|delivery\s+(?:of|for))\b|\bmy\s+health\b/i
-// The same message also asks for an action; the check never does it.
-const ACTION = /\b(?:send|e-?mail|call|ring|book|reserve|buy|order|pay|purchase|schedule|remind\s+me|set\s+up|create|add|delete|remove|cancel|approve|reject|connect|disconnect|reconnect|fix|repair|restart|reset|update|change|turn\s+(?:on|off)|enable|disable|share|post|forward)\b/i
-const CHECK_VERB = /\b(?:check|verify|test|confirm|validate|status|working|diagnos\w*|audit|inspect)\b/i
-const actionIn = (t: string) => ACTION.test(t.replace(/\bconnected\b/gi, ''))
+const CHECKLIST_LEAD = /^(?:(?:run|do)\s+(?:a\s+)?(?:full\s+)?(?:self[\s-]?diagnostics?|system\s+(?:check|diagnostics?)|diagnostics?|health\s+check)\s*[:,\-–]\s*)?(?:check|verify|test|confirm)\b/i
+// The checklist must not schedule, send or act, name a time, or be about someone or something else.
+const ACTION = /\b(?:send|e-?mail|text|call|ring|book|reserve|buy|order|pay|purchase|schedule|remind|set\s+up|create|add|delete|remove|cancel|approve|reject|connect|disconnect|reconnect|fix|repair|restart|reset|update|change|turn\s+(?:on|off)|enable|disable|share|post|forward|skip|draft)\b/i
+const TIMEY = /\b(?:today|tonight|tomorrow|morning|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekly|daily|monthly|every|at\s+\d|\d{1,2}\s*(?:am|pm)|\d{1,2}:\d{2})\b/i
+const actionIn = (t: string) => ACTION.test(t.replace(/\bconnected\b/gi, '').replace(/\bscheduled\b/gi, ''))
+
+function core(raw: string): string {
+  return String(raw || '').replace(/[’]/g, "'").replace(/\s+/g, ' ').trim().replace(LEAD, '').replace(TAIL, '').trim()
+}
 
 export function classifyDiagnosticAsk(raw: string): DiagnosticIntent {
-  const t = String(raw || '').replace(/[’]/g, "'").replace(/\s+/g, ' ').trim()
-  if (t.length < 4 || t.length > 600) return null
+  const full = String(raw || '').replace(/\s+/g, ' ').trim()
+  if (full.length < 4 || full.length > 400 || /\n/.test(String(raw || '').trim())) return null
+  const t = core(full)
+  if (!t) return null
+  if (SELF_CHECK.test(t) || RUNNING.test(t)) return 'diagnostic'
+  if (BARE.test(t)) return 'ambiguous'
   const parts = COMPONENTS.filter(re => re.test(t)).length
-  const strong = STRONG_SYSTEM.test(t)
-  const diag = DIAG_WORD.test(t) || RUNNING_ASK.test(t) || (DIAGNOSE_VERB.test(t) && SYSTEM_OBJ.test(t))
-  // A checklist of AskGogo's own parts counts without the word "diagnostic"; anything less is someone else's ask.
-  if (!diag && !(parts >= 3 && CHECK_VERB.test(t))) return null
-  if (OTHER_SUBJECT.test(t) && !strong) return null
-  // A check plus an action ("run a self-diagnostic and send it to Divya"): say the check never acts. Without a clear
-  // system word ("book a health check", "remind me to check WhatsApp, approvals and voice notes") it is not ours.
-  if (actionIn(t)) return diag && strong ? 'ambiguous' : null
-  if (RUNNING_ASK.test(t) || strong || SYSTEM_OBJ.test(t) || parts >= 2) return 'diagnostic'
-  return 'ambiguous'
+  if (parts >= 3 && CHECKLIST_LEAD.test(t) && !actionIn(t) && !TIMEY.test(t)) return 'diagnostic'
+  return null
 }
 
 /** Cheap pre-check for route files, so the module is only imported for a likely ask. */
-export const DIAGNOSTIC_GATE = /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|ok|fine|up)|(?:working|running)\s+(?:properly|correctly|fine)|are\s+you\s+(?:working|up|ok|okay|fine|running)|pairing|persistence|watchers/i
+export const DIAGNOSTIC_GATE = /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|running|up|healthy)|are\s+you\s+(?:working|up|ok|okay|fine|running|healthy)|(?:askgogo|gogo)\s+(?:working|up|ok|okay|fine|running|healthy|status)|yourself|pairing|persistence|watchers|integrations|connected\s+services|approvals|memory|voice/i
 
-export function ambiguousDiagnosticReply(raw: string): string {
-  const mixed = actionIn(String(raw || ''))
-  return mixed
-    ? "I can run a read-only self-diagnostic, but it never sends, calls, books, schedules, approves or changes anything. Reply *run self-diagnostic* for the check on its own, and ask for the other part separately. Nothing was changed."
-    : "Do you want me to check AskGogo itself: WhatsApp, connected accounts, memory, watchers, approvals, voice calls and reminders? Reply *run self-diagnostic*. If you meant something else, tell me what to check. Nothing was changed."
+export function ambiguousDiagnosticReply(_raw?: string): string {
+  return "Do you want me to check AskGogo itself: WhatsApp, connected accounts, memory, watchers, approvals, voice calls and reminders? Reply *run self-diagnostic*. If you meant something else, tell me what to check. Nothing was changed."
 }
 
 // ---- formatting (pure) -------------------------------------------------------------------------------------------
@@ -101,7 +107,7 @@ export type DiagnosticDeps = {
   now?: Date
   env?: Record<string, string | undefined>
   gmailProbe?: (actor: AgentActor) => Promise<{ email: string | null; checkedAt: string }>
-  calendarProbe?: (owner: string, refreshToken: string | null) => Promise<{ emails: string[]; unavailable: number }>
+  calendarProbe?: (owner: string, refreshToken: string | null) => Promise<{ emails: string[]; accounts: number; unavailable: number }>
   timeoutMs?: number
 }
 
@@ -150,7 +156,7 @@ function gmailFailure(code: string): { status: DiagnosticStatus; text: string } 
 
 export async function gmailCheck(actor: AgentActor, user: any, probe: NonNullable<DiagnosticDeps['gmailProbe']>, ms: number): Promise<DiagnosticCheck> {
   const L = 'Gmail'
-  if (!user?.gmail_connected) return check('gmail', L, 'blocked', 'Not connected.')
+  if (!user?.gmail_connected) return check('gmail', L, 'blocked', 'Not connected with Google sign-in.')
   const res = await withTimeout(probe(actor).then(v => ({ ok: true as const, v }), (e: any) => ({ ok: false as const, code: String(e?.message || 'error') })), ms, { ok: false as const, code: 'timeout' })
   if (res.ok) return check('gmail', L, 'operational', `Google answered a live read of the mailbox${res.v.email ? ` ${clean(res.v.email, 80)}` : ''}.`, res.v.checkedAt)
   const f = gmailFailure('code' in res ? res.code : 'error')
@@ -162,8 +168,10 @@ export async function calendarCheck(owner: string, user: any, probe: NonNullable
   if (!user?.google_calendar_connected) return check('calendar', L, 'blocked', 'Not connected.')
   const res = await withTimeout(probe(owner, user.google_refresh_token ? String(user.google_refresh_token) : null).then(v => ({ ok: true as const, v }), () => ({ ok: false as const })), ms, { ok: false as const })
   if (!res.ok) return check('calendar', L, 'unverified', "Google didn't answer the check, so I can't confirm Calendar is working.")
-  const { emails, unavailable } = res.v
-  if (!emails.length) return check('calendar', L, 'blocked', 'Google did not accept the saved Calendar sign-in. Reconnect Calendar to restore it.')
+  const { emails, accounts, unavailable } = res.v
+  if (!accounts) return check('calendar', L, 'blocked', 'Google did not accept the saved Calendar sign-in. Reconnect Calendar to restore it.')
+  // Review (PR #1559): a sign-in Google accepted but whose calendar it did not return is not a refusal.
+  if (!emails.length) return check('calendar', L, 'unverified', "Google accepted the sign-in but didn't return the calendar, so I can't confirm it.")
   const who = emails.slice(0, 3).map(e => clean(e, 80)).join(', ')
   return unavailable > 0
     ? check('calendar', L, 'degraded', `Google answered for ${who}, but ${unavailable} linked account${unavailable === 1 ? '' : 's'} did not.`, now.toISOString())
@@ -199,13 +207,21 @@ export async function watchersCheck(db: Db, owner: string, now: Date): Promise<D
 
 export async function approvalsCheck(db: Db, owner: string, now: Date): Promise<DiagnosticCheck> {
   const L = 'Pending approvals'
-  const r = await rows(db.from('agent_approvals').select('id,requested_at', { count: 'exact' }).eq('telegram_id', owner).eq('status', 'pending').order('requested_at', { ascending: true }).limit(20))
-  if (!r.ok) return check('approvals', L, 'unverified', "I couldn't read the approval queue.")
-  const n = r.count ?? r.data.length
-  if (!n) return check('approvals', L, 'operational', 'The approval queue was read: nothing is waiting for your OK.', now.toISOString())
-  const oldest = r.data[0]?.requested_at || null
-  const stale = oldest && now.getTime() - Date.parse(oldest) > 7 * DAY
-  return check('approvals', L, stale ? 'degraded' : 'operational', `${n} waiting for your OK${oldest ? `, the oldest since ${whenLabel(oldest)}` : ''}.${stale ? ' Some are over a week old.' : ''} Nothing runs without your approval.`, now.toISOString())
+  // Review (PR #1559): reading the queue proves nothing about the flow. Operational needs an approval decision
+  // recorded in the last 7 days; otherwise the queue is reported as read but unverified.
+  const [pending, decided] = await Promise.all([
+    rows(db.from('agent_approvals').select('id,requested_at', { count: 'exact' }).eq('telegram_id', owner).eq('status', 'pending').order('requested_at', { ascending: true }).limit(20)),
+    rows(db.from('agent_approvals').select('status,resolved_at').eq('telegram_id', owner).in('status', ['approved', 'rejected']).order('resolved_at', { ascending: false }).limit(1)),
+  ])
+  if (!pending.ok) return check('approvals', L, 'unverified', "I couldn't read the approval queue.")
+  const n = pending.count ?? pending.data.length
+  const oldest = pending.data[0]?.requested_at || null
+  const waiting = n ? `${n} waiting for your OK, the oldest since ${whenLabel(oldest)}. Nothing runs without your approval.` : 'Nothing is waiting for your OK.'
+  if (oldest && now.getTime() - Date.parse(oldest) > 7 * DAY) return check('approvals', L, 'degraded', `${waiting} Some are over a week old.`, oldest)
+  const last = decided.ok ? decided.data[0] : null
+  const lastAt = last?.resolved_at && Number.isFinite(Date.parse(last.resolved_at)) ? String(last.resolved_at) : null
+  if (lastAt && now.getTime() - Date.parse(lastAt) <= 7 * DAY) return check('approvals', L, 'operational', `${waiting} Your latest decision (${last.status}) was recorded at the time shown.`, lastAt)
+  return check('approvals', L, 'unverified', `${waiting} No approval decision in the last 7 days confirms the approval flow.`, lastAt)
 }
 
 export async function voiceCheck(db: Db, owner: string, env: Record<string, string | undefined>, now: Date): Promise<DiagnosticCheck> {
@@ -253,9 +269,9 @@ export async function runSystemDiagnostic(actor: AgentActor, deps: DiagnosticDep
   const calendarProbe = deps.calendarProbe || (async (o: string, refresh: string | null) => {
     let unavailable = 0
     const accounts = await (await import('@/lib/services/google-calendar-accounts')).getCalendarAccountAccess(o, refresh, () => { unavailable++ })
-    return { emails: accounts.map(a => a.email).filter((e): e is string => !!e), unavailable }
+    return { emails: accounts.map(a => a.email).filter((e): e is string => !!e), accounts: accounts.length, unavailable }
   })
-  const u = await rows(db.from('users').select('whatsapp_id,gmail_connected,google_calendar_connected,google_refresh_token').eq('telegram_id', owner).maybeSingle())
+  const u = await withTimeout(rows(db.from('users').select('whatsapp_id,gmail_connected,google_calendar_connected,google_refresh_token').eq('telegram_id', owner).maybeSingle()), ms, { data: [], count: null, ok: false })
   const user = u.ok ? u.data[0] || null : null
   const guard = (key: string, label: string, p: Promise<DiagnosticCheck>) => withTimeout(p, ms + 1000, check(key, label, 'unverified', 'The check did not finish in time.'))
   const unreadUser = (key: string, label: string) => Promise.resolve(check(key, label, 'unverified', "I couldn't read your account record."))

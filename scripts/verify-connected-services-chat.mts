@@ -47,6 +47,7 @@ const dash=load('app/api/dashboard/chat/route.ts',{
  crypto:{randomUUID:()=> 'fixture-decision'},'next/server':{NextResponse:{json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}},
  '@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},
  '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'fixture',legacyTelegramId:123,whatsappId:'fixture-owner',name:'Example'})},
+ '@/lib/agent/system-diagnostic':{trySystemDiagnostic:async()=>null},
  '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{assert.equal(table,'users');const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{telegram_id:123,whatsapp_id:'fixture-owner',name:'Example'}})};return q}}},
  '@/lib/agent/autonomy-status':actual,'@/lib/bot/process-message':pm,
  '@/lib/agent/browser-command':{...noop,tryRunBrowserCommand:()=>{throw Error('private services read reached browser')}},
