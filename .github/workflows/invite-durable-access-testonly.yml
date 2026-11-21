@@ -1,0 +1,34 @@
+name: Invite access must persist before join (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-invite-durable-access-testonly.mts'
+      - '.github/workflows/invite-durable-access-testonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  negative-invite-durable-access:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal PR head checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Exercise real access gate against synthetic invite persistence failures
+        run: npx --yes tsx scripts/verify-invite-durable-access-testonly.mts
