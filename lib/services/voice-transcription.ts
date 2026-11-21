@@ -149,7 +149,7 @@ export async function transcribeTwilioVoiceNote(params: {
   if (sarvamEnabled('GOGO_SARVAM_STT')) {
     try {
       const { sarvamSpeechToText } = await import('./sarvam-voice')
-      const transcript = await sarvamSpeechToText(arrayBuffer, contentType)
+      const transcript = await sarvamSpeechToText(arrayBuffer, contentType, { mode: 'codemix' })
       return transcript.text
     } catch (e: any) {
       console.error('SARVAM_STT_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50))
