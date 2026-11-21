@@ -42,6 +42,9 @@ const NOT_OURS = [
   'remind me to check WhatsApp pairing, approvals queue and voice notes tomorrow', 'call Divya and check if she is working today',
   "Organize Divya's birthday, check flight prices to Goa and prepare three emails", 'are you there?', 'approvals', 'watchers', 'hi',
   'Fwd: Weekly system health check report\nAll services green.',
+  'check the memory, voice and integrations sections in the PRD', 'check memory usage, voice quality and integrations of the laptop',
+  'Check integrations, memory and voice for CreditIQ', 'Check memory, voice notes and integrations for the Tipplr team',
+  'test voice, memory and integrations on the new build', 'check my memory, integrations and voice settings',
 ]
 for (const t of NOT_OURS) assert.equal(d.classifyDiagnosticAsk(t), null, t)
 console.log('✓ diagnostic, ambiguous and unrelated asks are told apart')

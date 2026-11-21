@@ -32,14 +32,16 @@ const RUNNING = /^(?:are\s+you|is\s+(?:askgogo|gogo)|is\s+everything|are\s+all\s
 // Bare words with no object: ask which check is meant.
 const BARE = new RegExp(String.raw`^${RUN}(?:diagnostics?|health\s+check|status\s+check|sanity\s+check)$`, 'i')
 // A checklist of AskGogo's own parts ("check WhatsApp pairing, connected services, memory persistence …").
+// Only the exact names of AskGogo's own parts (re-review, PR #1559: bare "memory", "voice" and "integrations" took
+// "check the memory, voice and integrations sections in the PRD").
 const COMPONENTS = [
   /\bwhatsapp\s+(?:pairing|link(?:ing)?|connection)\b/i,
-  /\bconnected\s+(?:services|accounts|apps)\b|\bintegrations\b/i,
-  /\bmemory\s+persistence\b|\bmemory\b/i,
-  /\b(?:background\s+)?watchers\b/i,
+  /\bconnected\s+(?:services|accounts|apps)\b/i,
+  /\bmemory\s+persistence\b/i,
+  /\bbackground\s+watchers\b/i,
   /\bpending\s+approvals\b|\bapprovals?\s+queue\b/i,
-  /\bvoice(?:\s+calls?)?\b/i,
-  /\bscheduled\s+(?:tasks|jobs|reminders)\b|\bschedulers?\b|\breminder\s+delivery\b/i,
+  /\bvoice\s+calls?\b/i,
+  /\bscheduled\s+(?:tasks|jobs|reminders)\b|\breminder\s+delivery\b/i,
 ]
 const CHECKLIST_LEAD = /^(?:(?:run|do)\s+(?:a\s+)?(?:full\s+)?(?:self[\s-]?diagnostics?|system\s+(?:check|diagnostics?)|diagnostics?|health\s+check)\s*[:,\-–]\s*)?(?:check|verify|test|confirm)\b/i
 // The checklist must not schedule, send or act, name a time, or be about someone or something else.
@@ -211,7 +213,7 @@ export async function approvalsCheck(db: Db, owner: string, now: Date): Promise<
   // recorded in the last 7 days; otherwise the queue is reported as read but unverified.
   const [pending, decided] = await Promise.all([
     rows(db.from('agent_approvals').select('id,requested_at', { count: 'exact' }).eq('telegram_id', owner).eq('status', 'pending').order('requested_at', { ascending: true }).limit(20)),
-    rows(db.from('agent_approvals').select('status,resolved_at').eq('telegram_id', owner).in('status', ['approved', 'rejected']).order('resolved_at', { ascending: false }).limit(1)),
+    rows(db.from('agent_approvals').select('status,resolved_at').eq('telegram_id', owner).in('status', ['approved', 'rejected', 'executed', 'failed']).order('resolved_at', { ascending: false, nullsFirst: false }).limit(1)),
   ])
   if (!pending.ok) return check('approvals', L, 'unverified', "I couldn't read the approval queue.")
   const n = pending.count ?? pending.data.length
