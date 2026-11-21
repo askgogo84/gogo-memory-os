@@ -244,8 +244,10 @@ const dueWords = (text: string, now: number) => {
 }
 /** True when the "ask" line only repeats the subject and amount (Amazon Pay, 6 Nov: "Payment Reminder · ₹15"). */
 const restates = (ask: string, subject: string, amt: string | undefined) => {
-  const pool = `${subject} ${amt || ''}`.toLowerCase()
-  const words = ask.toLowerCase().split(/[^a-z0-9₹$.,]+/).filter(w => w.length > 2)
+  // Amounts are compared by their digits: the alert shows ₹35,841.29 where the mail (and the ask) wrote 35841.29.
+  const plain = (t: string) => t.toLowerCase().replace(/(?<=\d),(?=\d)/g, '')
+  const pool = plain(`${subject} ${amt || ''}`)
+  const words = plain(ask).split(/[^a-z0-9₹$.,]+/).filter(w => w.length > 2)
   return words.length === 0 || words.every(w => pool.includes(w))
 }
 
