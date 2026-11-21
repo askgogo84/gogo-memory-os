@@ -125,7 +125,7 @@ const probes = {
 const env = { BOLNA_API_KEY: 'inert' }
 {
   const { db, writes } = fakeDb(healthy)
-  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env, ...probes })
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env, ...probes, full: true })
   const by = Object.fromEntries(out.checks.map((c: any) => [c.key, c]))
   for (const k of ['whatsapp', 'gmail', 'calendar', 'memory', 'watchers', 'approvals', 'voice', 'scheduled']) assert.equal(by[k].status, 'operational', k + ': ' + by[k].evidence)
   for (const c of out.checks) { assert.ok(c.at && Number.isFinite(Date.parse(c.at)), 'timestamp: ' + c.key); assert.ok(c.evidence.length > 10, 'evidence: ' + c.key) }
@@ -229,7 +229,7 @@ console.log('✓ route gates match the module gate')
   const schema = readFileSync(new URL('../supabase/agent-os-v1.sql', import.meta.url), 'utf8')
   const cols = (table: string) => new Set((schema.match(new RegExp(`create table if not exists ${table} \\(([\\s\\S]*?)\\n\\);`))?.[1] || '').split('\n').map(l => l.trim().split(/\s+/)[0]).filter(Boolean))
   const mod = readFileSync(new URL('../lib/agent/system-diagnostic.ts', import.meta.url), 'utf8')
-  for (const table of ['agent_runs', 'agent_approvals', 'agent_watchers']) {
+  for (const table of ['agent_runs', 'agent_approvals', 'agent_watchers', 'agent_activity']) {
     const known = cols(table); assert.ok(known.size > 5, 'schema parsed: ' + table)
     for (const m of mod.matchAll(new RegExp(`from\\('${table}'\\)([^\\n]*)`, 'g'))) {
       const used = [...m[1].matchAll(/\.select\('([^']*)'/g)].flatMap(x => x[1].split(',')).concat([...m[1].matchAll(/\.(?:eq|in|order|gte|lte|lt|gt)\('([a-z_]+)'/g)].map(x => x[1]))
@@ -238,3 +238,47 @@ console.log('✓ route gates match the module gate')
   }
 }
 console.log('✓ every agent_runs / agent_approvals / agent_watchers column the diagnostic reads exists in the schema')
+
+// ---- 22 Nov: the summary reply (owner-approved after comparing with Instinct) ------------------------------------
+{
+  const withQueue: Tables = { ...healthy,
+    agent_activity: [
+      { telegram_id: OWNER, event_type: 'watcher_triggered', created_at: ago(5), message: 'Gold alert: 24K at ₹12,557/g, about 15% below your Oct 19 level.' },
+      { telegram_id: OWNER, event_type: 'watcher_triggered', created_at: ago(24 * 5), message: 'Too old to show' },
+      { telegram_id: '999', event_type: 'watcher_triggered', created_at: ago(1), message: "Someone else's alert" },
+    ],
+    agent_open_loops: [{ telegram_id: OWNER, status: 'active', kind: 'followup', priority: 0.9, title: 'Swiggy Builders: no reply to your Nov 13 submission', due_at: null }],
+  }
+  const { db, writes } = fakeDb(withQueue)
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env, ...probes })
+  assert.match(out.text, /^\*AskGogo self-diagnostic\*, 21 Nov, 9:30 pm\n✅ All 8 checks OK, checked just now\./)
+  assert.doesNotMatch(out.text, /WhatsApp pairing/, 'working checks are not listed one by one')
+  assert.match(out.text, /\*In the last 3 days\*\n• 21 Nov, 4:30 pm · Gold alert: 24K at ₹12,557\/g/)
+  assert.doesNotMatch(out.text, /Too old to show|Someone else/)
+  assert.match(out.text, /\*Still open\*\n• Swiggy Builders: no reply to your Nov 13 submission/)
+  assert.match(out.text, /Reply \*diagnostic details\* for every check and its evidence\. This was read-only/)
+  assert.deepEqual(writes, [])
+}
+{
+  // One real problem is listed with its reason; quiet items are named in one line and not counted as problems.
+  const t: Tables = { ...healthy, agent_approvals: [], agent_watchers: [],
+    agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'outcome_unknown', updated_at: ago(2), started_at: ago(2) }] }
+  const { db } = fakeDb(t)
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env, ...probes })
+  assert.match(out.text, /\n⚠️ 5 OK, 1 needs a look:\n⚠️ \*Voice calls\*: Degraded \(21 Nov, 7:30 pm\)\. Your latest call has an unconfirmed outcome/)
+  assert.match(out.text, /\nNothing recent to test: Background watchers, Pending approvals\./)
+  assert.doesNotMatch(out.text, /❔/, 'quiet items get no warning icon')
+}
+assert.equal(d.classifyDiagnosticAsk('diagnostic details'), 'diagnostic')
+assert.equal(d.wantsDiagnosticDetails('diagnostic details'), true)
+assert.equal(d.wantsDiagnosticDetails('Show me the full self-diagnostic report'), true)
+assert.equal(d.wantsDiagnosticDetails('full diagnostic'), true)
+assert.equal(d.wantsDiagnosticDetails('Run a self-diagnostic'), false)
+{
+  const { db } = fakeDb(healthy)
+  const full = await d.trySystemDiagnostic(actor, 'diagnostic details', { db, now: NOW, env, ...probes })
+  assert.match(full.text, /Overall: 8 operational\./); assert.match(full.text, /WhatsApp pairing/)
+  const short = await d.trySystemDiagnostic(actor, 'Run a self-diagnostic', { db, now: NOW, env, ...probes })
+  assert.match(short.text, /All 8 checks OK/)
+}
+console.log('✓ summary first, only problems listed, quiet items in one line, last-3-days alerts and open follow-ups; details on request')

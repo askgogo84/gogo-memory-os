@@ -12,7 +12,9 @@
 import type { AgentActor } from './actor'
 
 export type DiagnosticStatus = 'operational' | 'degraded' | 'blocked' | 'unverified'
-export type DiagnosticCheck = { key: string; label: string; status: DiagnosticStatus; at: string | null; evidence: string }
+/** quiet: unverified only because there was nothing recent to test (no watchers, no calls, no approvals). */
+export type DiagnosticCheck = { key: string; label: string; status: DiagnosticStatus; at: string | null; evidence: string; quiet?: boolean }
+export type QueuedItem = { kind: 'alert' | 'open'; at: string | null; text: string }
 export type DiagnosticIntent = 'diagnostic' | 'ambiguous' | null
 
 // ---- intent (pure) ----------------------------------------------------------------------------------------------
@@ -58,11 +60,18 @@ export function classifyDiagnosticAsk(raw: string): DiagnosticIntent {
   if (full.length < 4 || full.length > 400 || /\n/.test(String(raw || '').trim())) return null
   const t = core(full)
   if (!t) return null
-  if (SELF_CHECK.test(t) || RUNNING.test(t)) return 'diagnostic'
+  if (SELF_CHECK.test(t) || RUNNING.test(t) || DETAILS.test(t)) return 'diagnostic'
   if (BARE.test(t)) return 'ambiguous'
   const parts = COMPONENTS.filter(re => re.test(t)).length
   if (parts >= 3 && CHECKLIST_LEAD.test(t) && !actionIn(t) && !TIMEY.test(t)) return 'diagnostic'
   return null
+}
+
+// "diagnostic details", "full self-diagnostic", "show the diagnostic report": every check with its evidence.
+const DETAILS = /^(?:show\s+(?:me\s+)?)?(?:the\s+)?(?:full\s+)?(?:self[\s-]?)?diagnostics?\s+(?:details|report|in\s+full)$|^(?:run\s+(?:a\s+)?)?full\s+(?:self[\s-]?)?diagnostics?$|^(?:self[\s-]?)?diagnostic\s+with\s+details$/i
+export function wantsDiagnosticDetails(raw: string): boolean {
+  const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
+  return DETAILS.test(t)
 }
 
 /** Cheap pre-check for route files, so the module is only imported for a likely ask. */
@@ -85,6 +94,7 @@ export function whenLabel(iso: string | null | undefined, tz = 'Asia/Kolkata'): 
     .replace(/\s?([ap])\.?m\.?/i, ' $1m').toLowerCase().replace(/^(\d+) ([a-z]{3})/, (_m, d, mo) => `${d} ${mo[0].toUpperCase()}${mo.slice(1)}`)
 }
 
+/** Every check with its evidence ("diagnostic details"). */
 export function formatDiagnostic(checks: DiagnosticCheck[], now: Date, tz = 'Asia/Kolkata'): string {
   const counts = (['operational', 'degraded', 'blocked', 'unverified'] as DiagnosticStatus[])
     .map(s => [s, checks.filter(c => c.status === s).length] as const).filter(([, n]) => n > 0)
@@ -100,6 +110,43 @@ export function formatDiagnostic(checks: DiagnosticCheck[], now: Date, tz = 'Asi
   ].join('\n')
 }
 
+const clipLine = (v: unknown, n: number) => { const t = String(v ?? '').replace(/\s+/g, ' ').replace(/\*/g, '').trim().replace(/\b\d{9,20}\b/g, d => '••••' + d.slice(-4)); return t.length > n ? t.slice(0, n - 1).replace(/[\s,;:—-]+$/, '') + '…' : t }
+
+/** 21 Nov (owner, after comparing with Instinct): one line first, only what needs a look, then what came in. */
+export function formatDiagnosticSummary(checks: DiagnosticCheck[], now: Date, tz = 'Asia/Kolkata', queued: QueuedItem[] = []): string {
+  const ok = checks.filter(c => c.status === 'operational')
+  const quiet = checks.filter(c => c.status === 'unverified' && c.quiet)
+  const look = checks.filter(c => c.status !== 'operational' && !(c.status === 'unverified' && c.quiet))
+  const head = look.length
+    ? `${ICON.degraded} ${ok.length} OK, ${look.length} need${look.length === 1 ? 's' : ''} a look:`
+    : `${ICON.operational} All ${ok.length} checks OK, checked just now.`
+  const lines = look.map(c => `${ICON[c.status]} *${c.label}*: ${WORD[c.status]}${c.at ? ` (${whenLabel(c.at, tz)})` : ''}. ${c.evidence}`)
+  const alerts = queued.filter(q => q.kind === 'alert'), open = queued.filter(q => q.kind === 'open')
+  return [
+    `*AskGogo self-diagnostic*, ${whenLabel(now.toISOString(), tz)}`,
+    head,
+    ...lines,
+    quiet.length ? `Nothing recent to test: ${quiet.map(c => c.label).join(', ')}.` : '',
+    alerts.length ? `\n*In the last 3 days*\n${alerts.map(q => `• ${q.at ? `${whenLabel(q.at, tz)} · ` : ''}${clipLine(q.text, 160)}`).join('\n')}` : '',
+    open.length ? `\n*Still open*\n${open.map(q => `• ${clipLine(q.text, 120)}${q.at ? ` (due ${whenLabel(q.at, tz)})` : ''}`).join('\n')}` : '',
+    '',
+    'Reply *diagnostic details* for every check and its evidence. This was read-only: nothing was sent, called, scheduled, approved, bought or changed.',
+  ].filter((l, i, a) => l !== '' || (i > 0 && a[i - 1] !== '')).join('\n')
+}
+
+/** Read-only: watcher alerts from the last 3 days and the top open follow-ups. Failures give an empty list. */
+export async function queuedForYou(db: Db, owner: string, now: Date): Promise<QueuedItem[]> {
+  const since = new Date(now.getTime() - 3 * DAY).toISOString()
+  const [alerts, loops] = await Promise.all([
+    rows(db.from('agent_activity').select('message,created_at').eq('telegram_id', owner).eq('event_type', 'watcher_triggered').gte('created_at', since).order('created_at', { ascending: false }).limit(3)),
+    rows(db.from('agent_open_loops').select('title,due_at').eq('telegram_id', owner).eq('status', 'active').in('kind', ['followup', 'waiting_on', 'commitment']).order('priority', { ascending: false }).limit(3)),
+  ])
+  return [
+    ...(alerts.ok ? alerts.data : []).filter((a: any) => a?.message).map((a: any) => ({ kind: 'alert' as const, at: a.created_at || null, text: String(a.message) })),
+    ...(loops.ok ? loops.data : []).filter((l: any) => l?.title).map((l: any) => ({ kind: 'open' as const, at: l.due_at || null, text: String(l.title) })),
+  ]
+}
+
 export const DIAGNOSTIC_FAILED_TEXT = "I couldn't finish the self-diagnostic just now, so every part is unverified and I'm not assuming any of it works. Nothing was sent, called, scheduled or changed. Please try again in a minute."
 
 // ---- checks ------------------------------------------------------------------------------------------------------
@@ -111,6 +158,8 @@ export type DiagnosticDeps = {
   gmailProbe?: (actor: AgentActor) => Promise<{ email: string | null; checkedAt: string }>
   calendarProbe?: (owner: string, refreshToken: string | null) => Promise<{ emails: string[]; accounts: number; unavailable: number }>
   timeoutMs?: number
+  /** Every check with its evidence, and no queued section. */
+  full?: boolean
 }
 
 const HOUR = 3600_000, DAY = 24 * HOUR
@@ -196,7 +245,7 @@ export async function watchersCheck(db: Db, owner: string, now: Date): Promise<D
   const L = 'Background watchers'
   const r = await rows(db.from('agent_watchers').select('id,next_check_at,last_checked_at').eq('telegram_id', owner).eq('active', true).limit(100))
   if (!r.ok) return check('watchers', L, 'unverified', "I couldn't read your watchers.")
-  if (!r.data.length) return check('watchers', L, 'unverified', 'No active watchers, so there is no recent run to confirm.')
+  if (!r.data.length) return { ...check('watchers', L, 'unverified', 'No active watchers, so there is no recent run to confirm.'), quiet: true }
   const late = r.data.filter((w: any) => { const n = Date.parse(String(w.next_check_at || '')); return Number.isFinite(n) && now.getTime() - n > 2 * HOUR })
   const lastRun = r.data.map((w: any) => String(w.last_checked_at || '')).filter(x => Number.isFinite(Date.parse(x))).sort().pop() || null
   if (late.length) {
@@ -223,7 +272,8 @@ export async function approvalsCheck(db: Db, owner: string, now: Date): Promise<
   const last = decided.ok ? decided.data[0] : null
   const lastAt = last?.resolved_at && Number.isFinite(Date.parse(last.resolved_at)) ? String(last.resolved_at) : null
   if (lastAt && now.getTime() - Date.parse(lastAt) <= 7 * DAY) return check('approvals', L, 'operational', `${waiting} Your latest decision (${last.status}) was recorded at the time shown.`, lastAt)
-  return check('approvals', L, 'unverified', `${waiting} No approval decision in the last 7 days confirms the approval flow.`, lastAt)
+  // Nothing waiting and no recent decision: nothing to test, not a problem (owner, 21 Nov).
+  return { ...check('approvals', L, 'unverified', `${waiting} No approval decision in the last 7 days confirms the approval flow.`, lastAt), quiet: n === 0 }
 }
 
 export async function voiceCheck(db: Db, owner: string, env: Record<string, string | undefined>, now: Date): Promise<DiagnosticCheck> {
@@ -235,7 +285,7 @@ export async function voiceCheck(db: Db, owner: string, env: Record<string, stri
   const r = await rows(db.from('agent_runs').select('status,completed_at,updated_at,started_at').eq('telegram_id', owner).eq('type', 'voice_call').order('started_at', { ascending: false }).limit(5))
   if (!r.ok) return check('voice', L, 'unverified', `Configured, but I couldn't read your call history.${hours}`)
   const last = r.data.find((x: any) => ['completed', 'failed', 'outcome_unknown'].includes(String(x.status)))
-  if (!last) return check('voice', L, 'unverified', `Configured, but no call has a provider-confirmed result yet.${hours}`)
+  if (!last) return { ...check('voice', L, 'unverified', `Configured, but no call has a provider-confirmed result yet.${hours}`), quiet: true }
   // 21 Nov live: agent_runs has started_at, not created_at; the first version's query failed and read as unverified.
   const at = last.completed_at || last.updated_at || last.started_at || null
   if (last.status === 'completed') return check('voice', L, 'operational', `The calling provider reported your latest call as completed.${hours}`, at)
@@ -288,7 +338,10 @@ export async function runSystemDiagnostic(actor: AgentActor, deps: DiagnosticDep
     guard('voice', 'Voice calls', voiceCheck(db, owner, env, now)),
     guard('scheduled', 'Scheduled reminders', scheduledCheck(db, owner, now)),
   ])
-  return { text: formatDiagnostic(checks, now, actor.timezone || 'Asia/Kolkata'), checks }
+  const tz = actor.timezone || 'Asia/Kolkata'
+  if (deps.full) return { text: formatDiagnostic(checks, now, tz), checks }
+  const queued = await withTimeout(queuedForYou(db, owner, now), ms, [] as QueuedItem[])
+  return { text: formatDiagnosticSummary(checks, now, tz, queued), checks }
 }
 
 /** Entry for both surfaces. Null when the message is not a diagnostic ask; never throws. */
@@ -298,7 +351,7 @@ export async function trySystemDiagnostic(actor: AgentActor, text: string, deps:
   const base = { handledBy: 'system-diagnostic', status: 'completed' as const, readOnly: true, mutated: false }
   if (intent === 'ambiguous') return { ...base, handledBy: 'system-diagnostic-clarify', text: ambiguousDiagnosticReply(text), checks: [] as DiagnosticCheck[] }
   try {
-    const out = await runSystemDiagnostic(actor, deps)
+    const out = await runSystemDiagnostic(actor, { ...deps, full: deps.full ?? wantsDiagnosticDetails(text) })
     console.log('SYSTEM_DIAGNOSTIC:', JSON.stringify(Object.fromEntries(out.checks.map(c => [c.key, c.status]))))
     return { ...base, text: out.text, checks: out.checks }
   } catch (err: any) {
