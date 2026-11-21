@@ -1,0 +1,1 @@
+npx tsx scripts/verify-bank-in-sender-rupee-format-nov21.mts

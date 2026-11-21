@@ -68,7 +68,9 @@ export function senderDomainOf(from: unknown) {
   const parts = host.split('.')
   if (parts.length <= 2) return host
   const tail2 = parts.slice(-2).join('.')
-  return /^(?:co|com|net|org|gov|ac)\.[a-z]{2}$/.test(tail2) ? parts.slice(-3).join('.') : tail2
+  // 21 Nov live: alerts@hdfcbank.bank.in was read as the sender "bank.in" (named "Bank"), which also made every bank on
+  // India's .bank.in / .fin.in one sender for mute and learning rules.
+  return /^(?:co|com|net|org|gov|ac|bank|fin)\.[a-z]{2}$/.test(tail2) ? parts.slice(-3).join('.') : tail2
 }
 
 export function senderNameOf(from: unknown) {
@@ -80,8 +82,13 @@ export function senderNameOf(from: unknown) {
   const local = email.split('@')[0] || ''
   const domain = senderDomainOf(raw).split('.')[0] || ''
   const base = /^(?:no-?reply|info|hello|support|alerts?|notifications?|mailer|team|news)$/i.test(local) ? domain : local
+  // "hdfcbank" reads as "HDFC Bank", "kotakbank" as "Kotak Bank".
+  const bank = base.toLowerCase().match(/^([a-z]{2,12})bank$/)
+  if (bank) return `${BANK_ACRONYMS.has(bank[1]) ? bank[1].toUpperCase() : bank[1].charAt(0).toUpperCase() + bank[1].slice(1)} Bank`
+  if (BANK_ACRONYMS.has(base.toLowerCase()) && base.length >= 3) return base.toUpperCase()
   return (base.charAt(0).toUpperCase() + base.slice(1)).slice(0, 40) || 'Someone'
 }
+const BANK_ACRONYMS = new Set(['hdfc', 'icici', 'sbi', 'idfc', 'idbi', 'rbl', 'pnb', 'hsbc', 'dbs', 'uco', 'au', 'bob', 'dcb', 'csb', 'ucb'])
 
 function firstName(name: string) {
   return name.split(/\s+/)[0] || name

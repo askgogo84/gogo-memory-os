@@ -87,7 +87,14 @@ export function amountOf(text: string): { value: number; text: string } | null {
   const raw = m[1] || m[2]
   const value = Number(raw.replace(/,/g, ''))
   if (!Number.isFinite(value) || value <= 0) return null
-  return { value: m[1] ? value : value * 84, text: m[1] ? `₹${raw}` : `$${raw}` }
+  return { value: m[1] ? value : value * 84, text: m[1] ? `₹${rupees(raw)}` : `$${raw}` }
+}
+/** 21 Nov live: "₹123991.00". Rupees are grouped the Indian way (1,23,991.00); the paise are kept exactly as the mail gave them. Pure. */
+export function rupees(raw: string): string {
+  const [whole = '', frac = ''] = String(raw || '').replace(/,/g, '').split('.')
+  if (!/^\d+$/.test(whole) || (frac && !/^\d{1,2}$/.test(frac))) return String(raw || '')
+  const head = whole.length > 3 ? whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' : ''
+  return head + whole.slice(-3) + (frac ? `.${frac}` : '')
 }
 
 /** An email can mention a ₹100 late fee before its ₹24,000 balance.
