@@ -1,0 +1,34 @@
+name: Life-graph 64-bit travel owner boundary (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-life-graph-64bit-owner-testonly.mts'
+      - '.github/workflows/life-graph-64bit-owner-testonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  negative-life-graph-owner-binding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify checked-out tree is the exact pull request HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Execute original deployed life graph against inert synthetic A/B identities
+        run: npx --yes tsx scripts/verify-life-graph-64bit-owner-testonly.mts
