@@ -105,8 +105,9 @@ function checkedQuote(quote: ExactQuote, now: number) {
   // Must be the EXACT provider-verified total, not a synthetic client estimate;
   // component math still catches common tampering and mismatched totals.
   const subtotal = quote.lines.reduce((sum, line) => sum + line.quantity * line.unitPriceMinor, 0)
-  if (!Number.isSafeInteger(subtotal) ||
-      subtotal + quote.taxesMinor + quote.feesMinor - quote.discountsMinor !== quote.totalMinor)
+  const recomputedTotal = subtotal + quote.taxesMinor + quote.feesMinor - quote.discountsMinor
+  if (!Number.isSafeInteger(subtotal) || !Number.isSafeInteger(recomputedTotal) ||
+      recomputedTotal !== quote.totalMinor)
     throw new PartnerActionError('invalid_quote')
 }
 export function quoteDigest(quote: ExactQuote): string {
