@@ -68,7 +68,9 @@ export function senderDomainOf(from: unknown) {
   const parts = host.split('.')
   if (parts.length <= 2) return host
   const tail2 = parts.slice(-2).join('.')
-  return /^(?:co|com|net|org|gov|ac)\.[a-z]{2}$/.test(tail2) ? parts.slice(-3).join('.') : tail2
+  // 21 Nov live: alerts@hdfcbank.bank.in was read as the sender "bank.in" (named "Bank"), which also made every bank on
+  // India's .bank.in / .fin.in one sender for mute and learning rules.
+  return /^(?:co|com|net|org|gov|ac|bank|fin)\.[a-z]{2}$/.test(tail2) ? parts.slice(-3).join('.') : tail2
 }
 
 export function senderNameOf(from: unknown) {
@@ -79,9 +81,19 @@ export function senderNameOf(from: unknown) {
   const email = senderEmailOf(raw)
   const local = email.split('@')[0] || ''
   const domain = senderDomainOf(raw).split('.')[0] || ''
-  const base = /^(?:no-?reply|info|hello|support|alerts?|notifications?|mailer|team|news)$/i.test(local) ? domain : local
+  const fromDomain = /^(?:no-?reply|info|hello|support|alerts?|notifications?|mailer|team|news)$/i.test(local)
+  const base = fromDomain ? domain : local
+  // "hdfcbank" reads as "HDFC Bank". Only for a name taken from the DOMAIN (never the local part: hdfcbank@gmail.com is a
+  // person, and so is bob@…), and only for banks on this list (foodbank.org is not a bank).
+  if (fromDomain) {
+    const stem = base.toLowerCase().replace(/bank$/, '')
+    const label = BANKS[stem]
+    if (label && base.toLowerCase().endsWith('bank')) return `${label} Bank`
+    if (label && /\.(?:bank|fin)\.in$/.test(senderDomainOf(raw))) return label
+  }
   return (base.charAt(0).toUpperCase() + base.slice(1)).slice(0, 40) || 'Someone'
 }
+const BANKS: Record<string, string> = { hdfc: 'HDFC', icici: 'ICICI', sbi: 'SBI', idfc: 'IDFC', idfcfirst: 'IDFC First', idbi: 'IDBI', rbl: 'RBL', pnb: 'PNB', hsbc: 'HSBC', dbs: 'DBS', kotak: 'Kotak', axis: 'Axis', yes: 'Yes', indusind: 'IndusInd', federal: 'Federal', canara: 'Canara', bandhan: 'Bandhan', citi: 'Citi' }
 
 function firstName(name: string) {
   return name.split(/\s+/)[0] || name
@@ -174,8 +186,10 @@ export function askLine(email: AttentionEmail, category: AttentionCategory) {
 function ruleMatches(rule: AttentionRule, email: AttentionEmail, category: AttentionCategory) {
   const v = rule.matchValue.toLowerCase()
   if (rule.matchType === 'sender') return senderEmailOf(email.from) === v || senderNameOf(email.from).toLowerCase() === v
-  if (rule.matchType === 'domain') return senderDomainOf(email.from) === v || senderEmailOf(email.from).endsWith(`@${v}`)
-  return senderDomainOf(email.from) === v && (!rule.category || rule.category === category)
+  // Rules saved before 21 Nov keyed every .bank.in / .fin.in sender as "bank.in" / "fin.in"; they keep matching.
+  const legacy = (v === 'bank.in' || v === 'fin.in') && senderEmailOf(email.from).endsWith(`.${v}`)
+  if (rule.matchType === 'domain') return senderDomainOf(email.from) === v || senderEmailOf(email.from).endsWith(`@${v}`) || legacy
+  return (senderDomainOf(email.from) === v || legacy) && (!rule.category || rule.category === category)
 }
 
 export function findRule(rules: AttentionRule[], email: AttentionEmail, category: AttentionCategory) {
