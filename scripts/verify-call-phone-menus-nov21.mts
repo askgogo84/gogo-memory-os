@@ -17,3 +17,13 @@ assert.equal(v.GENERAL_CALL_AGENT_NAME, 'AskGogo general caller v3')
 const src = readFileSync(new URL('../lib/agent/voice-call.ts', import.meta.url), 'utf8')
 assert.equal((src.match(/if a recorded phone menu answered and no person came on, say exactly that/g) || []).length, 2, 'both result summaries report a menu')
 console.log('✓ spoken menus are navigated by voice; keypad-only menus end politely and are reported as such')
+// Review (PR #1562): a person reached after a menu hears the AI and recording notice; a keypad menu offers the number.
+for (const p of [v.CALL_AGENT_PROMPT, v.GENERAL_CALL_AGENT_PROMPT]) assert.match(p, /When a person comes on after a menu or hold, first say you are an AI assistant from AskGogo calling for \{guest_name\} and that the call may be recorded\./)
+const plan = { venue: 'Apollo Clinic', to: '+918012345678', source: 'the number you gave', guestName: 'Nithin', partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '', purpose: 'Ask about Sunday hours.', test: false, redials: 0, createdAt: '2026-11-22T06:00:00Z', kind: 'general' }
+const menuOut = { booked: false, confirmedTime: null, staffName: null, callbackAt: null, notes: 'A recorded phone menu answered and no person came on.' }
+const t = v.callResultText(plan, 'completed', menuOut)
+assert.match(t, /A recorded phone menu answered and no person came on\./); assert.match(t, /call them yourself on .*80123/); assert.doesNotMatch(t, /call again/)
+const t2 = v.callResultText({ ...plan, kind: 'table', partySize: 2, venue: 'District 6' }, 'completed', menuOut)
+assert.match(t2, /not booked\. A recorded phone menu/); assert.match(t2, /call them yourself/)
+assert.match(v.callResultText(plan, 'completed', { ...menuOut, notes: 'They were closed.' }), /Say \*call again\* to retry\./, 'other answers keep the retry')
+console.log('✓ a person after a menu hears the AI notice; a keypad menu result offers the number, not a retry')

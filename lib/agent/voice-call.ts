@@ -203,6 +203,9 @@ export const TERMINAL = new Set(['completed', ...Object.keys(FAIL_STATUS)])
 /** What the person reads after the call. Pure. */
 export function callResultText(p: CallPlan, status: string, outcome: CallOutcome | null, transcriptTail = '', saved = false, reminderScheduled = true) {
   const head = `📞 ${p.venue}`
+  // 21 Nov (phone menus): a call again would reach the same keypad menu, so the number is offered instead.
+  const menu = /recorded phone menu/i.test(String(outcome?.notes || ''))
+  const retry = menu ? `I can't press keypad options, so it is best to call them yourself on ${displayPhone(p.to)}.` : p.redials < MAX_REDIALS ? 'Say *call again* to retry.' : ''
   if (status !== 'completed') return `${head}: ${FAIL_STATUS[status] || "the call didn't complete"}. ${p.kind === 'general' ? 'Nothing was said or agreed.' : 'Nothing was booked.'}${p.test ? '' : p.redials < MAX_REDIALS ? '\nSay *call again* to retry.' : ''}`
   if (p.test) return `${head}: test call finished. Tell me how it sounded, and say *call District 6…* style requests when you're ready.`
   if (!outcome) return `${head}: the call finished, but I couldn't read a clear answer from it, so I'm not treating it as ${p.kind === 'general' ? 'done' : 'booked'}.${transcriptTail ? `\nLast words on the call: "${transcriptTail}"` : ''}`
@@ -210,7 +213,7 @@ export function callResultText(p: CallPlan, status: string, outcome: CallOutcome
     ? [`*Call done* · ${p.venue}`, outcome.confirmedTime ? `They said: ${outcome.confirmedTime}` : (outcome.notes || 'They dealt with the request.'),
         outcome.staffName ? `Spoke to ${outcome.staffName}.` : '', 'This is what was said on the call, not a written confirmation.'].filter(Boolean).join('\n')
     : [`${head}: no clear answer. ${outcome.notes || 'They did not confirm or answer the request.'}`, outcome.callbackAt ? `They asked to be called back ${outcome.callbackAt}.` : '',
-        p.redials < MAX_REDIALS ? 'Say *call again* to retry.' : ''].filter(Boolean).join('\n')
+        retry].filter(Boolean).join('\n')
   if (outcome.booked) {
     // 21 Oct live: the notes line repeated the confirmation ("Reservation for 2 … confirmed under Goverdhan").
     return [`*Booked by phone* · ${p.dateLabel.replace(/^on\s+/i, '')}, ${outcome.confirmedTime || p.timeLabel}, ${p.partySize || 2} guests, under ${p.guestName}.`,
@@ -220,7 +223,7 @@ export function callResultText(p: CallPlan, status: string, outcome: CallOutcome
   }
   return [`${head}: not booked. ${outcome.notes || 'They did not confirm a table.'}`,
     outcome.callbackAt ? `They asked to be called back ${outcome.callbackAt}.` : '',
-    p.redials < MAX_REDIALS ? 'Say *call again* to retry.' : ''].filter(Boolean).join('\n')
+    retry].filter(Boolean).join('\n')
 }
 
 // ---- Bolna I/O -------------------------------------------------------------------------------------------------
@@ -248,7 +251,7 @@ Rules:
 - Speak briefly and politely, one question at a time, in simple English (switch to Hindi or Kannada if they do).
 - Answer only from the details above. If they ask for anything else (advance, deposit, card, UPI, payment, OTP), say {guest_name} will handle that directly, and do not agree to it.
 - If they want to speak to {guest_name} directly or ask you to call later, thank them, ask the best time to call back, and end the call.
-- If a recorded phone menu answers instead of a person: if it lets you speak, say the option that fits the task (for example \"reservations\", \"front desk\", \"appointments\") or \"speak to a person\". You cannot press keypad keys. If the menu only accepts key presses, or repeats twice without reaching a person, say thank you and end the call. Never invent an answer from a recorded message.
+- If a recorded phone menu answers instead of a person: if it lets you speak, say the option that fits the task (for example \"reservations\", \"front desk\", \"appointments\") or \"speak to a person\". You cannot press keypad keys. If the menu only accepts key presses, or repeats twice without reaching a person, say thank you and end the call. Never invent an answer from a recorded message. When a person comes on after a menu or hold, first say you are an AI assistant from AskGogo calling for {guest_name} and that the call may be recorded.
 - Before ending, repeat the final details back (day, time, people, name) and ask for the staff member's name.
 - End politely once the booking is confirmed or refused.`
 
@@ -262,7 +265,7 @@ Rules:
 - Use only the task and details above. Never guess or invent a fact. If they ask for anything you were not given (ID numbers, date of birth, insurance, medical history, address, payment, advance, deposit, card, UPI, OTP), say {guest_name} will share or handle that directly, and do not agree to it.
 - If they offer choices (times, dates, room types, prices), accept one only if it matches the task exactly. Otherwise note the choices, say {guest_name} will confirm, and ask how long they can hold it.
 - If they want to speak to {guest_name} directly or ask you to call later, thank them, ask the best time to call back, and end the call.
-- If a recorded phone menu answers instead of a person: if it lets you speak, say the option that fits the task (for example \"reservations\", \"front desk\", \"appointments\") or \"speak to a person\". You cannot press keypad keys. If the menu only accepts key presses, or repeats twice without reaching a person, say thank you and end the call. Never invent an answer from a recorded message.
+- If a recorded phone menu answers instead of a person: if it lets you speak, say the option that fits the task (for example \"reservations\", \"front desk\", \"appointments\") or \"speak to a person\". You cannot press keypad keys. If the menu only accepts key presses, or repeats twice without reaching a person, say thank you and end the call. Never invent an answer from a recorded message. When a person comes on after a menu or hold, first say you are an AI assistant from AskGogo calling for {guest_name} and that the call may be recorded.
 - Before ending, repeat back exactly what was agreed and ask for the person's name.
 - End politely once the request is confirmed, refused, or needs {guest_name}.`
 
