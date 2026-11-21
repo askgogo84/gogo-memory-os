@@ -1,0 +1,37 @@
+name: Watch trip delivery status safety (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/watch-trip-delivery-status-testonly.yml'
+      - 'scripts/verify-watch-trip-delivery-status-testonly.mts'
+      - 'lib/agent/watch-command.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-watch-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert literal PR head SHA (never GitHub merge-ref)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_HEAD="$(git rev-parse HEAD)"
+          echo "expected=$EXPECTED_HEAD actual=$ACTUAL_HEAD"
+          test "$EXPECTED_HEAD" = "$ACTUAL_HEAD"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install fixture dependencies
+        run: npm ci
+      - name: Execute shipped watch-command against inert sandbox fixtures (expected safety RED)
+        run: npx --yes tsx scripts/verify-watch-trip-delivery-status-testonly.mts
