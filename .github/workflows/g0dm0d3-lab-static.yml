@@ -39,15 +39,32 @@ jobs:
           set -euo pipefail
           export GODMODE_API_KEY="$(openssl rand -hex 32)"
           bash scripts/g0dm0d3-lab/install.sh start
-          for _ in $(seq 1 40); do
-            if curl --silent --fail http://127.0.0.1:7860/v1/health >/dev/null; then break; fi
+          ready=0
+          for _ in $(seq 1 25); do
+            if curl --silent --fail --max-time 2 http://127.0.0.1:7860/v1/health >/dev/null; then
+              ready=1
+              break
+            fi
+            if [ "$(docker inspect --format '{{.State.Running}}' ciq-g0dm0d3-lab)" != "true" ]; then
+              echo "Lab container stopped before health became ready"
+              docker logs --tail 120 ciq-g0dm0d3-lab || true
+              exit 1
+            fi
             sleep 2
           done
+          if [ "$ready" != 1 ]; then
+            echo "Lab health timed out"
+            docker logs --tail 120 ciq-g0dm0d3-lab || true
+            exit 1
+          fi
           node scripts/g0dm0d3-lab/smoke.mjs askgogo
           node scripts/g0dm0d3-lab/smoke.mjs creditiq
           node scripts/g0dm0d3-lab/smoke.mjs folioiq
           node scripts/g0dm0d3-lab/smoke.mjs signudoc
           node scripts/g0dm0d3-lab/smoke.mjs tipplr
+      - name: Show local container logs on failure
+        if: failure()
+        run: docker logs --tail 120 ciq-g0dm0d3-lab || true
       - name: Clean up temporary lab
         if: always()
         run: bash scripts/g0dm0d3-lab/install.sh stop
