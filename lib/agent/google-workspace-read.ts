@@ -236,6 +236,15 @@ async function acrossAccounts<T>(actor:AgentActor, read:(account:ExtraAccount|nu
   return out
 }
 
+/** Read-only provider check for the self-diagnostic (21 Nov): one GET of the primary account's Gmail profile through the
+ *  same consent gate and credentials as every Gmail read. Returns the address Google reports, never message content. */
+export async function probeWorkspaceGmail(actor:AgentActor):Promise<{email:string|null;checkedAt:string}> {
+  const response=await workspaceFetch(actor,'https://gmail.googleapis.com/gmail/v1/users/me/profile')
+  if(!response.ok)throw new Error(`workspace_gmail_profile_failed:${response.status}`)
+  const data:any=await response.json().catch(()=>null)
+  return {email:typeof data?.emailAddress==='string'?data.emailAddress.slice(0,200):null,checkedAt:new Date().toISOString()}
+}
+
 /** Messages for an exact Gmail query (newest first), metadata only. */
 export async function searchWorkspaceEmailsByQuery(actor:AgentActor, q:string, maxResults=5) {
   const params=new URLSearchParams({maxResults:String(Math.max(1,Math.min(10,Math.floor(maxResults||5)))),q})

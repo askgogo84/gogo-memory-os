@@ -9,6 +9,7 @@
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
 import { isStopOneReminder } from '../bot/stop-reminder-phrase'
+import { classifyDiagnosticAsk } from './system-diagnostic'
 import { isConnectMailAsk } from '../email/connect-phrases'
 import { tripAsk } from '@/lib/agent/trip-plan'
 import { personAsk } from '@/lib/agent/people'
@@ -108,6 +109,8 @@ export function isExactCommand(text: string): boolean {
     || isConnectMailAsk(t)
     // 19 Nov live: "Stop this reminder" was answered as chat. The reminder handler knows which one just went off; the brain does not.
     || isStopOneReminder(t)
+    // 21 Nov: a self-diagnostic is a read-only report built from provider checks; the brain could only guess it.
+    || classifyDiagnosticAsk(t) !== null
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,

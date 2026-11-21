@@ -254,6 +254,16 @@ async function handleChatPost(req: NextRequest) {
         }
       }
     }
+    // 21 Nov: "run a self-diagnostic" / "health check" reached goal intake (a list of "check …" became a goal plan) or
+    // the general planner (an agent run with steps and todos). It gets a read-only report instead, before either can
+    // take it: statuses with evidence, no sends, calls, schedule changes or approvals. Imported only on a likely ask.
+    if (text.length <= 600 && /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|ok|fine|up)|(?:working|running)\s+(?:properly|correctly|fine)|are\s+you\s+(?:working|up|ok|okay|fine|running)|pairing|persistence|watchers/i.test(text)) {
+      const diag: any = await import('@/lib/agent/system-diagnostic').then(m => m.trySystemDiagnostic(actor, text), () => null)
+      if (diag) {
+        await saveConversation(user.telegram_id, text, diag.text)
+        return NextResponse.json({text:diag.text,handledBy:diag.handledBy,status:'completed',checks:diag.checks,readOnly:true,mutated:false})
+      }
+    }
     // "What time is it in New York?" answers instantly (23 Oct live: 37 s through the general brain).
     if (text.length <= 80 && /\btime\b/i.test(text) && /\b(?:in|at)\s+[a-z]/i.test(text)) {
       const wt: any = await import('@/lib/bot/world-time').catch(() => null)

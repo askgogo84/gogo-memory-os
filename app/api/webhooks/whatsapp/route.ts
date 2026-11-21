@@ -1006,6 +1006,17 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // 21 Nov: a self-diagnostic / health-check ask gets a read-only report before goal intake, the brain or the planner
+    // can turn it into a plan or a task (lib/agent/system-diagnostic). Imported only on a likely ask.
+    if (text.length <= 600 && /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|ok|fine|up)|(?:working|running)\s+(?:properly|correctly|fine)|are\s+you\s+(?:working|up|ok|okay|fine|running)|pairing|persistence|watchers/i.test(text)) {
+      const diag: any = await import('@/lib/agent/system-diagnostic').then(async m => m.trySystemDiagnostic(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' }), text), () => null)
+      if (diag) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', diag.text)
+        await sendWhatsAppMessage(from, diag.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // 11 Nov: "forget my travel details" deletes the saved booking details (lib/agent/traveller-profile.ts). Checked
     // before memory and taste so no other handler claims it. The raw id is passed; exactOwner rejects unsafe ids.
     if (/^\s*(?:please\s+)?(?:forget|delete|remove|clear)\s+my\b/i.test(text)) {

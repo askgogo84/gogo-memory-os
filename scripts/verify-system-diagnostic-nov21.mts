@@ -1,0 +1,217 @@
+// 21 Nov (owner): "run a self-diagnostic" reached goal intake (a list of "check …" clauses became a goal plan) or the
+// general planner (an imperative "run a health check" became an agent run with steps and todos). Now it gets a
+// read-only report: operational / degraded / blocked / unverified with a time and evidence, never success on a flag.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
+const d: any = await import('../lib/agent/system-diagnostic')
+const goal: any = await import('../lib/agent/goal-intake')
+
+// ---- intent -------------------------------------------------------------------------------------------------------
+const DIAGNOSTIC = [
+  'Run a self-diagnostic',
+  'run self-diagnostic',
+  'Run a full system health check',
+  'AskGogo health check',
+  'system status',
+  'Are you working properly?',
+  'Is everything working?',
+  'Can you diagnose yourself?',
+  'Run a self-diagnostic: check WhatsApp pairing, check connected services, check memory persistence, check background watchers and check pending approvals',
+  'Check WhatsApp pairing, connected services, memory persistence, background watchers, pending approvals, voice and scheduled tasks',
+  'Self test please',
+]
+for (const t of DIAGNOSTIC) assert.equal(d.classifyDiagnosticAsk(t), 'diagnostic', t)
+const AMBIGUOUS = [
+  'Run a health check',
+  'diagnostics',
+  'run a sanity check',
+  'Run a self-diagnostic and send the report to Divya',
+  'do a system check and reconnect gmail',
+]
+for (const t of AMBIGUOUS) assert.equal(d.classifyDiagnosticAsk(t), 'ambiguous', t)
+const NOT_OURS = [
+  'Book a health check for mom on Saturday',
+  'book a full body health check',
+  'health check up for Nithin next week',
+  'Run a health check on my car',
+  'what is my diagnosis',
+  'diagnose why I feel tired',
+  "what's the status of my flight",
+  'check the status of my order',
+  'check my pending approvals',
+  'remind me to check WhatsApp, approvals and voice notes tomorrow',
+  'call Divya and check if she is working today',
+  'Organize Divya\'s birthday, check flight prices to Goa and prepare three emails',
+  'hi',
+]
+for (const t of NOT_OURS) assert.equal(d.classifyDiagnosticAsk(t), null, t)
+console.log('✓ diagnostic, ambiguous and unrelated asks are told apart')
+
+// The root cause: the multi-check wording passed goal intake's gate (3+ "check …" clauses), so it became a goal plan.
+assert.equal(goal.looksLikeGoalList(DIAGNOSTIC[8]), true, 'the original wording is a goal list to goal intake')
+// The gate in each route file lets every ask through to the module.
+for (const t of [...DIAGNOSTIC, ...AMBIGUOUS]) assert.ok(d.DIAGNOSTIC_GATE.test(t), 'gate: ' + t)
+
+// ---- the routes: the diagnostic runs before goal intake, the brain and the general planner -------------------------
+const dash = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
+const iDiag = dash.indexOf('trySystemDiagnostic('), iGoal = dash.indexOf("import('@/lib/agent/goal-intake')"), iBrain = dash.indexOf("import('@/lib/agent/brain')"), iPlan = dash.indexOf('await tryRunGeneralPlan(')
+assert.ok(iDiag > 0 && iDiag < iGoal && iDiag < iBrain && iDiag < iPlan, 'dashboard: diagnostic first')
+assert.match(dash.slice(iDiag, iDiag + 900), /readOnly:true,mutated:false/)
+const wa = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+const wDiag = wa.indexOf('trySystemDiagnostic('), wGoal = wa.indexOf("const intake = await import('@/lib/agent/goal-intake')"), wBrain = wa.indexOf("import('@/lib/agent/brain').then(m => m.runBrain(")
+assert.ok(wDiag > 0 && wDiag < wGoal && wDiag < wBrain, 'whatsapp: diagnostic before goal intake and the brain')
+const brain: any = await import('../lib/agent/brain')
+for (const t of DIAGNOSTIC.slice(0, 7)) assert.equal(brain.isExactCommand(t), true, 'brain leaves it alone: ' + t)
+console.log('✓ both surfaces answer it before goal intake, the brain and the planner')
+
+// ---- the checks, against a recording fake database ----------------------------------------------------------------
+const NOW = new Date('2026-11-21T16:00:00Z') // 9:30 pm IST
+const ago = (h: number) => new Date(NOW.getTime() - h * 3600_000).toISOString()
+type Tables = Record<string, any[] | 'error'>
+function fakeDb(tables: Tables) {
+  const writes: string[] = []
+  const from = (table: string) => {
+    const f: any[] = []; let head = false, countOn = false, limit = Infinity, order: [string, boolean] | null = null, single = false
+    const q: any = {
+      select: (_c: string, o?: any) => { head = !!o?.head; countOn = o?.count === 'exact'; return q },
+      eq: (k: string, v: any) => (f.push((r: any) => String(r[k]) === String(v)), q),
+      in: (k: string, v: any[]) => (f.push((r: any) => v.includes(r[k])), q),
+      gte: (k: string, v: any) => (f.push((r: any) => String(r[k]) >= v), q),
+      gt: (k: string, v: any) => (f.push((r: any) => String(r[k]) > v), q),
+      lte: (k: string, v: any) => (f.push((r: any) => String(r[k]) <= v), q),
+      lt: (k: string, v: any) => (f.push((r: any) => String(r[k]) < v), q),
+      order: (k: string, o: any) => (order = [k, o?.ascending !== false], q),
+      limit: (n: number) => (limit = n, q),
+      maybeSingle: () => (single = true, q),
+      then: (res: any, rej: any) => {
+        const t = tables[table]
+        if (t === 'error') return Promise.resolve({ data: null, error: { message: 'boom' }, count: null }).then(res, rej)
+        let out = (t || []).filter(r => f.every(fn => fn(r)))
+        if (order) { const [k, asc] = order; out = [...out].sort((a, b) => (String(a[k]) < String(b[k]) ? -1 : 1) * (asc ? 1 : -1)) }
+        const count = out.length
+        out = out.slice(0, limit)
+        return Promise.resolve({ data: head ? null : single ? out[0] || null : out, error: null, count: countOn ? count : null }).then(res, rej)
+      },
+    }
+    for (const w of ['insert', 'update', 'upsert', 'delete', 'rpc']) q[w] = () => { writes.push(`${table}.${w}`); return q }
+    return q
+  }
+  return { db: { from, rpc: () => { writes.push('rpc'); return Promise.resolve({}) } }, writes }
+}
+const OWNER = '4205611234567' // 13 digits: kept exact as a string
+const actor = { userId: 'u', legacyTelegramId: Number(OWNER), whatsappId: '+918884501501', name: 'Nithin', timezone: 'Asia/Kolkata' }
+const healthy: Tables = {
+  users: [{ telegram_id: OWNER, whatsapp_id: '+918884501501', gmail_connected: true, google_calendar_connected: true, google_refresh_token: 'enc' }],
+  reminders: [
+    { telegram_id: OWNER, remind_at: ago(2), delivery_state: 'read', sent: true },
+    { telegram_id: OWNER, remind_at: new Date(NOW.getTime() + 86400_000).toISOString(), delivery_state: 'pending', sent: false },
+  ],
+  memories: [{ telegram_id: OWNER, id: 1 }, { telegram_id: OWNER, id: 2 }],
+  conversations: [{ telegram_id: OWNER, created_at: ago(0.1) }],
+  agent_watchers: [{ telegram_id: OWNER, active: true, next_check_at: ago(-1), last_checked_at: ago(1) }],
+  agent_approvals: [],
+  agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'completed', completed_at: ago(30), created_at: ago(30) }],
+}
+const probes = {
+  gmailProbe: async () => ({ email: 'goverdhan@tipplr.in', checkedAt: NOW.toISOString() }),
+  calendarProbe: async (owner: string) => { assert.equal(owner, OWNER, 'exact owner string'); return { emails: ['goverdhan.md@gmail.com'], unavailable: 0 } },
+}
+const env = { BOLNA_API_KEY: 'inert' }
+{
+  const { db, writes } = fakeDb(healthy)
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env, ...probes })
+  const by = Object.fromEntries(out.checks.map((c: any) => [c.key, c]))
+  for (const k of ['whatsapp', 'gmail', 'calendar', 'memory', 'watchers', 'approvals', 'voice', 'scheduled']) assert.equal(by[k].status, 'operational', k + ': ' + by[k].evidence)
+  for (const c of out.checks) { assert.ok(c.at && Number.isFinite(Date.parse(c.at)), 'timestamp: ' + c.key); assert.ok(c.evidence.length > 10, 'evidence: ' + c.key) }
+  assert.match(by.whatsapp.evidence, /WhatsApp confirmed your reminder as read \(number ending 1501\)/)
+  assert.match(by.gmail.evidence, /Google answered a live read of the mailbox goverdhan@tipplr\.in/)
+  assert.match(by.voice.evidence, /Outside 9 am to 9 pm India time, calls are not placed/)
+  assert.match(out.text, /^\*AskGogo self-diagnostic\*, checked 21 Nov, 9:30 pm/)
+  assert.match(out.text, /Overall: 8 operational\./)
+  assert.match(out.text, /read-only check: nothing was sent, called, scheduled, approved, bought or changed/)
+  assert.doesNotMatch(out.text, /\+91|8884501501/, 'no full phone number in the report')
+  assert.deepEqual(writes, [], 'no database writes')
+}
+console.log('✓ a healthy account: eight checks operational, each with a time and evidence, no writes')
+
+// Saved "connected" flags with no provider answer are never operational.
+{
+  const { db, writes } = fakeDb({ ...healthy, reminders: [], agent_runs: [], agent_watchers: [], conversations: [] })
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env, timeoutMs: 50,
+    gmailProbe: () => new Promise(() => {}), calendarProbe: async () => { throw new Error('network') } })
+  const by = Object.fromEntries(out.checks.map((c: any) => [c.key, c]))
+  for (const k of ['whatsapp', 'gmail', 'calendar', 'memory', 'watchers', 'voice', 'scheduled']) assert.equal(by[k].status, 'unverified', k + ': ' + by[k].evidence)
+  assert.match(by.gmail.evidence, /Google didn't answer/)
+  assert.match(by.whatsapp.evidence, /No WhatsApp delivery receipt in the last 7 days/)
+  assert.doesNotMatch(out.text, /\b8 operational\b/)
+  assert.deepEqual(writes, [])
+}
+console.log('✓ no provider answer or no fresh record: unverified, never operational')
+
+// Degraded and blocked, with the reason.
+{
+  const t: Tables = {
+    ...healthy,
+    users: [{ telegram_id: OWNER, whatsapp_id: '+918884501501', gmail_connected: true, google_calendar_connected: false }],
+    reminders: [
+      { telegram_id: OWNER, remind_at: ago(1), delivery_state: 'failed', sent: true },
+      { telegram_id: OWNER, remind_at: ago(5), delivery_state: 'read', sent: true },
+      { telegram_id: OWNER, remind_at: ago(3), delivery_state: 'pending', sent: false },
+    ],
+    agent_watchers: [{ telegram_id: OWNER, active: true, next_check_at: ago(6), last_checked_at: ago(30) }],
+    agent_approvals: [{ telegram_id: OWNER, status: 'pending', requested_at: ago(24 * 9) }],
+    agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'outcome_unknown', updated_at: ago(2), created_at: ago(2) }],
+  }
+  const { db, writes } = fakeDb(t)
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env: { ...env }, gmailProbe: async () => { throw new Error('workspace_email_consent_missing') }, calendarProbe: probes.calendarProbe })
+  const by = Object.fromEntries(out.checks.map((c: any) => [c.key, c]))
+  assert.equal(by.whatsapp.status, 'degraded'); assert.match(by.whatsapp.evidence, /not delivered\. The last confirmed delivery was/)
+  assert.equal(by.gmail.status, 'blocked'); assert.match(by.gmail.evidence, /reading needs your OK/)
+  assert.equal(by.calendar.status, 'blocked'); assert.equal(by.calendar.evidence, 'Not connected.')
+  assert.equal(by.watchers.status, 'degraded'); assert.match(by.watchers.evidence, /1 of 1 active watchers are more than 2 hours overdue/)
+  assert.equal(by.approvals.status, 'degraded'); assert.match(by.approvals.evidence, /1 waiting for your OK.*over a week old/)
+  assert.equal(by.voice.status, 'degraded'); assert.match(by.voice.evidence, /unconfirmed outcome/)
+  assert.equal(by.scheduled.status, 'degraded'); assert.match(by.scheduled.evidence, /1 reminder is more than 15 minutes past due and not sent/)
+  assert.deepEqual(writes, [])
+}
+console.log('✓ failures are reported as degraded or blocked with the reason')
+
+// Kill switch and missing provider config block voice; a missing WhatsApp link blocks pairing.
+{
+  const { db } = fakeDb({ ...healthy, users: [{ telegram_id: OWNER, whatsapp_id: null }] })
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env: { BOLNA_API_KEY: 'inert', GOGO_VOICE_CALLS: 'off' }, ...probes })
+  const by = Object.fromEntries(out.checks.map((c: any) => [c.key, c]))
+  assert.equal(by.whatsapp.status, 'blocked')
+  assert.equal(by.voice.status, 'blocked'); assert.match(by.voice.evidence, /paused by the safety switch/)
+  const out2 = await d.runSystemDiagnostic(actor, { db, now: NOW, env: {}, ...probes })
+  assert.match(out2.checks.find((c: any) => c.key === 'voice').evidence, /not configured/)
+}
+console.log('✓ the voice kill switch and missing provider config are reported as blocked')
+
+// Unreadable tables: unverified, never a crash or a claim.
+{
+  const { db } = fakeDb(Object.fromEntries(Object.keys(healthy).map(k => [k, 'error'])) as Tables)
+  const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env, ...probes })
+  for (const c of out.checks) assert.equal(c.status, 'unverified', c.key)
+}
+console.log('✓ unreadable records: every check unverified')
+
+// ---- safe fallback ------------------------------------------------------------------------------------------------
+{
+  const { db, writes } = fakeDb(healthy)
+  const amb = await d.trySystemDiagnostic(actor, 'Run a health check', { db, now: NOW, env, ...probes })
+  assert.equal(amb.handledBy, 'system-diagnostic-clarify'); assert.equal(amb.readOnly, true); assert.equal(amb.mutated, false)
+  assert.match(amb.text, /Reply \*run self-diagnostic\*.*Nothing was changed\./s)
+  const mixed = await d.trySystemDiagnostic(actor, 'Run a self-diagnostic and send the report to Divya', { db, now: NOW, env, ...probes })
+  assert.match(mixed.text, /never sends, calls, books, schedules, approves or changes anything/)
+  const broken = await d.trySystemDiagnostic({ ...actor, legacyTelegramId: 2 ** 53 + 2 }, 'Run a self-diagnostic', { db, now: NOW, env, ...probes })
+  assert.equal(broken.text, d.DIAGNOSTIC_FAILED_TEXT); assert.equal(broken.mutated, false)
+  assert.match(broken.text, /every part is unverified/)
+  assert.equal(await d.trySystemDiagnostic(actor, 'Book a health check for mom', { db, now: NOW, env, ...probes }), null)
+  assert.deepEqual(writes, [])
+}
+console.log('✓ ambiguous asks get a clarifying question, a failure says unverified, unrelated asks fall through')
+// The inline gates in both routes are the module's gate, character for character.
+assert.ok(dash.includes(d.DIAGNOSTIC_GATE.source) && wa.includes(d.DIAGNOSTIC_GATE.source), 'route gates match DIAGNOSTIC_GATE')
+console.log('✓ route gates match the module gate')
