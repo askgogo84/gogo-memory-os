@@ -1,0 +1,29 @@
+# TEST ONLY / EXPECTED RED. DO NOT MERGE OR DEPLOY.
+name: "SecondBrain invite claim ordering (expected RED)"
+on:
+  pull_request:
+    paths:
+      - "scripts/verify-secondbrain-invite-claim-order-testonly.mts"
+      - ".github/workflows/secondbrain-invite-claim-order-testonly.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-invite-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout literal pull request HEAD (not synthetic merge)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install project dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run actual SecondBrain module in fake-only TS VM
+        run: npx --no-install tsx scripts/verify-secondbrain-invite-claim-order-testonly.mts
