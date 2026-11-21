@@ -363,6 +363,10 @@ export function meterBrainCall(e: BrainMeterEvent): void {
   } catch { /* metering never affects the reply */ }
 }
 
+// 21 Nov integration check: with Sarvam the brain handed Hindi, Kannada, Tamil, Telugu and Hinglish requests to Gogo's
+// handlers untranslated (Sonnet rewrote each into English), and Gogo's handlers read English. Sarvam-only addendum.
+export const SARVAM_HANDOFF_NOTE = 'Gogo\'s handlers read English. When you call handle and the message is not in English, write the instruction in English and set keep_original false. Keep every name, number, date, time and amount exactly, and keep every "not", "don\'t" and "never". When the message is in English, follow the rules above unchanged. Answer only what was asked: never add an offer of other help to a reply.'
+
 export async function decide(p: { text: string; ctx: BrainContext; now?: Date; client?: Pick<Anthropic, 'messages'>; telegramId?: number; meter?: (e: BrainMeterEvent) => void; model?: string; source?: BrainMeterEvent['source'] }): Promise<BrainDecision & { ms: number; usage: BrainUsage }> {
   const t0 = Date.now()
   let model = p.model || MODEL()
@@ -376,7 +380,7 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
         const { sarvamChat } = await import('@/lib/services/sarvam')
         const res = await sarvamChat({
           model: 'sarvam-105b', maxTokens: 1200, toolChoice: 'required', timeoutMs: TIMEOUT_MS,
-          messages: [{ role: 'system', content: BRAIN_SYSTEM(p.ctx, p.now || new Date()) },
+          messages: [{ role: 'system', content: `${BRAIN_SYSTEM(p.ctx, p.now || new Date())}\n\n${SARVAM_HANDOFF_NOTE}` },
             ...brainMessages(p.ctx.turns, p.text).map(m => ({ role: m.role as 'user' | 'assistant', content: String(m.content) }))],
           tools: BRAIN_TOOLS.map(t => ({ name: t.name, description: t.description || t.name,
             input_schema: t.input_schema as Record<string, unknown> })),
