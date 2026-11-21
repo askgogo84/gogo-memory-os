@@ -1,0 +1,27 @@
+name: Connected Memory Canary — Test-Only Negative Regression
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/verify-connected-memory-canary-testonly.mts'
+      - '.github/workflows/connected-memory-canary-testonly.yml'
+      - 'app/api/webhooks/whatsapp/route.ts'
+      - 'app/api/dashboard/chat/route.ts'
+permissions:
+  contents: read
+jobs:
+  isolated-canary-negative:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout inert test branch
+        uses: actions/checkout@v4
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify real connected-memory route canary gates (expected RED on deployed source)
+        run: npx --no-install tsx scripts/verify-connected-memory-canary-testonly.mts
