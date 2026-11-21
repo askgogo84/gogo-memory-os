@@ -1,0 +1,35 @@
+name: Artifact public-citation query privacy (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-artifact-citation-query-privacy-testonly.mts'
+      - '.github/workflows/artifact-citation-query-privacy-testonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-citation-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout literal pull request HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Confirm literal head SHA
+        run: |
+          HEAD="$(git rev-parse HEAD)"
+          echo "Checked-out head: $HEAD"
+          test "$HEAD" = "${{ github.event.pull_request.head.sha }}"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run shipped report presenter and SecondBrain visibility in inert fixtures
+        run: npx --yes tsx scripts/verify-artifact-citation-query-privacy-testonly.mts
