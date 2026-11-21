@@ -1,9 +1,14 @@
 import OpenAI from 'openai'
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+
 import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+function getOpenAiVoiceClient() {
+  if (!process.env.OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY')
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+}
 
 function getExtension(contentType: string) {
   const type = (contentType || '').toLowerCase()
@@ -135,19 +140,29 @@ export async function transcribeTwilioVoiceNote(params: {
 }) {
   const { mediaUrl, contentType } = params
 
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('Missing OPENAI_API_KEY')
+  if (!process.env.OPENAI_API_KEY && !sarvamEnabled('GOGO_SARVAM_STT')) {
+    throw new Error('No voice transcription provider is configured')
   }
 
   if (!isAudioContentType(contentType)) throw new Error('Unsupported voice media type')
   const arrayBuffer = await downloadTrustedTwilioVoiceNote(mediaUrl)
 
+  if (sarvamEnabled('GOGO_SARVAM_STT')) {
+    try {
+      const { sarvamSpeechToText } = await import('./sarvam-voice')
+      const transcript = await sarvamSpeechToText(arrayBuffer, contentType)
+      return transcript.text
+    } catch (e: any) {
+      console.error('SARVAM_STT_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50))
+      if (!process.env.OPENAI_API_KEY) throw new Error('Voice transcription unavailable')
+    }
+  }
   const ext = getExtension(contentType)
   const file = new File([arrayBuffer], `whatsapp-voice.${ext}`, {
     type: contentType || 'audio/ogg',
   })
 
-  const result = await openai.audio.transcriptions.create({
+  const result = await getOpenAiVoiceClient().audio.transcriptions.create({
     model: 'gpt-4o-mini-transcribe',
     file,
     response_format: 'json',
