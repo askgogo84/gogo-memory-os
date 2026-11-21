@@ -29,7 +29,7 @@ const dues = raw('d1', 'Shilpita Banerjee <shilpita.banerjee@wework.co.in>', 'Re
 const ds = scoreEmail(ma.toAttentionEmail(dues)! as any, { now })
 assert.equal(ma.alertKindOf(ds), 'money_leaving')
 const msg = ma.composeAlert('money_leaving', ds, { name: 'Goverdhan', now } as any)
-assert.match(msg, /^💳 Money leaving\nGoverdhan, Shilpita Banerjee is following up on \*₹35841\.29\* in outstanding dues: "All Access Renewal/, msg)
+assert.match(msg, /^💳 Money leaving\nGoverdhan, Shilpita Banerjee is following up on \*₹35,841\.29\* in outstanding dues: "All Access Renewal/, msg)
 assert.doesNotMatch(msg, /renews soon|renews\s+renews|, from Shilpita/, msg)
 assert.match(msg, /can't tell whether you've already paid/, msg)
 // A dues chase with no amount stays a person asking (a reply), not money.
@@ -47,13 +47,13 @@ console.log('✓ a dues follow-up says what it is, with the amount; a real renew
     const sc = scoreEmail(ma.toAttentionEmail({ ...dues, labelIds: [], ...v })! as any, { now })
     assert.equal(ma.alertKindOf(sc), 'money_leaving', JSON.stringify(v))
     const m = ma.composeAlert('money_leaving', sc, { now } as any)
-    assert.match(m, /is following up on \*₹35841\.29\* in outstanding dues/, m); assert.doesNotMatch(m, /renews soon/, m)
+    assert.match(m, /is following up on \*₹35,841\.29\* in outstanding dues/, m); assert.doesNotMatch(m, /renews soon/, m)
   }
   // The long subject is cut at a word with an ellipsis, not mid-bracket.
   assert.match(msg, /membership renews…"\./, msg)
   // "Kindly confirm once the payment is made" is a dues chase, not a charge to confirm.
   const kc = scoreEmail(ma.toAttentionEmail(raw('d3', 'Asha Rao <asha@landlord.example>', 'Rent for November', 'The outstanding amount of ₹35841.29 is still open. Kindly confirm once the payment is made.'))! as any, { now })
-  assert.match(ma.composeAlert('money_leaving', kc, { now } as any), /following up on \*₹35841\.29\* in outstanding dues/)
+  assert.match(ma.composeAlert('money_leaving', kc, { now } as any), /following up on \*₹35,841\.29\* in outstanding dues/)
   // Not dues: a colleague asking whether to release a pending payment; someone promising to pay you.
   assert.equal(kindOf(raw('d4', 'Nithin K L <nithin@tipplr.in>', 'Printer payment', 'The pending payment of ₹12,000 to the printer, should I go ahead and release it today?')), 'reply_waiting')
   assert.notEqual(kindOf(raw('d5', 'Divya <divya@example.com>', 'Your invoice', 'We will clear your invoice and the pending amount of ₹50,000 will reach you by Friday.')), 'money_leaving')

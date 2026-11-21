@@ -30,11 +30,11 @@ const s = scoreEmail(live as any, { now: Date.parse('2026-11-07T13:15:00+05:30')
 const kind = ma.alertKindOf(s)
 assert.equal(kind, 'payment_failed')
 const text = ma.composeAlert('payment_failed', s, { name: 'Goverdhan', timezone: 'Asia/Kolkata', now: Date.parse('2026-11-07T13:15:00+05:30') } as any)
-assert.match(text, /^⚠️ Payment failed\nGoverdhan, your \*₹3398\.00\* payment to \*Carpediem Store\* failed \(Payment-report handles their payments\)\. "Your Order at CARPEDIEM STORE PRIVATE LIMITED is unsuccessful, Please try again"\./, text)
+assert.match(text, /^⚠️ Payment failed\nGoverdhan, your \*₹3,398\.00\* payment to \*Carpediem Store\* failed \(Payment-report handles their payments\)\. "Your Order at CARPEDIEM STORE PRIVATE LIMITED is unsuccessful, Please try again"\./, text)
 assert.equal(ma.merchantFromSubject('Your Order at CARPEDIEM STORE PRIVATE LIMITED is unsuccessful, Please try again'), 'Carpediem Store')
 assert.equal(ma.merchantFromSubject('Payment to Airtel failed'), 'Airtel'); assert.equal(ma.merchantFromSubject('Welcome aboard'), null)
 const data = ma.alertThreadData('payment_failed', s, 'goverdhan.md@gmail.com')
-assert.deepEqual([data.merchant, data.amount, data.senderEmail, data.threadId, data.emailId, data.alertKind], ['Carpediem Store', '₹3398.00', 'payment-report@payu.in', 'abc123def456', 'm1', 'payment_failed'])
+assert.deepEqual([data.merchant, data.amount, data.senderEmail, data.threadId, data.emailId, data.alertKind], ['Carpediem Store', '₹3,398.00', 'payment-report@payu.in', 'abc123def456', 'm1', 'payment_failed'])
 console.log('✓ the Carpe Diem alert names the shop; thread data carries merchant, amount, sender, ids')
 
 // 3. End to end against a fake DB: the alert opens a thread + a conversation turn; replies resolve against it.
@@ -66,7 +66,7 @@ assert.match(check!, /^Checked again: nothing new from Carpediem Store since tha
 assert.match(check!, /Carpediem Store order.*CD-77|Carpediem Store/, 'the order section names the shop')
 mailResults = [{ id: 'm2', subject: 'Payment received - Order CD-77 confirmed', snippet: 'Thank you for your payment of Rs.3398', date: 'Fri, 7 Nov' }, { id: 'm1', subject: 'Your Order at CARPEDIEM STORE PRIVATE LIMITED is unsuccessful, Please try again', snippet: 'failed', date: 'Fri, 7 Nov' }]
 const paid = await ot.tryThreadReply(actor, 'It was paid', Date.now(), deps)
-assert.equal(paid, 'Noted: Carpediem Store (₹3398.00) is paid. I can see it: "Payment received - Order CD-77 confirmed". I won\'t flag this one again.', paid!)
+assert.equal(paid, 'Noted: Carpediem Store (₹3,398.00) is paid. I can see it: "Payment received - Order CD-77 confirmed". I won\'t flag this one again.', paid!)
 assert.equal(rows.agent_activity[0].metadata_json.open, false, 'paid closes the thread')
 assert.equal(await ot.tryThreadReply(actor, 'It was paid', Date.now(), deps), null, 'no open thread → ordinary handling')
 console.log('✓ what / check + track / paid resolve against the alert; paid closes it')
