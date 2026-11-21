@@ -293,7 +293,7 @@ export function followUpAnswerReply(kind: string, answer: 'handled' | 'not_yet',
   const about = subject && !/^a sender$/i.test(subject) ? `the ${subject} mail` : 'that mail'
   if (kind === 'digest') return answer === 'handled' ? "Okay, I'll keep them on your list." : 'Okay. Ask *what needs my attention?* and tell me which ones to drop.'
   return answer === 'handled'
-    ? `Good, that's sorted. I won't ask about ${about} again.${closedLoop ? ' I have taken it off what needs your attention.' : ''}`
+    ? `Good, that's sorted. I won't ask about ${about} again.${closedLoop ? ' I have closed it in your open items.' : ''}`
     : `Okay, it's still open on your side. If you want a nudge, say for example *remind me at 5 pm about ${about}*.`
 }
 
@@ -339,7 +339,11 @@ export async function handleFollowUpAnswer(owner: string, text: string, db: any 
         const at = new Date(now).toISOString()
         const r = await db.from('agent_open_loops').update({ status: 'resolved', resolved_at: at, updated_at: at })
           .eq('telegram_id', owner).eq('status', 'active').eq('source_type', 'gmail_thread').eq('evidence_json->>last_message_id', id).select('id')
-        if (!r?.error && Array.isArray(r?.data)) closed += r.data.length
+        if (!r?.error && Array.isArray(r?.data) && r.data.length) {
+          closed += r.data.length
+          await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'open_loop_resolved_by_followup', message: 'Open loop closed: the person said the flagged mail was handled.',
+            metadata_json: { ref: last.id, loop_ids: r.data.map((x: any) => String(x.id)).slice(0, 5), gmail_message_id: id } })
+        }
       } catch { /* the answer stands */ }
     }
   }

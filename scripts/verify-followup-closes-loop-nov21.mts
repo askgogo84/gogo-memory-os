@@ -37,7 +37,7 @@ function mk(opts: { keys?: string[]; kind?: string; loops?: any[]; updateFails?:
 }
 
 { const m = mk()
-  assert.equal(await fu.handleFollowUpAnswer(O, 'Yes', m.db, t), "Good, that's sorted. I won't ask about the Twilio mail again. I have taken it off what needs your attention.")
+  assert.equal(await fu.handleFollowUpAnswer(O, 'Yes', m.db, t), "Good, that's sorted. I won't ask about the Twilio mail again. I have closed it in your open items.")
   assert.deepEqual(m.updates.map(u => u.ids), [['L1']], 'only this owner, active, Gmail thread, same message')
   assert.deepEqual(m.loops.map(l => [l.id, l.status]), [['L1', 'resolved'], ['L2', 'active'], ['L3', 'active'], ['L4', 'dismissed'], ['L5', 'active']])
   assert.equal(m.loops[0].resolved_at, iso(t)) }
