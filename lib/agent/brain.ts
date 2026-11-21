@@ -15,6 +15,12 @@ import { personAsk } from '@/lib/agent/people'
 import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
+// Keep the optional provider lazily loaded so existing inert security harnesses remain provider-free.
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+const sarvamCostPaise = (input: number | null, output: number | null) =>
+  input == null || output == null ? null : Math.round((input * 15 + output * 60) * 100 / 1e6)
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OWNER_CANARY } from '@/lib/memory/canary'
 import { inventedApprovalGuard } from '@/lib/services/claude'
@@ -338,6 +344,7 @@ export type BrainMeterEvent = { telegramId: number; source: 'brain_decide' | 'br
 const USD_TO_PAISE = 95 * 100
 export function costPaise(e: BrainMeterEvent): number | null {
   if (e.source === 'brain_shadow') return 0
+  if (e.model === 'sarvam-105b' || e.model === 'sarvam-105b-conversations') return sarvamCostPaise(e.usage.input, e.usage.output)
   const usd = estimateCostUsd(e.model, e.usage)
   return usd == null ? null : Math.max(0, Math.round(usd * USD_TO_PAISE))
 }
@@ -351,7 +358,7 @@ export function meterBrainCall(e: BrainMeterEvent): void {
       // 28 Oct audit (D2): the flat category estimate (₹5 per Sonnet call) would exhaust a Free budget in ~4 turns.
       // Charge the real token cost; shadow evaluation calls are ours, so they never consume the person's budget.
       ...(costPaise(e) != null ? { estimatedCostPaise: costPaise(e)! } : {}),
-      metadata: { source: e.source, model: e.model, ok: e.ok, ms: e.ms, usd: estimateCostUsd(e.model, e.usage), input_tokens: e.usage.input, output_tokens: e.usage.output,
+      metadata: { source: e.source, model: e.model, ok: e.ok, ms: e.ms, usd: e.model.startsWith('sarvam-') ? null : estimateCostUsd(e.model, e.usage), inr_paise: e.model.startsWith('sarvam-') ? costPaise(e) : null, input_tokens: e.usage.input, output_tokens: e.usage.output,
         cache_read_input_tokens: e.usage.cacheRead, cache_creation_input_tokens: e.usage.cacheCreation },
     })).catch(() => {})
   } catch { /* metering never affects the reply */ }
@@ -359,10 +366,40 @@ export function meterBrainCall(e: BrainMeterEvent): void {
 
 export async function decide(p: { text: string; ctx: BrainContext; now?: Date; client?: Pick<Anthropic, 'messages'>; telegramId?: number; meter?: (e: BrainMeterEvent) => void; model?: string; source?: BrainMeterEvent['source'] }): Promise<BrainDecision & { ms: number; usage: BrainUsage }> {
   const t0 = Date.now()
-  const model = p.model || MODEL()
+  let model = p.model || MODEL()
   let usage: BrainUsage = brainUsage(null)
   let ok = false
   try {
+    // Sarvam is opt-in and canary-only because runBrain already limits eligible users.
+    // Never reinterpret an approval: the existing decisionFromToolUse and action guards remain authoritative.
+    if (!p.client && !p.model && sarvamEnabled('GOGO_SARVAM_BRAIN')) {
+      try {
+        const { sarvamChat } = await import('@/lib/services/sarvam')
+        const res = await sarvamChat({
+          model: 'sarvam-105b', maxTokens: 1200, toolChoice: 'required', timeoutMs: TIMEOUT_MS,
+          messages: [{ role: 'system', content: BRAIN_SYSTEM(p.ctx, p.now || new Date()) },
+            ...brainMessages(p.ctx.turns, p.text).map(m => ({ role: m.role as 'user' | 'assistant', content: String(m.content) }))],
+          tools: BRAIN_TOOLS.map(t => ({ name: t.name, description: t.description || t.name,
+            input_schema: t.input_schema as Record<string, unknown> })),
+        })
+        model = res.model
+        usage = { input: res.usage.inputTokens, output: res.usage.outputTokens, cacheRead: null, cacheCreation: null }
+        ok = true
+        const d = res.tool ? decisionFromToolUse(p.text, res.tool.name, res.tool.input) : { kind: 'skip' as const, reason: 'sarvam_no_tool' }
+        return { ...d, ms: Date.now() - t0, usage }
+      } catch (e: any) {
+        // No model-generated tool is executed by this branch. On failure preserve the Anthropic path.
+        console.error('SARVAM_BRAIN_FALLBACK:', String(e?.code || 'error').slice(0, 50))
+      }
+    }
+    // Shadow probabilities are telemetry only, NEVER authority for routing, writes or approvals.
+    if (!p.client && sarvamEnabled('GOGO_SARVAM_PRISM_SHADOW')) {
+      void import('@/lib/services/sarvam')
+        .then(m => m.sarvamPrismIntentShadow(redactSecretShapedText(p.text), { timeoutMs: 1200 }))
+        .then(r => console.log('SARVAM_PRISM_SHADOW:', JSON.stringify({
+          intent: r.intent, confidence: r.confidence, ambiguous: r.ambiguous, costPaise: r.costPaise,
+        }))).catch(() => console.error('SARVAM_PRISM_SHADOW_FAILED'))
+    }
     const client = p.client || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
     // Order matters for caching: tools, then the cached static block, then the dynamic block and the turns.
     // Sonnet 5.5 cannot be forced to call a tool: forModel() turns 'any' into 'auto', and the note below (a final,

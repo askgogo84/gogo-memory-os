@@ -1,6 +1,10 @@
 import { measureModelCall, type ModelUsage } from './model-usage'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import * as asyncHooks from 'node:async_hooks'
 
@@ -68,7 +72,21 @@ async function openAiComplete(prompt:string,onUsage?: (usage:ModelUsage)=>void,s
   return result.choices?.[0]?.message?.content||''
 }
 
+async function sarvamPlannerComplete(prompt: string, onUsage?: (usage: ModelUsage) => void, system?: string) {
+  const started = Date.now()
+  const { sarvamChat } = await import('@/lib/services/sarvam')
+  const result = await sarvamChat({ model: 'sarvam-105b', maxTokens: 2200, timeoutMs: 16000,
+    messages: [...(system ? [{ role: 'system' as const, content: system }] : []), { role: 'user', content: prompt }] })
+  onUsage?.({ model: result.model, provider: 'sarvam', ok: true, inputTokens: result.usage.inputTokens,
+    outputTokens: result.usage.outputTokens, latencyMs: Date.now() - started, estimatedCostUsd: null })
+  return result.text
+}
 export async function completeAgentPlanPrompt(prompt:string,onUsage?:(usage:ModelUsage)=>void,system?:string){
+  if (sarvamEnabled('GOGO_SARVAM_PLANNER')) {
+    return completePlannerPromptWithFallback(prompt,p=>sarvamPlannerComplete(p,onUsage,system),
+      p=>completePlannerPromptWithFallback(p,x=>anthropicComplete(x,onUsage,system),x=>openAiComplete(x,onUsage,system)))
+  }
+  // Preserve the established Anthropic → OpenAI fallback for every disabled Sarvam request.
   return completePlannerPromptWithFallback(prompt,p=>anthropicComplete(p,onUsage,system),p=>openAiComplete(p,onUsage,system))
 }
 
