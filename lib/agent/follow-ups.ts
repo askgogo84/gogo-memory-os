@@ -289,11 +289,11 @@ export async function handleFollowUpCommand(owner: string, text: string, db: any
 
 export const FOLLOWUP_ANSWER_WINDOW_MS = 3 * 3600_000
 /** Pure. What Gogo says back to a yes/no on its own follow-up. `subject` is the sender for a deadline follow-up. */
-export function followUpAnswerReply(kind: string, answer: 'handled' | 'not_yet', subject: string): string {
+export function followUpAnswerReply(kind: string, answer: 'handled' | 'not_yet', subject: string, closedLoop = false): string {
   const about = subject && !/^a sender$/i.test(subject) ? `the ${subject} mail` : 'that mail'
   if (kind === 'digest') return answer === 'handled' ? "Okay, I'll keep them on your list." : 'Okay. Ask *what needs my attention?* and tell me which ones to drop.'
   return answer === 'handled'
-    ? `Good, that's sorted. I won't ask about ${about} again.`
+    ? `Good, that's sorted. I won't ask about ${about} again.${closedLoop ? ' I have closed it in your open items.' : ''}`
     : `Okay, it's still open on your side. If you want a nudge, say for example *remind me at 5 pm about ${about}*.`
 }
 
@@ -328,5 +328,24 @@ export async function handleFollowUpAnswer(owner: string, text: string, db: any 
   const saved = await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'followup_answered', message: `Follow-up answered: ${parsed.answer === 'handled' ? 'handled' : 'not yet'}.`,
     metadata_json: { ref: last.id, kind, answer: parsed.answer, keys: Array.isArray(last.metadata_json?.keys) ? last.metadata_json.keys : [] } })
   if (saved.error) return null
-  return followUpAnswerReply(kind, parsed.answer, subject)
+  // 21 Nov (handoff): "handled" was only recorded, and the mail stayed in "what needs my attention?". It now closes the
+  // Gmail open loop for that exact message: this owner, still active, matched on the judged Gmail message id. Best effort:
+  // a failed close never changes the answer, and a later newer mail on the thread reopens the loop as before.
+  let closed = 0
+  if (kind === 'deadline' && parsed.answer === 'handled') {
+    const ids = (Array.isArray(last.metadata_json?.keys) ? last.metadata_json.keys : []).map(String).filter((k: string) => k.startsWith('deadline:')).map((k: string) => k.slice('deadline:'.length)).filter((id: string) => /^[A-Za-z0-9_-]{6,80}$/.test(id))
+    for (const id of ids.slice(0, 3)) {
+      try {
+        const at = new Date(now).toISOString()
+        const r = await db.from('agent_open_loops').update({ status: 'resolved', resolved_at: at, updated_at: at })
+          .eq('telegram_id', owner).eq('status', 'active').eq('source_type', 'gmail_thread').eq('evidence_json->>last_message_id', id).select('id')
+        if (!r?.error && Array.isArray(r?.data) && r.data.length) {
+          closed += r.data.length
+          await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'open_loop_resolved_by_followup', message: 'Open loop closed: the person said the flagged mail was handled.',
+            metadata_json: { ref: last.id, loop_ids: r.data.map((x: any) => String(x.id)).slice(0, 5), gmail_message_id: id } })
+        }
+      } catch { /* the answer stands */ }
+    }
+  }
+  return followUpAnswerReply(kind, parsed.answer, subject, closed > 0)
 }
