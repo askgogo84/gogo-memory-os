@@ -116,7 +116,7 @@ const healthy: Tables = {
   conversations: [{ telegram_id: OWNER, created_at: ago(0.1) }],
   agent_watchers: [{ telegram_id: OWNER, active: true, next_check_at: ago(-1), last_checked_at: ago(1) }],
   agent_approvals: [{ telegram_id: OWNER, status: 'approved', resolved_at: ago(20) }],
-  agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'completed', completed_at: ago(30), created_at: ago(30) }],
+  agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'completed', completed_at: ago(30), started_at: ago(30) }],
 }
 const probes = {
   gmailProbe: async () => ({ email: 'goverdhan@tipplr.in', checkedAt: NOW.toISOString() }),
@@ -167,7 +167,7 @@ console.log('✓ no provider answer or no fresh record: unverified, never operat
     ],
     agent_watchers: [{ telegram_id: OWNER, active: true, next_check_at: ago(6), last_checked_at: ago(30) }],
     agent_approvals: [{ telegram_id: OWNER, status: 'pending', requested_at: ago(24 * 9) }],
-    agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'outcome_unknown', updated_at: ago(2), created_at: ago(2) }],
+    agent_runs: [{ telegram_id: OWNER, type: 'voice_call', status: 'outcome_unknown', updated_at: ago(2), started_at: ago(2) }],
   }
   const { db, writes } = fakeDb(t)
   const out = await d.runSystemDiagnostic(actor, { db, now: NOW, env: { ...env }, gmailProbe: async () => { throw new Error('workspace_email_consent_missing') }, calendarProbe: probes.calendarProbe })
@@ -222,3 +222,19 @@ console.log('✓ ambiguous asks get a clarifying question, a failure says unveri
 // The inline gates in both routes are the module's gate, character for character.
 assert.ok(dash.includes(d.DIAGNOSTIC_GATE.source) && wa.includes(d.DIAGNOSTIC_GATE.source), 'route gates match DIAGNOSTIC_GATE')
 console.log('✓ route gates match the module gate')
+
+// 21 Nov live: the voice check selected agent_runs.created_at, which does not exist, so the read failed. Every column
+// this module selects, filters or orders on in the agent OS tables must exist in supabase/agent-os-v1.sql.
+{
+  const schema = readFileSync(new URL('../supabase/agent-os-v1.sql', import.meta.url), 'utf8')
+  const cols = (table: string) => new Set((schema.match(new RegExp(`create table if not exists ${table} \\(([\\s\\S]*?)\\n\\);`))?.[1] || '').split('\n').map(l => l.trim().split(/\s+/)[0]).filter(Boolean))
+  const mod = readFileSync(new URL('../lib/agent/system-diagnostic.ts', import.meta.url), 'utf8')
+  for (const table of ['agent_runs', 'agent_approvals', 'agent_watchers']) {
+    const known = cols(table); assert.ok(known.size > 5, 'schema parsed: ' + table)
+    for (const m of mod.matchAll(new RegExp(`from\\('${table}'\\)([^\\n]*)`, 'g'))) {
+      const used = [...m[1].matchAll(/\.select\('([^']*)'/g)].flatMap(x => x[1].split(',')).concat([...m[1].matchAll(/\.(?:eq|in|order|gte|lte|lt|gt)\('([a-z_]+)'/g)].map(x => x[1]))
+      for (const c of used) assert.ok(known.has(c.trim()), `${table}.${c.trim()} exists`)
+    }
+  }
+}
+console.log('✓ every agent_runs / agent_approvals / agent_watchers column the diagnostic reads exists in the schema')

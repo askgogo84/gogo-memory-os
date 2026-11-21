@@ -232,11 +232,12 @@ export async function voiceCheck(db: Db, owner: string, env: Record<string, stri
   if (capabilityPaused('voice_calls', env as any)) return check('voice', L, 'blocked', 'Calling is paused by the safety switch.')
   if (!voice.voiceCallsEnabled(env)) return check('voice', L, 'blocked', 'The calling provider is not configured.')
   const hours = voice.callingHoursProblem('+910000000000', now, env) ? ' Outside 9 am to 9 pm India time, calls are not placed.' : ''
-  const r = await rows(db.from('agent_runs').select('status,completed_at,updated_at,created_at').eq('telegram_id', owner).eq('type', 'voice_call').order('created_at', { ascending: false }).limit(5))
+  const r = await rows(db.from('agent_runs').select('status,completed_at,updated_at,started_at').eq('telegram_id', owner).eq('type', 'voice_call').order('started_at', { ascending: false }).limit(5))
   if (!r.ok) return check('voice', L, 'unverified', `Configured, but I couldn't read your call history.${hours}`)
   const last = r.data.find((x: any) => ['completed', 'failed', 'outcome_unknown'].includes(String(x.status)))
   if (!last) return check('voice', L, 'unverified', `Configured, but no call has a provider-confirmed result yet.${hours}`)
-  const at = last.completed_at || last.updated_at || last.created_at || null
+  // 21 Nov live: agent_runs has started_at, not created_at; the first version's query failed and read as unverified.
+  const at = last.completed_at || last.updated_at || last.started_at || null
   if (last.status === 'completed') return check('voice', L, 'operational', `The calling provider reported your latest call as completed.${hours}`, at)
   return check('voice', L, 'degraded', `Your latest call ${last.status === 'failed' ? 'failed at the provider' : 'has an unconfirmed outcome'}.${hours}`, at)
 }
