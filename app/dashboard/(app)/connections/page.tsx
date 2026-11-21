@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { getProfile } from '@/lib/dashboard/queries'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { ConnectionsLiveCheck } from '@/components/dashboard/connections-live-check'
 
 export const dynamic='force-dynamic'
 
@@ -94,9 +95,12 @@ export default async function ConnectionsPage(){
       <p className="mt-2 max-w-3xl text-[16px] leading-5 text-[#9a9a9a]">What Gogo can reach, what it is allowed to do there, and what evidence is required before it claims success.</p>
     </header>
 
-    <section className="mt-5" aria-labelledby="connection-overview">
-      <h2 id="connection-overview" className="final-dark-eyebrow">At a glance</h2>
-      <p className="mt-1 text-[15px] leading-5 text-[#a8a8a8]">Saved connection and permission state for this account. Open a card for what Gogo can do and how it verifies results.</p>
+    {/* 22 Nov (owner-approved mock): a live, read-only provider check first; saved state below it. */}
+    <ConnectionsLiveCheck/>
+
+    <section className="mt-6" aria-labelledby="connection-overview">
+      <h2 id="connection-overview" className="final-dark-eyebrow">Saved state</h2>
+      <p className="mt-1 text-[15px] leading-5 text-[#a8a8a8]">What is saved for this account. The live check above is what a provider confirmed; these are not claimed as working until one does. Open a card for what Gogo can do and how it verifies results.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <ConnectionCard name="Gmail" state={!authKnown?'Connection status unavailable':!c.gmail?'Not connected':gmailReadUnknown?'Reading status unavailable':gmailReadOff?'Reading off':gmailSend?'Read and send connected':'Read only'}
           detail={!authKnown?'Your saved connection could not be checked.':!c.gmail?'Connect Gmail in You.':gmailReadUnknown?'Your reading preference could not be checked.':gmailReadOff?'Your saved preference disables reading.':'Reading does not authorize a send.'}
