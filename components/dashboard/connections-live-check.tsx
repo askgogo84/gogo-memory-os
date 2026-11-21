@@ -3,21 +3,22 @@
 // 22 Nov (owner-approved mock, Connections · phone): a live check of what Gogo can reach. Runs once when the page
 // opens and again on "Check now". Anything not working is listed first with its reason; working items follow.
 // The check only reads; it never connects, sends or changes anything.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type Status = 'operational' | 'degraded' | 'blocked' | 'unverified'
 type Check = { key: string; label: string; status: Status; at: string | null; evidence: string; quiet?: boolean }
 
 const WORD: Record<Status, string> = { operational: 'Operational', degraded: 'Degraded', blocked: 'Blocked', unverified: 'Unverified' }
 const PILL: Record<Status, string> = {
-  operational: 'bg-[#16302a] text-[#8fd3b6]',
-  degraded: 'bg-[#33280f] text-[#e4c17b]',
-  blocked: 'bg-[#3a1a18] text-[#f0a49b]',
-  unverified: 'bg-[#242424] text-[#c9c5bf]',
+  // Colours that already have light-mode partners (lib/dashboard/light-palette.mjs), so both themes stay readable.
+  operational: 'bg-[#12302c] text-[#7fb069]',
+  degraded: 'bg-[#2a2111] text-[#e4c17b]',
+  blocked: 'bg-[#35221d] text-[#d96c5f]',
+  unverified: 'bg-[#242424] text-[#c9c9c4]',
 }
 // Where the owner fixes each one.
 const FIX: Record<string, { href: string; label: string }> = {
-  gmail: { href: '/dashboard/you', label: 'Open Gmail settings →' },
+  gmail: { href: '/dashboard/settings/email', label: 'Open Gmail settings →' },
   calendar: { href: '/dashboard/calendar', label: 'Open Calendar →' },
   voice: { href: '/dashboard/activity', label: 'Open your calls →' },
   approvals: { href: '/dashboard/tasks', label: 'Open approvals →' },
@@ -49,7 +50,7 @@ function Card({ c, showFix }: { c: Check; showFix: boolean }) {
       <span className={`shrink-0 rounded-full px-3 py-1 text-[13px] font-semibold ${PILL[c.status]}`}>{WORD[c.status]}</span>
     </div>
     <p className="text-[14px] leading-5 text-[#a8a8a8]">{c.evidence}</p>
-    {c.at && <div className="text-[13px] text-[#8a8a8a]">Evidence from {whenLabel(c.at)}</div>}
+    {c.at && <div className="text-[13px] text-[#8a8a86]">Evidence from {whenLabel(c.at)}</div>}
     {showFix && fix && <a href={fix.href} className="flex min-h-11 items-center text-[14px] font-semibold text-[#2fb8a6]">{fix.label}</a>}
   </div>
 }
@@ -59,17 +60,21 @@ export function ConnectionsLiveCheck() {
   const [checkedAt, setCheckedAt] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // Review (PR #1564): one run at a time (React runs effects twice in development).
+  const inFlight = useRef(false)
 
   const run = useCallback(async () => {
+    if (inFlight.current) return
+    inFlight.current = true
     setBusy(true); setError('')
     try {
       const res = await fetch('/api/dashboard/connections/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok || !Array.isArray(body?.checks)) { setError(String(body?.message || "The check couldn't finish, so nothing is marked as working. Nothing was changed.")); return }
-      setChecks(body.checks); setCheckedAt(String(body.checkedAt || new Date().toISOString()))
+      setChecks(body.checks); setCheckedAt(String(body.checkedAt || new Date().toISOString())); setError('')
     } catch {
       setError("Couldn't reach Gogo, so nothing is marked as working. Nothing was changed.")
-    } finally { setBusy(false) }
+    } finally { inFlight.current = false; setBusy(false) }
   }, [])
 
   useEffect(() => { void run() }, [run])
@@ -80,12 +85,12 @@ export function ConnectionsLiveCheck() {
     <div className="final-dark-panel flex items-center gap-3 p-4">
       <div className="min-w-0 flex-1">
         <div className="text-[16px] font-semibold text-[#f2efea]" role="status">{busy && !g ? 'Checking with each provider…' : g ? g.headline : 'Not checked yet'}</div>
-        <div className="text-[13px] text-[#8a8a8a]">{busy ? 'Reading only; nothing is changed.' : checkedAt ? `Checked ${whenLabel(checkedAt)}` : 'A check only reads; it never connects, sends or changes anything.'}</div>
+        <div className="text-[13px] text-[#8a8a86]">{busy ? 'Reading only; nothing is changed.' : checkedAt ? `Checked ${whenLabel(checkedAt)}` : 'A check only reads; it never connects, sends or changes anything.'}</div>
       </div>
       <button type="button" onClick={run} disabled={busy}
         className="min-h-11 shrink-0 rounded-full bg-[#2fb8a6] px-5 text-[15px] font-semibold text-[#04201c] disabled:opacity-60">{busy ? 'Checking…' : 'Check now'}</button>
     </div>
-    {error && <p role="alert" className="rounded-[12px] border border-[#3a2a17] bg-[#1d1710] px-4 py-3 text-[14px] leading-5 text-[#e4c17b]">{error}</p>}
+    {error && <p role="alert" className="rounded-[12px] border border-[#665230] bg-[#1a1710] px-4 py-3 text-[14px] leading-5 text-[#e4c17b]">{error}</p>}
     {g && g.look.length > 0 && <>
       <h3 className="final-dark-eyebrow mt-1">Needs a look</h3>
       <div className="grid gap-3 md:grid-cols-2">{g.look.map(c => <Card key={c.key} c={c} showFix />)}</div>

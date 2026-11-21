@@ -7,6 +7,7 @@
 .dashboard-root[data-theme='light'] .bg-\[\#111111\]{background-color:#fffdf9}
 .dashboard-root[data-theme='light'] .bg-\[\#111\]{background-color:#fffdf9}
 .dashboard-root[data-theme='light'] .bg-\[\#121212\]{background-color:#fffdf9}
+.dashboard-root[data-theme='light'] .bg-\[\#12302c\]{background-color:#dff1ed}
 .dashboard-root[data-theme='light'] .bg-\[\#123d38\]{background-color:#dff1ed}
 .dashboard-root[data-theme='light'] .bg-\[\#131313\]{background-color:#fffdf9}
 .dashboard-root[data-theme='light'] .bg-\[\#13253a\]{background-color:#e3eefb}
@@ -25,8 +26,10 @@
 .dashboard-root[data-theme='light'] .bg-\[\#221D13\]{background-color:#fbf1dd}
 .dashboard-root[data-theme='light'] .bg-\[\#222\]{background-color:#efe8dd}
 .dashboard-root[data-theme='light'] .bg-\[\#232323\]{background-color:#e6ddd0}
+.dashboard-root[data-theme='light'] .bg-\[\#242424\]{background-color:#e6ddd0}
 .dashboard-root[data-theme='light'] .bg-\[\#2A2A2A\]{background-color:#e6ddd0}
 .dashboard-root[data-theme='light'] .bg-\[\#2A2A2A\]\/50{background-color:rgba(230,221,208,0.5)}
+.dashboard-root[data-theme='light'] .bg-\[\#2a2111\]{background-color:#fbf1dd}
 .dashboard-root[data-theme='light'] .bg-\[\#2a2a2a\]{background-color:#e6ddd0}
 .dashboard-root[data-theme='light'] .bg-\[\#35221d\]{background-color:#fbe9e4}
 .dashboard-root[data-theme='light'] .bg-\[\#3a2a10\]{background-color:#fbf1dd}
