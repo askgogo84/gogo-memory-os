@@ -34,7 +34,7 @@ node scripts/g0dm0d3-lab/smoke.mjs tipplr
 bash scripts/g0dm0d3-lab/install.sh stop
 ```
 
-These five default smoke checks validate **service availability and authentication only**, not the model or the five products. To make a **single synthetic LLM request** using a dedicated test key in the running container:
+These five default smoke checks validate **service availability, authentication, unauthorized-access rejection, and one real local AutoTune analysis per project fixture**. They do not validate external model inference or the five products' correctness. To make a **single synthetic LLM request** using a dedicated test key in the running container:
 
 ```bash
 export LAB_MODEL_ID="provider/model-you-are-authorized-to-test"
@@ -45,7 +45,7 @@ A provider model call can incur charges and is never enabled by the installer or
 
 ## Implementation specifics
 
-- `install.sh` clones the upstream GitHub repository into a separate local developer cache, verifies the **exact** upstream Git revision, builds our own *container wrapper* (uses upstream unchanged files), and starts the API in a localhost-bound, nonprivileged Docker container. It refuses an unexpected checkout SHA.
+- `install.sh` clones the upstream GitHub repository into a separate local developer cache, verifies the **exact** upstream Git revision, builds our own *container wrapper* (including one narrowly scoped Express 5 route compatibility patch within the image), and starts the API in a localhost-bound, nonprivileged Docker container. It refuses an unexpected checkout SHA.
 - `Dockerfile` works around upstream's Dockerfile reliance on `npx tsx` after omitting development dependencies; this wrapper installs the locked dependency set, including the existing `tsx` script runner.
 - `smoke.mjs` hard-blocks non-loopback URLs and validates a local health response and authenticated tier response. Optional model requests explicitly turn **off** `godmode`, `autotune`, `parseltongue`, and STM, and set `contribute_to_dataset:false`. It reports transport/schema results, not factual correctness.
 - No changes are made to production app routes, model policy, secrets, CI deployment, provider configuration, database schema, or user-facing behavior.
@@ -69,4 +69,4 @@ A provider model call can incur charges and is never enabled by the installer or
 4. CI green, legal review for AGPL network implications, and a distinct proposal before enabling any persistent shared service.
 5. Never connect a red-team tool's outputs directly to live customer-facing model policy.
 
-**Status:** GitHub branch and install kit only. No Docker installation, running lab service, upstream audit certification, product integration or production deployment has been performed by this change.
+**Status:** GitHub branch and install kit only. The isolated container has built and passed health/auth checks in an ephemeral GitHub Actions runner. No persistent machine installation, externally hosted service, upstream audit certification, customer-model inference, product runtime integration or production deployment has been performed by this change.
