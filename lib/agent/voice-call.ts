@@ -125,7 +125,7 @@ export function callingHoursProblem(to: string, now: Date, env: Record<string, s
   if (h >= start && h < end) return null
   const clock = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }).format(now).replace(/\s?([ap])\.?m\.?/i, ' $1m').toLowerCase()
   const fmt = (x: number) => x === 0 || x === 24 ? '12 am' : x === 12 ? '12 pm' : x < 12 ? `${x} am` : `${x - 12} pm`
-  return `It's ${clock} in India, so I won't call now: I only place calls between ${fmt(start)} and ${fmt(end)}. Nothing was called. Ask me again after ${fmt(start)} and I'll show a fresh call plan.`
+  return `It's ${clock} in India, so I won't call now: I only place calls between ${fmt(start)} and ${fmt(end)}. Nothing was called. Ask me again after ${fmt(start)} and I'll show you a call plan.`
 }
 
 /** The approved mock's call-plan card as WhatsApp text. Pure. */
@@ -574,6 +574,11 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     return { text: `📞 Calling ${plan.venue} now from ${displayPhone(String(process.env.BOLNA_FROM_NUMBER || DEFAULT_FROM_NUMBER))}. I'll message you here with what they said, usually within 2–3 minutes.`, handledBy: 'voice-call' }
   }
 
+  // 21 Nov live: at 9:05 pm a full call plan was shown and refused only after the yes. Every call that can be placed
+  // is to an Indian number (beginApprovedVoiceCall requires +91), so outside calling hours no plan is made at all:
+  // no number lookup, no brief written, nothing saved. The check at approval time stays as the backstop.
+  const closed = callingHoursProblem('+910000000000', new Date())
+  if (closed) return { text: closed, handledBy: 'voice-call' }
   // "…under the name Goverdhan" wins; otherwise the account name.
   const givenName = callBookingName(params.text)
   const named = givenName ? [givenName, givenName] : null

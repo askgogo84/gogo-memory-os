@@ -26,3 +26,33 @@ const iExpiry = src.indexOf("That call plan has expired"), iRedial = src.indexOf
 assert.ok(iHours > iExpiry && iHours > iRedial && iHours < iPlace, 'checked after the approval checks and before any call is placed, for a yes and a redial')
 assert.ok(src.slice(iHours, iPlace).includes("if (hours) return { text: hours, handledBy: 'voice-call' }"))
 console.log('✓ the check runs before the call is placed, for both a yes and a redial')
+
+// 21 Nov live: at 9:05 pm a full call plan was shown and refused only after the yes. No plan is made outside hours.
+const ts: any = (await import('typescript')).default
+const { runInNewContext } = await import('node:vm')
+async function planAt(iso: string, text: string) {
+  const exports: any = {}; let saves = 0, provider = 0
+  const Real = Date
+  class FixedDate extends Real { constructor(...a: any[]) { super(...(a.length ? a : [iso]) as []) } static now() { return new Real(iso).getTime() } }
+  const db: any = { from: () => { throw new Error('no db in this test') } }
+  const mocks: any = {
+    'node:crypto': await import('node:crypto'), '@/lib/supabase-admin': { supabaseAdmin: db },
+    './voice-call-execution': { voicePlanHash: () => 'h', voiceAttemptId: () => 'a', beginApprovedVoiceCall: async () => { provider++; return { status: 'blocked' } } },
+    './policy': { capabilityPaused: () => false, capabilityPausedText: () => '' },
+    '@/lib/bot/handlers/followup-state': { getLatestFollowupState: async () => null, saveFollowupState: async () => { saves++ }, clearFollowupState: async () => {} },
+  }
+  runInNewContext(ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+    { exports, require: (n: string) => { if (!(n in mocks)) throw Error('Unexpected dependency ' + n); return mocks[n] }, console, Date: FixedDate, Intl, URL, AbortSignal,
+      process: { env: {} }, fetch: async () => { provider++; return new Response('{}') } })
+  const reply = await exports.tryVoiceCall({ actor: { userId: 'fixture', legacyTelegramId: 123, whatsappId: '+918310441698', name: 'Nithin' }, text, surface: 'whatsapp' })
+  return { reply, saves, provider }
+}
+for (const text of ['test call me', 'call Divya Dental on 080 1234 5678 and ask if they are open on Sunday']) {
+  const night = await planAt('2026-11-21T23:00:00+05:30', text)
+  assert.match(night.reply.text, /^It's 11:00 pm in India, so I won't call now/, text)
+  assert.doesNotMatch(night.reply.text, /CALL PLAN/, text)
+  assert.equal(night.saves, 0, 'no plan saved at night: ' + text); assert.equal(night.provider, 0, 'nothing looked up or dialled: ' + text)
+}
+const day = await planAt('2026-11-21T12:00:00+05:30', 'test call me')
+assert.match(day.reply.text, /CALL PLAN/); assert.equal(day.saves, 1); assert.equal(day.provider, 0, 'a plan is only shown, never dialled')
+console.log('✓ outside calling hours no call plan is made, saved or looked up; daytime still shows the plan')
