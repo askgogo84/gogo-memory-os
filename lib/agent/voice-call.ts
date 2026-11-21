@@ -114,6 +114,21 @@ export type CallPlan = {
 }
 
 /** The approved mock's call-plan card as WhatsApp text. Pure. */
+/** 9 am to 9 pm India time for an Indian number (GOGO_CALL_HOURS="9-21" to change). Another country's number has no
+ *  known local time here, so it is not checked. Returns the message to send, or null when the call may go ahead. Pure. */
+export function callingHoursProblem(to: string, now: Date, env: Record<string, string | undefined> = process.env): string | null {
+  if (!/^\+91\d{10}$/.test(String(to || '').replace(/[\s-]/g, ''))) return null
+  const m = String(env.GOGO_CALL_HOURS || '9-21').match(/^(\d{1,2})-(\d{1,2})$/)
+  const start = m ? Math.min(23, Number(m[1])) : 9, end = m ? Math.min(24, Number(m[2])) : 21
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now)
+  const h = Number(parts.find(p => p.type === 'hour')?.value) % 24, min = Number(parts.find(p => p.type === 'minute')?.value)
+  if (h >= start && h < end) return null
+  const clock = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }).format(now).replace(/\s?([ap])\.?m\.?/i, ' $1m').toLowerCase()
+  const fmt = (x: number) => x === 0 || x === 24 ? '12 am' : x === 12 ? '12 pm' : x < 12 ? `${x} am` : `${x - 12} pm`
+  void min
+  return `It's ${clock} in India, so I won't call now: I only call businesses between ${fmt(start)} and ${fmt(end)}. Nothing was called. Ask me again after ${fmt(start)} and I'll show a fresh call plan.`
+}
+
 export function callPlanText(p: CallPlan) {
   if (p.kind === 'general') return [
     '*CALL PLAN · NEEDS YOUR YES*',
@@ -541,6 +556,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       if (plan.redials >= MAX_REDIALS) return { text: `I've already called ${plan.venue} ${plan.redials + 1} times, so I'll stop there. You can book on an app or call them yourself: ${displayPhone(plan.to)}.`, handledBy: 'voice-call' }
       plan.redials += 1
     }
+    // Handoff (21 Nov): nothing stopped a call at 11 pm. Outside calling hours the approved call is not placed.
+    const hours = callingHoursProblem(plan.to, new Date())
+    if (hours) return { text: hours, handledBy: 'voice-call' }
     if (!voiceCallsEnabled()) return { text: 'Calling isn\'t switched on yet (the voice provider key is missing). Nothing was called.', handledBy: 'voice-call' }
     const contact = params.actor.whatsappId ? '+' + String(params.actor.whatsappId).replace(/\D/g, '') : ''
     const placement = await beginApprovedVoiceCall({ owner: String(tg), plan,
