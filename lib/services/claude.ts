@@ -1,9 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
-const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
-  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
-  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+// Per-user gate (21 Nov): the switch, the key, the production approval AND the person served being in GOGO_SARVAM_USERS.
+import { sarvamEnabled } from './sarvam-gate'
 
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'

@@ -16,9 +16,8 @@ import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
 // Keep the optional provider lazily loaded so existing inert security harnesses remain provider-free.
-const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
-  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
-  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+// Per-user gate (21 Nov): the switch, the key, the production approval AND the person served being in GOGO_SARVAM_USERS.
+import { sarvamEnabled } from '../services/sarvam-gate'
 const sarvamCostPaise = (input: number | null, output: number | null) =>
   input == null || output == null ? null : Math.round((input * 15 + output * 60) * 100 / 1e6)
 import { supabaseAdmin } from '@/lib/supabase-admin'

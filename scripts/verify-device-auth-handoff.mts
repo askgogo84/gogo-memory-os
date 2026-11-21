@@ -629,6 +629,7 @@ const browserPlanner=load('planner-provider.ts',{
   }}}}},
   './model-usage':{measureModelCall:async({call}:any)=>call()},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},
+  '../services/sarvam-gate':{sarvamEnabled:()=>false},
 },'',{process:{env:{OPENAI_API_KEY:'fixture-not-a-key'}}})
 const evidenceComputer=load('secure-computer.ts',{
   './planner-provider':browserPlanner,

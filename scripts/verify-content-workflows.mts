@@ -31,6 +31,7 @@ function load(file: string, mocks: Record<string, any>, env = {}) {
   runInNewContext(ts.transpileModule(readFileSync(file, 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
     {module, exports: module.exports, Date, Intl, URL, Headers, console, process: {env}, require(name: string) {
       if (name in mocks) return mocks[name]
+      if (name === './sarvam-gate') return {sarvamEnabled: () => false}
       return new Proxy({}, {get(_target, key) {throw new Error(`Unexpected workflow dependency: ${name}.${String(key)}`)}})
     }})
   return module.exports

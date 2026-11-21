@@ -30,6 +30,7 @@ const stubs = {
   './order-tracking': { ORDER_LIST_RE: /(?!)/ },
   '../email/connect-phrases': { isConnectMailAsk: () => false },
   '../bot/stop-reminder-phrase': { isStopOneReminder: () => false },
+  '../services/sarvam-gate': { sarvamEnabled: () => false },
   './payment-confirmation': { PAYMENT_GATE: /(?!)/ },
   '@/lib/services/model-ids': { SONNET_MODEL: 'fixture-model', forModel: x => x, isAdaptiveOnlyModel: () => false, textOf: c => (Array.isArray(c) ? c : []).filter(b => b && b.type === 'text').map(b => b.text).join(''), TOOL_REQUIRED_NOTE: '' },
   '@/lib/memory/canary': { OWNER_CANARY: [], memoryEnabledFor: () => false },
