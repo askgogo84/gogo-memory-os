@@ -445,7 +445,6 @@ export function isRoomCallRequest(text: string): boolean {
   return /\bfor\s+(?:\d+|one|two|three|four|five|six|seven)\s+nights?\b/i.test(req) && !/\btables?\b/i.test(req)
 }
 
-/** Pure. "Call <who> [on <number>] and <ask>" → who, the number said with it, and the ask. */
 /** Pure. Does a typed name refer to a venue from an earlier call? "Toit" matches "Toit" and "Toit Indiranagar"
  *  (the typed words are the start of the saved name); "Toit Koramangala" does not match "Toit Indiranagar". */
 export function sameVenue(typed: string, saved: string): boolean {
@@ -461,14 +460,25 @@ export function sameVenue(typed: string, saved: string): boolean {
  *  the person's own call runs; test calls never count. */
 export async function knownCallVenue(owner: string, typed: string, db: { from: (t: string) => any } = supabaseAdmin): Promise<{ venue: string; phone: string; source: string } | null> {
   const name = String(typed || '').trim()
-  if (!/^\d{1,20}$/.test(String(owner || '')) || name.length < 3 || name.length > 60 || PERSONAL_CALLEE.test(name) || genericCallee(name)) return null
+  // Review (PR #1561): WhatsApp-created owners are negative ids (lib/dashboard/owner-identity.ts); same check as
+  // beginApprovedVoiceCall.
+  const o = String(owner || '')
+  if (!/^-?\d{1,16}$/.test(o) || !Number.isSafeInteger(Number(o)) || name.length < 3 || name.length > 60 || PERSONAL_CALLEE.test(name) || genericCallee(name)) return null
   try {
-    const { data, error } = await db.from('agent_runs').select('metadata_json,started_at').eq('telegram_id', String(owner)).eq('type', 'voice_call').order('started_at', { ascending: false }).limit(40)
+    // A friend of that name is a person, never the venue ("call Hari and ask…" with Hari Super Sandwich called before).
+    const friends = await db.from('friend_contacts').select('name').eq('owner_telegram_id', o).limit(200)
+    if (friends?.error) return null
+    const low = name.toLowerCase()
+    if ((friends?.data || []).some((f: any) => { const n = String(f?.name || '').trim().toLowerCase(); return n && (n === low || n.split(/\s+/)[0] === low) })) return null
+    const { data, error } = await db.from('agent_runs').select('metadata_json,started_at,status').eq('telegram_id', o).eq('type', 'voice_call').order('started_at', { ascending: false }).limit(40)
     if (error || !Array.isArray(data)) return null
     for (const row of data) {
       const plan = row?.metadata_json?.plan
       if (!plan || plan.test || typeof plan.venue !== 'string' || !/^\+91\d{10}$/.test(String(plan.to || ''))) continue
-      if (sameVenue(name, plan.venue)) return { venue: plan.venue, phone: String(plan.to), source: `your earlier call to ${plan.venue}` }
+      // Review (PR #1561): only a number the person typed themselves is reused. A table plan's number can come from a
+      // web lookup, which the general-call rule above refuses; a call the provider rejected never vouches for a number.
+      if (!/^the number you gave\b/.test(String(plan.source || '')) || row?.status === 'failed') continue
+      if (sameVenue(name, plan.venue)) return { venue: plan.venue, phone: String(plan.to), source: `the number you gave for ${plan.venue} earlier` }
     }
   } catch {}
   return null
@@ -480,6 +490,8 @@ export function unknownCallee(text: string): string | null {
   if (!ask || parseCallCommand(text)) return null
   const callee = calleeParts(ask[1])
   if (callee.phone || callee.unreadable || TIMEY_CALLEE.test(ask[1]) || PERSONAL_CALLEE.test(callee.name)) return null
+  // "…and ask if he is coming", "…and tell her I'm late": a person, not a business.
+  if (/\b(?:he|she|him|her|his|hers)\b/i.test(callLead(text).slice(ask[0].length))) return null
   return callee.name || null
 }
 
@@ -490,6 +502,7 @@ export async function isCallRequestFor(owner: string, text: string): Promise<boo
   return !!name && !!(await knownCallVenue(owner, name))
 }
 
+/** Pure. "Call <who> [on <number>] and <ask>" → who, the number said with it, and the ask. */
 export function splitCallAsk(text: string): { venue: string; phone: string | null; unreadable: boolean; ask: string } | null {
   const m = String(text || '').trim().match(new RegExp(`^(?:please\\s+)?(?:call|phone|ring)\\s+(?:up\\s+)?(.{2,80}?)\\s+(?:and|to)\\s+((?:${CALL_ASK_VERBS})\\b.+)$`, 'i'))
   if (!m) return null
@@ -577,6 +590,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     // A venue called before ("call Toit and ask…"): the same flow as a named business, with that call's number.
     const name = unknownCallee(params.text)
     if (!name || !(await knownCallVenue(String(tg), name))) return null
+    if (!splitCallAsk(stripCallBookingName(callLead(params.text)))) return null
     cmd = { kind: 'book', text: callLead(params.text) }
   }
   const fs = await import('@/lib/bot/handlers/followup-state')

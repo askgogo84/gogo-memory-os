@@ -18,28 +18,39 @@ assert.equal(v.sameVenue("Truffles", "Truffles St. Marks Road"), true)
 assert.equal(v.parseCallCommand("call Toit and ask if they're open on Sunday"), null, 'before: not a call')
 assert.equal(v.unknownCallee("call Toit and ask if they're open on Sunday"), 'Toit')
 assert.equal(v.unknownCallee('Can you call Truffles and check if they have parking?'), 'Truffles')
-for (const t of ['call mom and ask about lunch', 'call Divya tomorrow and ask about the docs', 'call Toit on 080 1234 5678 and ask if they are open', 'remind me to call Toit', 'call Novotel hotel and ask for a late checkout', 'test call me'])
+for (const t of ['call Toit and ask if he is coming tonight', 'call Toit and tell her I am late', 'call mom and ask about lunch', 'call Divya tomorrow and ask about the docs', 'call Toit on 080 1234 5678 and ask if they are open', 'remind me to call Toit', 'call Novotel hotel and ask for a late checkout', 'test call me'])
   assert.equal(v.unknownCallee(t), null, t)
 
 // Owner-bound lookup in the person's own call runs.
-const OWNER = '4205611234567'
+// Review (PR #1561): WhatsApp-created owners are negative ids.
+const OWNER = '-3902574319362690'
+const typed = 'the number you gave'
 const runs = [
-  { telegram_id: OWNER, type: 'voice_call', started_at: '2026-11-17T08:18:00Z', metadata_json: { plan: { venue: 'Toit Indiranagar', to: '+918012345678', test: false } } },
-  { telegram_id: OWNER, type: 'voice_call', started_at: '2026-11-18T08:18:00Z', metadata_json: { plan: { venue: 'your phone', to: '+918884501501', test: true } } },
-  { telegram_id: OWNER, type: 'voice_call', started_at: '2026-11-16T08:18:00Z', metadata_json: { plan: { venue: 'Divya Dental', to: 'not-a-number', test: false } } },
-  { telegram_id: '999', type: 'voice_call', started_at: '2026-11-19T08:18:00Z', metadata_json: { plan: { venue: 'Truffles', to: '+918099999999', test: false } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-17T08:18:00Z', metadata_json: { plan: { venue: 'Toit Indiranagar', to: '+918012345678', test: false, source: typed } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-18T08:18:00Z', metadata_json: { plan: { venue: 'your phone', to: '+918884501501', test: true, source: typed } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-16T08:18:00Z', metadata_json: { plan: { venue: 'Divya Dental', to: 'not-a-number', test: false, source: typed } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-15T08:18:00Z', metadata_json: { plan: { venue: 'Meghana Foods', to: '+918022222222', test: false, source: 'justdial.com' } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'failed', started_at: '2026-11-14T08:18:00Z', metadata_json: { plan: { venue: 'Truffles', to: '+918033333333', test: false, source: typed } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-13T08:18:00Z', metadata_json: { plan: { venue: 'Hari Super Sandwich', to: '+918044444444', test: false, source: typed } } },
+  { telegram_id: '999', type: 'voice_call', status: 'completed', started_at: '2026-11-19T08:18:00Z', metadata_json: { plan: { venue: 'Corner House', to: '+918099999999', test: false, source: typed } } },
 ]
+const friends = [{ owner_telegram_id: OWNER, name: 'Hari Prasad' }]
 const seen: any[] = []
 const db = { from: (table: string) => {
-  assert.equal(table, 'agent_runs'); const f: any[] = []
-  const q: any = { select: () => q, eq: (k: string, val: any) => { seen.push([k, val]); f.push((r: any) => String(r[k]) === String(val)); return q }, order: () => q, limit: () => q,
-    then: (res: any) => Promise.resolve({ data: runs.filter(r => f.every(fn => fn(r))), error: null }).then(res) }
+  assert.ok(['agent_runs', 'friend_contacts'].includes(table), table); const f: any[] = []
+  const rowsOf = table === 'agent_runs' ? runs : friends
+  const q: any = { select: () => q, eq: (k: string, val: any) => { seen.push([table, k, val]); f.push((r: any) => String(r[k]) === String(val)); return q }, order: () => q, limit: () => q,
+    then: (res: any) => Promise.resolve({ data: rowsOf.filter((r: any) => f.every(fn => fn(r))), error: null }).then(res) }
   for (const w of ['insert', 'update', 'upsert', 'delete']) q[w] = () => { throw new Error('write') }
   return q
 } }
-assert.deepEqual(await v.knownCallVenue(OWNER, 'Toit', db), { venue: 'Toit Indiranagar', phone: '+918012345678', source: 'your earlier call to Toit Indiranagar' })
-assert.ok(seen.some(([k, val]) => k === 'telegram_id' && val === OWNER), 'exact owner string')
-assert.equal(await v.knownCallVenue(OWNER, 'Truffles', db), null, "another person's call is never matched")
+assert.deepEqual(await v.knownCallVenue(OWNER, 'Toit', db), { venue: 'Toit Indiranagar', phone: '+918012345678', source: 'the number you gave for Toit Indiranagar earlier' })
+assert.equal(await v.knownCallVenue(OWNER, 'Meghana Foods', db), null, 'a web-looked-up number is never reused')
+assert.equal(await v.knownCallVenue(OWNER, 'Truffles', db), null, 'a call the provider rejected never vouches for its number')
+assert.equal(await v.knownCallVenue(OWNER, 'Hari', db), null, 'a friend called Hari is a person, not Hari Super Sandwich')
+assert.equal(await v.knownCallVenue('4205611234567', 'Toit', db), null, 'a different (positive) owner sees nothing')
+assert.ok(seen.some(([t, k, val]) => t === 'agent_runs' && k === 'telegram_id' && val === OWNER), 'exact owner string')
+assert.equal(await v.knownCallVenue(OWNER, 'Corner House', db), null, "another person's call is never matched")
 assert.equal(await v.knownCallVenue(OWNER, 'your phone', db), null, 'test calls never count')
 assert.equal(await v.knownCallVenue(OWNER, 'Divya Dental', db), null, 'a plan without a valid +91 number never counts')
 assert.equal(await v.knownCallVenue(OWNER, 'mom', db), null)
@@ -72,7 +83,8 @@ async function run(text: string, iso = '2026-11-22T06:30:00Z') {
   const r = await run("call Toit and ask if they're open on Sunday")
   assert.match(r.reply.text, /CALL PLAN/); assert.equal(r.reply.handledBy, 'voice-call-plan')
   assert.equal(r.saved.length, 1); assert.equal(r.saved[0].plan.to, '+918012345678'); assert.equal(r.saved[0].plan.venue, 'Toit Indiranagar')
-  assert.equal(r.saved[0].plan.source, 'your earlier call to Toit Indiranagar'); assert.equal(r.saved[0].plan.kind, 'general')
+  assert.equal(r.saved[0].plan.source, 'the number you gave for Toit Indiranagar earlier'); assert.equal(r.saved[0].plan.kind, 'general')
+  assert.match(r.reply.text, /To: Toit Indiranagar · .*\(the number you gave for Toit Indiranagar earlier\)/, 'the card shows the venue, the number and where it came from')
   assert.equal(r.provider, 0, 'a plan is only shown; the call waits for the yes')
   assert.equal((await run('call Divya and ask if she is free')).reply, null, 'a person is still not a call')
   assert.equal((await run("call Toit Koramangala and ask if they're open")).reply, null, 'an unknown branch is still not a call')
