@@ -1,0 +1,28 @@
+name: ReserveGo server egress security regression (test-only expected RED)
+on:
+  pull_request:
+    paths:
+      - scripts/verify-reservego-server-egress-testonly.mts
+      - .github/workflows/reservego-server-egress-testonly.yml
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-reservego-egress:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout literal pull request HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Execute actual ReserveGo helper against fake network only
+        run: npx --yes tsx scripts/verify-reservego-server-egress-testonly.mts
