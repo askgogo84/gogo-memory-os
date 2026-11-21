@@ -1136,7 +1136,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // 17 Nov: a call for any other ask (room, appointment, enquiry) also counts, decided by the call parser itself so
     // an ordinary "call mom and ask about lunch" keeps the brain and the reminder path (review, PR #1534).
     const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
-      || (/^\s*(?:[a-z,!']+\s+){0,6}(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m => m.parseCallCommand(text)?.kind === 'book', () => false))
+      || (/^\s*(?:[a-z,!']+\s+){0,6}(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m => m.isCallRequestFor(String(resolvedUser.telegramId), text), () => false))
     // 21 Nov: "run a self-diagnostic" / "health check" gets a read-only report before goal intake, the brain or the
     // planner can turn it into a plan or a task (lib/agent/system-diagnostic). Review (PR #1559): never for a forwarded
     // message, a friend-reminder flow or an approval reply, which keep their own handlers. Imported only on a likely ask.

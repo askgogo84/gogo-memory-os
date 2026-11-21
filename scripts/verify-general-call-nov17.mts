@@ -128,9 +128,10 @@ eq(vc.parseOutcome('{"booked":true,"confirmed_time":"9:00 pm","staff_name":"A","
 const src = readFileSync('lib/agent/voice-call.ts', 'utf8')
 ok(src.includes("&& plan.kind !== 'general') saved = await recordPhoneBooking("), 'a general call is never saved as a table booking')
 ok(/a clear no or not available is still an answer/.test(src), 'an answered enquiry counts as done, so it does not invite redials')
-// The route gate uses the parser, so ordinary "call mom and ask…" keeps the brain (review B5).
+// The route gate uses the parser (21 Nov: through isCallRequestFor, which asks the parser first and adds only venues
+// called before), so ordinary "call mom and ask…" keeps the brain (review B5).
 for (const route of ['app/api/webhooks/whatsapp/route.ts', 'app/api/dashboard/chat/route.ts']) {
   const r = readFileSync(route, 'utf8')
-  ok(/\(\?:and\|to\)\\s\+\(\?:book\|reserve\)\\b\|\(\?:yes/.test(r) && /parseCallCommand\(text\)\?\.kind\s*===\s*'book'/.test(r), `${route}: the call gate is the old pattern or the parser's own answer`)
+  ok(/\(\?:and\|to\)\\s\+\(\?:book\|reserve\)\\b\|\(\?:yes/.test(r) && /(?:parseCallCommand\(text\)\?\.kind\s*===\s*'book'|isCallRequestFor\(String\([^)]+\),\s*text\))/.test(r), `${route}: the call gate is the old pattern or the parser's own answer`)
 }
 console.log(`PASS verify-general-call-nov17: ${checks} checks`)
