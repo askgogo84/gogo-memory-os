@@ -128,6 +128,7 @@ export async function issuePartnerOAuthIntent(args: {
  */
 export async function consumePartnerOAuthCallback(args: {
   store: PartnerOAuthStateStore
+  source: PartnerAuthorizationSource
   principal: TrustedPrincipal
   provider: Partner
   state: string
@@ -143,7 +144,7 @@ export async function consumePartnerOAuthCallback(args: {
   if (pending.ownerId !== args.principal.ownerId || pending.tenantId !== args.principal.tenantId ||
       pending.provider !== args.provider || pending.redirectUri !== args.redirectUri)
     throw new PartnerAccessError('owner_mismatch')
-  if (typeof args.code !== 'string' || args.code.length < 1 || args.code.length > 4096 ||
+  // Partner permissions may have been withdrawn after OAuth initiation. Fail closed.\n  await requirePartnerGrant(args.source, args.principal, args.provider, ['discover'], pending.scopes, args.now ?? Date.now())\n  if (typeof args.code !== 'string' || args.code.length < 1 || args.code.length > 4096 ||
       /[\x00-\x1f\x7f]/.test(args.code)) throw new PartnerAccessError('invalid_oauth_state')
   return {code: args.code, codeVerifier: pending.codeVerifier, redirectUri: pending.redirectUri,
     scopes: [...pending.scopes]}
