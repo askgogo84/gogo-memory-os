@@ -93,7 +93,7 @@ export default function ZomatoSandbox() {
                 <span className="min-w-4 text-center">{state.quantities[i.id] || 0}</span>
                 <button aria-label={'Add one ' + i.name} className={button}
                   disabled={submitted || (state.quantities[i.id] || 0) >= 5}
-                  onClick={() => apply({type: 'quantity', itemId: i.id, quantity: (state.quantities[i.id] || 0) + 1)}>+</button>
+                  onClick={() => apply({type: 'quantity', itemId: i.id, quantity: (state.quantities[i.id] || 0) + 1})}>+</button>
               </div>
             </div>
           ))}
