@@ -1,0 +1,34 @@
+name: Admin waitlist durable approval before welcome (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-admin-invite-approval-receipt-testonly.mts'
+      - '.github/workflows/admin-invite-approval-receipt-testonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  negative-admin-invite-receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert literal PR head checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Execute original admin approval handler with synthetic DB/provider failures
+        run: npx --yes tsx scripts/verify-admin-invite-approval-receipt-testonly.mts
