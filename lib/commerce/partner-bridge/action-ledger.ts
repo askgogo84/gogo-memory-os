@@ -213,7 +213,7 @@ export async function reconcilePartnerAction(input: {
   try { e = await input.adapter.readback(structuredClone(a.quote), a.id) }
   catch { return a }
   if (!e || e.finalState === 'pending') return a
-  if (e.source !== 'authenticated_provider_readback' || e.provider !== a.quote.provider ||
+  if (!['completed', 'failed'].includes(e.finalState) ||\n      e.source !== 'authenticated_provider_readback' || e.provider !== a.quote.provider ||
       e.ownerId !== a.principal.ownerId || e.tenantId !== a.principal.tenantId ||
       e.actionId !== a.id || e.quoteDigest !== a.quoteDigest ||
       e.currency !== a.quote.currency || e.totalMinor !== a.quote.totalMinor ||
