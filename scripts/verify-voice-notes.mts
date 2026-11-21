@@ -83,6 +83,7 @@ assert.match(route, /startsWith\('audio\/'\)\) \{\s*\/\/ WhatsApp does not show 
     if (id === '@anthropic-ai/sdk') return FakeAnthropic
     if (id === '@/lib/supabase-admin') return { supabaseAdmin: { storage } }
     if (id === 'node:crypto') return nodeRequire(id)
+    if (id === './sarvam-gate') return { sarvamEnabled: () => false }
     throw Error('Unexpected non-inert module: ' + id)
   }
   const fakeProcess = { env: { OPENAI_API_KEY: 'synthetic-only', ANTHROPIC_API_KEY: 'synthetic-only' } }

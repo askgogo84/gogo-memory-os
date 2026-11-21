@@ -42,3 +42,22 @@ Required secret: `SARVAM_API_KEY` must be installed only in provider environment
 Official specifications: https://docs.sarvam.ai/api/token-factory/chat-completions · https://docs.sarvam.ai/api-reference/decisions/systemone · https://docs.sarvam.ai/api-reference/text-to-speech/convert · https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/rest-api
 
 Coordination: issue #274. Separate files from Claude's Nov 17 voice-call, reminder, crew and learning leases. No merge or production switch is intended in this PR without CI and acceptance evidence.
+
+## Per-user allowlist (added 21 Nov, PR after #1548)
+
+`GOGO_SARVAM_DIALOGUE`, `GOGO_SARVAM_WEB_ANSWER`, `GOGO_SARVAM_PLANNER`, `GOGO_SARVAM_STT`, `GOGO_SARVAM_TTS` and
+`GOGO_SARVAM_PRISM_SHADOW` were global: "on" meant every user. They now also require the person being served to be listed in
+`GOGO_SARVAM_USERS` (comma-separated ids as used by the metering context, for example the owner's `-884501501`).
+
+- Unset or empty list: the switch reaches nobody, even when it is "on" and production is approved.
+- Unknown person (a job with no metering context, such as a cron): the existing provider is used.
+- No wildcard. `*` and `all` are ignored.
+- `GOGO_SARVAM_BRAIN` is unchanged: it stays behind the brain's own owner canary.
+- The gate lives in `lib/services/sarvam-gate.ts`; all six call sites import it. It chooses a model only and grants no permission.
+
+Order for a canary, one switch at a time, each with the owner's explicit approval:
+1. Set `GOGO_SARVAM_USERS` to the owner's id only.
+2. Set `GOGO_SARVAM_PRODUCTION=approved`.
+3. Turn on ONE switch. Speech-to-text first; planner last (it also drives the signed-in browser agent).
+4. Watch `cost_events` / model usage for provider `sarvam` and the fallback rate before the next switch.
+Rollback: remove the switch, or remove the id from the list. No deploy is needed beyond the env change taking effect.
