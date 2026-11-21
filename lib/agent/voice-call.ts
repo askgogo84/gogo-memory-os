@@ -446,6 +446,50 @@ export function isRoomCallRequest(text: string): boolean {
 }
 
 /** Pure. "Call <who> [on <number>] and <ask>" → who, the number said with it, and the ask. */
+/** Pure. Does a typed name refer to a venue from an earlier call? "Toit" matches "Toit" and "Toit Indiranagar"
+ *  (the typed words are the start of the saved name); "Toit Koramangala" does not match "Toit Indiranagar". */
+export function sameVenue(typed: string, saved: string): boolean {
+  const norm = (x: string) => String(x || '').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+  const a = norm(typed), b = norm(saved)
+  if (a.length < 3 || !b) return false
+  return a === b || b.startsWith(a + ' ')
+}
+
+/** 21 Nov (handoff calling gap): "call Toit and ask if they're open Sunday" has no business word, so the parser cannot
+ *  tell Toit from a person ("call Divya and ask…") and treats it as a note to self. A venue this person already called
+ *  through an approved call plan is known: its name and the number shown on that plan are reused. Owner-bound read of
+ *  the person's own call runs; test calls never count. */
+export async function knownCallVenue(owner: string, typed: string, db: { from: (t: string) => any } = supabaseAdmin): Promise<{ venue: string; phone: string; source: string } | null> {
+  const name = String(typed || '').trim()
+  if (!/^\d{1,20}$/.test(String(owner || '')) || name.length < 3 || name.length > 60 || PERSONAL_CALLEE.test(name) || genericCallee(name)) return null
+  try {
+    const { data, error } = await db.from('agent_runs').select('metadata_json,started_at').eq('telegram_id', String(owner)).eq('type', 'voice_call').order('started_at', { ascending: false }).limit(40)
+    if (error || !Array.isArray(data)) return null
+    for (const row of data) {
+      const plan = row?.metadata_json?.plan
+      if (!plan || plan.test || typeof plan.venue !== 'string' || !/^\+91\d{10}$/.test(String(plan.to || ''))) continue
+      if (sameVenue(name, plan.venue)) return { venue: plan.venue, phone: String(plan.to), source: `your earlier call to ${plan.venue}` }
+    }
+  } catch {}
+  return null
+}
+
+/** The typed callee of a "call X and/to <ask>" message, when the parser alone did not take it. Null otherwise. Pure. */
+export function unknownCallee(text: string): string | null {
+  const ask = callLead(text).match(CALL_ASK)
+  if (!ask || parseCallCommand(text)) return null
+  const callee = calleeParts(ask[1])
+  if (callee.phone || callee.unreadable || TIMEY_CALLEE.test(ask[1]) || PERSONAL_CALLEE.test(callee.name)) return null
+  return callee.name || null
+}
+
+/** For the routes: is this a call request, counting a venue this person has called before? */
+export async function isCallRequestFor(owner: string, text: string): Promise<boolean> {
+  if (parseCallCommand(text)?.kind === 'book') return true
+  const name = unknownCallee(text)
+  return !!name && !!(await knownCallVenue(owner, name))
+}
+
 export function splitCallAsk(text: string): { venue: string; phone: string | null; unreadable: boolean; ask: string } | null {
   const m = String(text || '').trim().match(new RegExp(`^(?:please\\s+)?(?:call|phone|ring)\\s+(?:up\\s+)?(.{2,80}?)\\s+(?:and|to)\\s+((?:${CALL_ASK_VERBS})\\b.+)$`, 'i'))
   if (!m) return null
@@ -527,9 +571,14 @@ export async function compileCallAsk(ask: string, venue: string, guestName = 'my
 }
 
 export async function tryVoiceCall(params: { actor: Actor; text: string; surface: 'web' | 'whatsapp' }): Promise<Reply | null> {
-  const cmd = parseCallCommand(params.text)
-  if (!cmd) return null
   const tg = params.actor.legacyTelegramId
+  let cmd = parseCallCommand(params.text)
+  if (!cmd) {
+    // A venue called before ("call Toit and ask…"): the same flow as a named business, with that call's number.
+    const name = unknownCallee(params.text)
+    if (!name || !(await knownCallVenue(String(tg), name))) return null
+    cmd = { kind: 'book', text: callLead(params.text) }
+  }
   const fs = await import('@/lib/bot/handlers/followup-state')
   if (cmd.kind === 'affirm') {
     // 21 Oct live: "Yes" to the plan fell through to chat, which claimed it was calling. A bare yes right
@@ -606,10 +655,12 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       // details. Until there is a source that can be trusted for this, no number is looked up for a general call.
       const callee = general.venue
       if (general.unreadable) return { text: `I couldn't read the phone number in that message, so I haven't planned a call. Send one 10-digit mobile number or a landline with its STD code, like *call ${callee} on 080 1234 5678 and ${general.ask}*.`, handledBy: 'voice-call' }
+      const known = general.phone ? null : await knownCallVenue(String(tg), callee)
+      if (known) { general.phone = known.phone; general.venue = known.venue }
       if (!general.phone) return { text: `To call ${callee} I need their number, so the call reaches the right place. Send it with the request, like *call ${callee} on 080 1234 5678 and ${general.ask}*. Nothing was called.`, handledBy: 'voice-call' }
-      const hit = { phone: general.phone, source: 'the number you gave' }
-      const brief = await compileCallAsk(general.ask, callee, guestName)
-      plan = { venue: callee, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
+      const hit = { phone: general.phone, source: known ? known.source : 'the number you gave' }
+      const brief = await compileCallAsk(general.ask, general.venue, guestName)
+      plan = { venue: general.venue, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
         purpose: brief.task, opening: brief.opening, details: brief.details, kind: 'general', test: false, redials: 0, createdAt: now }
       if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
       await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: voicePlanHash(String(tg), plan) })
