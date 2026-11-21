@@ -189,7 +189,9 @@ fixture = {source: 'authenticated_provider_readback', provider: 'zomato',
 await blocked(() => reconcilePartnerAction({store, principal: other, id: 'order-1', adapter}), 'owner_mismatch')
 fixture = {...fixture, totalMinor: 31999}
 await blocked(() => reconcilePartnerAction({store, principal, id: 'order-1', adapter}), 'unverified_readback')
-fixture = {...fixture, totalMinor: 32000}
+fixture = {...fixture, totalMinor: 32000, finalState: 'unrecognized' as any}
+await blocked(() => reconcilePartnerAction({store, principal, id: 'order-1', adapter}), 'unverified_readback')
+fixture = {...fixture, finalState: 'completed'}
 eq((await reconcilePartnerAction({store, principal, id: 'order-1', adapter})).stage, 'verified_success')
 eq((await reconcilePartnerAction({store, principal, id: 'order-1', adapter})).evidenceRef, 'readback-1')
 eq(submits, 1)
