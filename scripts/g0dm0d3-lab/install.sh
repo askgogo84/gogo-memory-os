@@ -48,7 +48,11 @@ fi
 
 if [[ ! -e "$SOURCE_DIR" ]]; then
   mkdir -p "$(dirname "$SOURCE_DIR")"
-  git clone --depth 1 "$UPSTREAM" "$SOURCE_DIR"
+  git init -q "$SOURCE_DIR"
+  git -C "$SOURCE_DIR" remote add origin "$UPSTREAM"
+  # Fetch the reviewed revision, not whichever commit upstream's main points at today.
+  git -C "$SOURCE_DIR" fetch --depth 1 --no-tags origin "$PIN"
+  git -C "$SOURCE_DIR" checkout --detach --force FETCH_HEAD
 fi
 
 [[ -d "$SOURCE_DIR/.git" ]] || { echo "Existing lab cache is not a Git repository." >&2; exit 1; }
