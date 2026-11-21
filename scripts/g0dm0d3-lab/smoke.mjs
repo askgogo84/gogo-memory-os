@@ -52,10 +52,23 @@ async function request(path, opts = {}, timeout = 10000) {
 try {
   const health = await request('/v1/health');
   if (health?.status !== 'ok') throw new Error('Invalid API health response');
+  const unauthorized = await fetch(base + '/v1/tier', { signal: AbortSignal.timeout(10000) });
+  if (unauthorized.status !== 401) throw new Error('API tier endpoint unexpectedly allows unauthenticated access');
   const tier = await request('/v1/tier');
   if (typeof tier?.tier !== 'string') throw new Error('Missing authenticated tier');
-  console.log('PASS: local API health, bearer authentication, tier=' + tier.tier);
+  console.log('PASS: local API health, bearer authentication, unauthorized requests rejected; tier=' + tier.tier);
   console.log('Fixture profile: ' + project + ' (synthetic, no production data)');
+
+  // Actually exercise G0DM0D3's offline engine, not merely container health.
+  // One synthetic request per project stays within the upstream free tier's 5 total calls.
+  const analysis = await request('/v1/autotune/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ message: fixtures[project].prompt, strategy: 'balanced' }),
+  });
+  if (!analysis?.params || typeof analysis?.detected_context !== 'string' || !Number.isFinite(analysis?.confidence)) {
+    throw new Error('AutoTune analysis response failed schema validation');
+  }
+  console.log('PASS: G0DM0D3 AutoTune engine (offline synthetic evaluation)');
 
   if (!withModel) {
     console.log('No model call attempted. Add --model explicitly to use a dedicated test-provider key.');
