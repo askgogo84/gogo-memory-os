@@ -1,4 +1,4 @@
-name: G0DM0D3 local lab static validation
+name: G0DM0D3 isolated evaluation lab checks
 
 on:
   pull_request:
@@ -26,3 +26,28 @@ jobs:
           grep -Fq 'godmode: false' scripts/g0dm0d3-lab/smoke.mjs
           grep -Fq 'parseltongue: false' scripts/g0dm0d3-lab/smoke.mjs
           grep -Fq '127.0.0.1:' scripts/g0dm0d3-lab/install.sh
+
+  local-runtime-smoke:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned lab API in temporary local Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GODMODE_API_KEY="$(openssl rand -hex 32)"
+          bash scripts/g0dm0d3-lab/install.sh start
+          for _ in $(seq 1 40); do
+            if curl --silent --fail http://127.0.0.1:7860/v1/health >/dev/null; then break; fi
+            sleep 2
+          done
+          node scripts/g0dm0d3-lab/smoke.mjs askgogo
+          node scripts/g0dm0d3-lab/smoke.mjs creditiq
+          node scripts/g0dm0d3-lab/smoke.mjs folioiq
+          node scripts/g0dm0d3-lab/smoke.mjs signudoc
+          node scripts/g0dm0d3-lab/smoke.mjs tipplr
+      - name: Clean up temporary lab
+        if: always()
+        run: bash scripts/g0dm0d3-lab/install.sh stop
