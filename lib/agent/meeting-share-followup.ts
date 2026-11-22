@@ -9,9 +9,30 @@ const KIND='meeting_reminder_offer'
 const reply=(text:string,status:'paused'|'completed'='paused')=>({text,handledBy:'meeting-share-followup',capability:'reminders',status,runId:''})
 type Meeting={title:string;url:string;startAt:string;endAt:string;remindAt:string;timezone:string}
 
+const OWN_ZONE_WORDS:Record<string,RegExp>={'Asia/Kolkata':/\b(?:India|IST|Kolkata|Calcutta|Asia\/Kolkata|(?:GMT|UTC)\s*\+\s*0?5:?30)\b/i}
+const esc=(v:string)=>v.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
+/** True when the invitation names a time zone other than the owner's ("(Pacific Time - Los Angeles)", "EST"). */
+export function foreignZoneLabel(text:string,ownerZone:string):boolean{
+  const labels=[...text.matchAll(/\(([^()\n]{2,60}\bTime\b[^()\n]{0,40})\)|\bTime\s*zone\s*:\s*([^\n]{2,60})|\b((?:GMT|UTC)\s*[+\-−]\s*\d{1,2}(?::?\d{2})?)|\b(PST|PDT|EST|EDT|CST|CDT|MST|MDT|BST|CET|CEST|GST|SGT|AEST|AEDT|JST)\b/gi)].map(m=>m[1]||m[2]||m[3]||m[4]||'')
+  if(!labels.length)return false
+  const zone=normalizeTimezone(ownerZone),city=(zone.split('/').pop()||zone)
+  const own=OWN_ZONE_WORDS[zone]||new RegExp(`(?:${esc(zone)}|\\b${esc(city).replace(/_/g,'[ _]')}\\b)`,'i')
+  return labels.some(l=>!own.test(l))
+}
+
 // 3 Oct live reproduction: a Google Meet invitation was filed as a generic link.
 // Parse the explicit invitation, not arbitrary web content or an inferred calendar event.
-export function parseSharedMeeting(text:string, timezone:string, now=new Date()):Meeting|null {
+export function parseSharedMeeting(raw:string, timezone:string, now=new Date()):Meeting|null {
+  // 22 Nov live: Google Calendar's "copy event details" separates date and time with "⋅" (U+22C5), and en-US
+  // phones write "Monday, November 23". Both were refused ("couldn't reliably read a single meeting").
+  const MONTH='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'
+  // Review (PR #1570): only a separator right before a time is rewritten, and only a date followed by a time is
+  // reordered, so titles ("Team • Sync", "Sunday, May 3 retro prep") stay as written.
+  const text=raw.replace(/\s*[⋅•∙]\s*(?=\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*[-–—])/gi,' · ')
+    .replace(new RegExp(String.raw`\b((?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day,?\s+)(${MONTH})\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(20\d{2}))?(?=\s*[·,]?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*[-–—])`,'gi'),(_m,wd,mo,d,y)=>`${wd}${d} ${mo}${y?` ${y}`:''}`)
+  // Review (PR #1570): an invitation that names another time zone ("(Pacific Time - Los Angeles)", "Time zone:
+  // America/New_York") must not be read as the owner's local time. Refused here; the caller asks for the details.
+  if(foreignZoneLabel(raw,timezone))return null
   const links=[...new Set(text.match(/https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b/gi)||[])]
   if(links.length!==1)return null
   const dateExpression=(/\b(?:(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+)?(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(20\d{2}))?\s*[·,]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
@@ -96,7 +117,7 @@ async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
     if(!meeting){
       // A dated invitation must not reach generic reminder inference, which can roll
       // an old weekday into next week. A bare Meet bookmark still uses Link Vault.
-      if(/\b(?:joining info|video call link)\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(text))return reply('Please confirm the meeting date, start/end time and one joining link. I couldn’t reliably read a single meeting from this message, so I haven’t set a reminder.')
+      if(/\b(?:joining info|video call link)\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b/i.test(text))return reply('Please confirm the meeting date, start/end time and one joining link. I couldn’t reliably read a single meeting from this message, so I haven’t set a reminder.')
       return null
     }
     const saved=await saveLinkVaultItem({telegramId:tg,text,url:meeting.url,visibleTitle:meeting.title,sourceSurface:p.surface})
