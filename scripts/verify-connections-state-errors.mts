@@ -36,6 +36,9 @@ function load(file:string){
 // Mirror the production pure signed64 owner validator when executing the original
 // dashboard query module; keep all DB/provider dependencies inert.
 deps['./owner-identity']=load('lib/dashboard/owner-identity.ts')
+// The page imports this helper by its absolute alias; use the same real
+// validator as dashboard queries instead of an empty fixture module.
+deps['@/lib/dashboard/owner-identity']=deps['./owner-identity']
 const profile=load('lib/dashboard/queries.ts')
 deps['@/lib/dashboard/queries']={getProfile:profile.getProfile}
 const page=load('app/dashboard/(app)/connections/page.tsx')

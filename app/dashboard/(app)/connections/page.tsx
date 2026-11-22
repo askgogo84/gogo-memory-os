@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { getProfile } from '@/lib/dashboard/queries'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ConnectionsLiveCheck } from '@/components/dashboard/connections-live-check'
 
@@ -52,16 +53,17 @@ async function readConnection<T>(read:()=>PromiseLike<T>){
 
 export default async function ConnectionsPage(){
   const session=await getSession()
-  const tgNum=Number(session?.telegramId)
-  if(!session||!Number.isSafeInteger(tgNum)||tgNum===0)return <p>Sign in to view your connections.</p>
-  const profile=await getProfile(session.telegramId)
-  const tg=String(session?.telegramId||'')
+  // Session identity is a signed BIGINT decimal string. Never round a 64-bit owner
+  // through JavaScript Number before private or privileged database lookups.
+  const tg=exactSessionOwnerId(session?.telegramId)
+  if(!session||!tg)return <p>Sign in to view your connections.</p>
+  const profile=await getProfile(tg)
   const [vaultResult,userResult,travelResult,browserPermission,gmailConsent]=await Promise.all([
-      readConnection(()=>supabaseAdmin.from('vault_credentials').select('id',{count:'exact',head:true}).eq('telegram_id',tgNum)),
-      readConnection(()=>supabaseAdmin.from('users').select('gmail_connected,gmail_send_connected,gmail_connected_at,google_calendar_connected').eq('telegram_id',tgNum).maybeSingle()),
-      readConnection(()=>supabaseAdmin.from('travel_tickets').select('id',{count:'exact',head:true}).eq('telegram_id',tgNum).gte('depart_at',new Date().toISOString())),
+      readConnection(()=>supabaseAdmin.from('vault_credentials').select('id',{count:'exact',head:true}).eq('telegram_id',tg)),
+      readConnection(()=>supabaseAdmin.from('users').select('gmail_connected,gmail_send_connected,gmail_connected_at,google_calendar_connected').eq('telegram_id',tg).maybeSingle()),
+      readConnection(()=>supabaseAdmin.from('travel_tickets').select('id',{count:'exact',head:true}).eq('telegram_id',tg).gte('depart_at',new Date().toISOString())),
       readConnection(()=>supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',tg).eq('capability','browser').maybeSingle()),
-      readConnection(()=>supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id',tgNum).maybeSingle()),
+      readConnection(()=>supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id',tg).maybeSingle()),
     ])
   const vaultKnown=!vaultResult.error&&Number.isInteger(vaultResult.count)&&Number(vaultResult.count)>=0
   const travelKnown=!travelResult.error&&Number.isInteger(travelResult.count)&&Number(travelResult.count)>=0
@@ -83,7 +85,12 @@ export default async function ConnectionsPage(){
   const gmailReadUnknown=Boolean(gmailConsent?.error)
   // Duet parity step 5: one tap to let Gogo send email for you. Every send still waits for your approval and is
   // confirmed from your Sent folder. The signed link only grants the Gmail Send scope.
-  const sendUpgradeUrl=authKnown&&c.gmail&&!gmailSend&&!gmailReadOff
+  // Gmail's signed OAuth state currently accepts only safe numeric IDs. A large
+  // signed BIGINT owner may read their own connected status, but never receives a
+  // rounded OAuth upgrade token for somebody else's ID.
+  const canEncodeGmailOwner=BigInt(tg)>=BigInt(Number.MIN_SAFE_INTEGER)&&BigInt(tg)<=BigInt(Number.MAX_SAFE_INTEGER)
+  const tgNum=canEncodeGmailOwner?Number(tg):null
+  const sendUpgradeUrl=authKnown&&c.gmail&&!gmailSend&&!gmailReadOff&&tgNum!==null
     ?await import('@/lib/services/google-gmail').then(m=>m.buildGmailSendConnectUrl(tgNum)).catch(()=>null)
     :null
 

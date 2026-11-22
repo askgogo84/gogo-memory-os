@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import * as emailRedaction from '../lib/security/email-redaction'
+import { exactSessionOwnerId } from '../lib/dashboard/owner-identity'
 
 // Exercise real mail readers, watch creation, conversation status and page output.
 // No provider calls, real credentials or production mutations.
@@ -24,6 +25,7 @@ const mocks:any={
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(v:string)=>v},
   '@/lib/security/google-token-crypto':{decryptGoogleToken:(v:string)=>v,hasGoogleTokenEncryptionKey:()=>false},
   '@/lib/dashboard/session':{getSession:async()=>({telegramId:'101'})},
+  '@/lib/dashboard/owner-identity':{exactSessionOwnerId},
   '@/lib/dashboard/queries':{getProfile:async()=>({ok:true,connections:{gmail:true,googleCalendar:true,creditiq:false}})},
   'react/jsx-runtime':{jsx:(type:any,props:any)=>({type:typeof type==='function'?type.name:type,props}),jsxs:(type:any,props:any)=>({type:typeof type==='function'?type.name:type,props})},
 }

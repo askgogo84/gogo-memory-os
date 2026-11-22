@@ -1,0 +1,2 @@
+# 22 Nov: exact signed BIGINT dashboard connection owner scope; synthetic no DB/OAuth traffic
+npx tsx scripts/verify-connections-owner-precision-nov22.mts
