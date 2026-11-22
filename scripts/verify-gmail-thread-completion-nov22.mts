@@ -29,6 +29,9 @@ for(const [label,message] of [
  ['other company news',mail('The vendor completed a task somewhere else.',{listUnsubscribe:'<https://example.invalid/unsubscribe>'})],
 ] as const) assert.equal(proof(message),false,label+' must keep the open loop unresolved')
 for(const snippet of ['We sent the signed agreement.', 'I have delivered the corrected document.',
+ "I've sent the signed agreement.", 'I’ve sent the signed agreement.',
+ "We've delivered the corrected document.", 'We’ve delivered the corrected document.',
+ "We've already approved the requested document.",
  'Our team already approved the requested document.'])
  assert.equal(proof(mail(snippet)),true,'a specific affirmative human completion can reconcile the same thread')
 console.log('PASS: Gmail auto/ambiguous/future/negated reply leaves open loop active; substantive human-completed action may reconcile it. No provider or DB calls.')
