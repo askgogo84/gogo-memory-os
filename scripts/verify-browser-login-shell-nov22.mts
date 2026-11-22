@@ -52,8 +52,10 @@ assert.equal(isBrowserLoginShell({
 // Assert that the actual browser entry points use this pure gate, not just the test fixture.
 const source=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 const assessor=source.slice(source.indexOf('export async function assessReadOutcome('))
-assert.match(assessor.slice(0,650),/if\(isBrowserLoginShell\(page\)\|\|detectHumanAuthGate\(page\)\.required\)/,
+assert.match(assessor.slice(0,650),/if\(isBrowserLoginShell\(page\)\|\|/,
   'read assessor must reject login shells before model or title-only completion')
+assert.match(assessor.slice(0,650),/typeof detectHumanAuthGate==='function'&&detectHumanAuthGate\(page\)\.required/,
+  'actual auth gates still refuse verification when the gate exists; old VM harness stubs remain valid')
 assert.match(source,/function pageLooksLikeLogin\(page:any\)\{\s*return isBrowserLoginShell\(page\)/,
   'the same-run auth handoff must recognize signed-out shells')
 assert.match(source,/if \(isBrowserLoginShell\(page\) \|\| detectHumanAuthGate\(page\)\.required \|\| detectProviderAccessBlock\(page\)/,
