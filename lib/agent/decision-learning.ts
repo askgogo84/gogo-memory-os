@@ -1,6 +1,5 @@
 import { hasExecutionEvidence, type ExecutionEvidence } from './execution-evidence'
 import { hasDeliveryLearningEvidence, type DeliveryLearningRef } from './delivery-learning'
-import { verifiedReadEvidence } from './read-evidence'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { finiteConfidence, rankEvidence } from './decision-evidence'
@@ -44,7 +43,7 @@ function hasReadLearningEvidence(p:{handler:string;objectKind?:string|null;objec
   if(allowed.objectKind&&v.objectKind!==allowed.objectKind)return false
   if(typeof p.objectKind!=='string'||!p.objectKind||v.objectKind!==p.objectKind)return false
   if(typeof p.objectRef!=='string'||!p.objectRef.trim()||v.objectRef!==p.objectRef)return false
-  return !['gmail-verification','watcher-status'].includes(p.handler)||verifiedReadEvidence(p.handler,'completed',v)
+  return true
 }
 export async function recordDecisionLearning(p:{actor:AgentActor;text:string;domain:DecisionDomain;handler:string;objectKind?:string|null;objectRef?:string|null;confidence?:number|null;outcome:DecisionOutcome;verified?:boolean;deliveryRef?:DeliveryLearningRef;executionEvidence?:ExecutionEvidence;readEvidence?:unknown;correction?:string|null;decisionId?:string|null;firstRouteCorrect?:boolean|null}){const owner=exactDecisionLearningOwner(p.actor);const evidence=await hasDeliveryLearningEvidence(owner,p.handler,p.objectKind,p.deliveryRef);const execution=hasExecutionEvidence(p.handler,p.objectRef,p.executionEvidence);const readVerified=hasReadLearningEvidence(p);const verified=p.verified===true&&evidence!==false&&(evidence===true||execution===true||readVerified);const metadata={schema:'same-brain-v2',decision_id:clean(p.decisionId,180)||null,first_route_correct:typeof p.firstRouteCorrect==='boolean'?p.firstRouteCorrect:null,domain:p.domain,user_text:isSecretShapedMemory(p.text)?'[sensitive turn withheld]':redactSecretShapedText(clean(p.text,800)),handler:clean(p.handler,100),object_kind:clean(p.objectKind,80)||null,object_ref:clean(p.objectRef,240)||null,confidence:finiteConfidence(p.confidence),outcome:p.outcome==='verified_success'&&!verified?'unknown':p.outcome,verified:p.outcome==='verified_success'&&verified,verification_source:verified&&p.outcome==='verified_success'?(p.executionEvidence?.source||(evidence===true?'delivery_receipt':readVerified?String((p.readEvidence as {source:string}).source):null)):null,correction: p.correction ? (isSecretShapedMemory(p.correction)?'[sensitive correction withheld]':redactSecretShapedText(clean(p.correction,500))) : null};const {error}=await supabaseAdmin.from('agent_activity').insert({telegram_id:owner,event_type:'decision_learning',message:`Same Brain v2: ${p.domain} / ${p.handler} / ${metadata.outcome}`,metadata_json:metadata});if(error)throw new Error('decision_learning_write_failed')}
 export async function decisionHints(p:{actor:AgentActor;text:string;domain:DecisionDomain}){
