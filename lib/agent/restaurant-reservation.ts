@@ -294,8 +294,12 @@ function firstPartyRuleScore(result:WebSearchResult,restaurant:string){
   return score
 }
 
+const NARU_BOOKING_URL='https://bookings.airmenus.in/eatnaru/order'
+const NARU_POLICY_URL='https://www.narunoodlebar.com/menu'
+
 async function discoverFirstPartyRulePage(intent:RestaurantReservationIntent,providerUrl:string){
   if(!intent.restaurant)return null
+  if(providerUrl===NARU_BOOKING_URL)return {url:NARU_POLICY_URL,title:'Naru Noodle Bar reservation policy'}
   const results=await searchWebResults(`${intent.restaurant} official reservation booking rules opening time`)
   const ranked=(results||[])
     .filter(r=>/^https?:\/\//i.test(String(r.url||'')))
@@ -303,12 +307,12 @@ async function discoverFirstPartyRulePage(intent:RestaurantReservationIntent,pro
     .map(r=>({r,score:firstPartyRuleScore(r,intent.restaurant)}))
     .sort((a,b)=>b.score-a.score)
   const top=ranked[0]
-  return top&&top.score>=12?{url:String(top.r.url),title:safe(top.r.title||intent.restaurant,220),snippet:safe(top.r.snippet,2200),score:top.score}:null
+  return top&&top.score>=12?{url:String(top.r.url),title:safe(top.r.title||intent.restaurant,220)}:null
 }
 
 const KNOWN_RESERVATION_PROVIDERS:Record<string,{url:string;location?:string}>={
-  'naru noodle bar':{url:'https://bookings.airmenus.in/eatnaru/order',location:'Bengaluru'},
-  'naru':{url:'https://bookings.airmenus.in/eatnaru/order',location:'Bengaluru'},
+  'naru noodle bar':{url:NARU_BOOKING_URL,location:'Bengaluru'},
+  'naru':{url:NARU_BOOKING_URL,location:'Bengaluru'},
 }
 
 type ReservationProvider={url:string;title:string;source:string;location?:string|null;firstParty:boolean}
@@ -957,7 +961,9 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     await markSignInForReconnect()
     return connectFirst()
   }
-  let release=extractReservationRelease(inspected.pageText,timezone)
+  // Naru publishes venue-local release times even when the diner's display timezone differs.
+  const releaseTimezone=provider.url===NARU_BOOKING_URL?'Asia/Kolkata':timezone
+  let release=extractReservationRelease(inspected.pageText,releaseTimezone)
   if(slotMode&&!release.releaseAt){
     const evidence=`${inspected.summary||''}\n${inspected.pageText||''}`
     // Slots count only when the page shows the requested date: a widget left on today must not answer for tomorrow.
@@ -982,9 +988,6 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   if(!release.openNow&&!release.releaseAt){
     const rulePage=await discoverFirstPartyRulePage(intent,provider.url)
     if(rulePage){
-      ruleEvidenceUrl=rulePage.url
-      ruleEvidenceTitle=rulePage.title
-      const evidenceParts=[rulePage.snippet]
       try{
         const firstPartyInspection=await runSecureBrowser({
           userId:params.actor.userId,
@@ -992,18 +995,20 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
           mode:'read',
           objective:`Read only the restaurant's published reservation policy for ${intent.restaurant}. Capture recurring booking release weekday/time, seating slots, booking restrictions, cancellation/refund language, and any fee/deposit policy that is explicitly stated. Do not reserve, submit, authenticate, pay, or change anything.`,
         })
-        if(firstPartyInspection.status==='completed'&&firstPartyInspection.pageText)evidenceParts.unshift(firstPartyInspection.pageText)
+        if(firstPartyInspection.status==='completed'&&firstPartyInspection.pageText){
+          const observed=new URL(firstPartyInspection.url)
+          const expected=new URL(rulePage.url)
+          if(observed.origin===expected.origin&&observed.pathname.replace(/\/$/,'')===expected.pathname.replace(/\/$/,'')&&observed.search===expected.search){
+            ruleEvidenceUrl=observed.href
+            ruleEvidenceTitle=rulePage.title
+            ruleEvidenceText=firstPartyInspection.pageText
+            const policy=extractReservationRelease(ruleEvidenceText,releaseTimezone)
+            // A policy can verify when inventory will be released. Its "Book now" link is not inventory.
+            if(policy.releaseAt)release={...policy,soldOut:release.soldOut,openNow:false}
+          }
+        }
       }catch(error:any){
         console.error('RESTAURANT_FIRST_PARTY_RULE_INSPECTION_FAILED:',safe(error?.message||error,220))
-      }
-      ruleEvidenceText=evidenceParts.filter(Boolean).join('\n')
-      const firstPartyRelease=extractReservationRelease(ruleEvidenceText,timezone)
-      if(firstPartyRelease.openNow||firstPartyRelease.releaseAt){
-        release={
-          ...firstPartyRelease,
-          soldOut:release.soldOut||firstPartyRelease.soldOut,
-          openNow:release.openNow||firstPartyRelease.openNow,
-        }
       }
     }
   }
