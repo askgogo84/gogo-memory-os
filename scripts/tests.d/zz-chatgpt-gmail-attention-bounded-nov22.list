@@ -1,0 +1,2 @@
+# 22 Nov: synthetic Gmail read fanout/429 fail-closed regression, no network
+npx tsx scripts/verify-gmail-attention-bounded-nov22.mts
