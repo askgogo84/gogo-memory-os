@@ -240,7 +240,8 @@ async function isActiveRegistrationPage(page){
   let path='';
   try{path=new URL(String(observed.url||'')).pathname}catch{}
   const registerPath=/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i;
-  if(registerPath.test(path))return true;
+  const publicGuidePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(path);
+  if(registerPath.test(path)&&!publicGuidePath)return true;
   const title=String(observed.title||'').replace(/\s+/g,' ').trim();
   if(/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title))return true;
   const forms=Array.isArray(observed.forms)?observed.forms:[];
@@ -253,6 +254,11 @@ async function isActiveRegistrationPage(page){
   if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
   // A registration submit may appear on a login URL/modal with generic title.
   const registrationSubmit=await page.evaluate(() => Array.from(document.querySelectorAll('button[type="submit"],input[type="submit"]'))
+    .filter(el=>{
+      if(el.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
+      const rect=el.getBoundingClientRect(),style=getComputedStyle(el);
+      return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden';
+    })
     .some(el=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(el.textContent||el.value||'').trim()))).catch(()=>true);
   return registrationSubmit===true;
 }
