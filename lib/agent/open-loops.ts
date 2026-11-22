@@ -152,6 +152,10 @@ export function isUncertainOrNegatedCompletion(text:string){
   if(/\bnot\s+(?:(?:been|yet|fully|actually|really|successfully|completely|ever)\s+)*(?:sent|shared|replied|responded|confirmed|approved|reviewed|delivered|updated|called|received|completed|finished|resolved|submitted|signed|arrived)\b/i.test(raw))return true
   if(/\b(?:may|might|could|would|should|will)\s+(?:(?:already|still|yet|not|possibly|probably)\s+)*(?:have|be|send|share|reply|respond|confirm|approve|review|deliver|update|call|receive|complete|finish|resolve|submit|sign|get|arrive)\b/i.test(raw))return true
   if(/\b(?:no\s+(?!(?:worries|problem)\b)|nothing\b|none\b)[^.!?;,]{0,160}\b(?:received|delivered|sent|shared|replied|responded|confirmed|approved|reviewed|updated|called|completed|finished|resolved|submitted|signed|arrived)\b|\b(?:received|delivered|sent|got)\s+(?:no|nothing|none)\b/i.test(raw))return true
+  // A third party's claim or reported status is not owner-verified completion.
+  // Never auto-close a pending loop for "Vendor says it was sent" without actual evidence.
+  if(/\b(?:claim(?:s|ed|ing)?|alleg(?:e|es|ed|edly)|purport(?:s|ed|edly)?|report(?:s|ed|edly)|supposedly)\b/i.test(raw))return true
+  if(/\b(?:said|says|told(?: me| us)?)\b[^.!?;,]{0,120}\b(?:sent|shared|replied|responded|confirmed|approved|reviewed|delivered|updated|called|received|completed|finished|resolved|submitted|signed|arrived)\b/i.test(raw))return true
   if(/\b(?:i think|i believe|i suspect|it seems|it looks like|apparently)\b/i.test(raw))return true
   if(/\byet\s+to\b|\b(?:going|about)\s+to\b|\b(?:failed|unable)\s+to\b/i.test(raw))return true
   if(/\b(?:remains?|still|is|are)\s+(?:undelivered|unreceived|unresolved|incomplete|pending)\b/i.test(raw))return true
