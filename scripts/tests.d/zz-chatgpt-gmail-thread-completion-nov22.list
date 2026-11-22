@@ -1,0 +1,2 @@
+# 22 Nov: Gmail open-loop completion evidence guard, inert exact-function synthetic test
+npx tsx scripts/verify-gmail-thread-completion-nov22.mts
