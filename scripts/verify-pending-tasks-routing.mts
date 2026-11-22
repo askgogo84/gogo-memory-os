@@ -85,7 +85,6 @@ function loadOpenLoops(db: any) {
     '@/lib/supabase-admin': { supabaseAdmin: db },
     '@/lib/security/google-token-crypto': { decryptGoogleToken: (v: string) => v },
     '@/lib/services/google-gmail': { fetchGmailAttentionThreads: async () => [], refreshGmailAccessToken: async () => null },
-    './google-workspace-read': { decodeHtmlEntities: (v: string) => String(v || ''), formatEmailSnippet: (v: string) => String(v || '') },
   }
   const exportsObj: any = {}
   runInNewContext(transpiled, {

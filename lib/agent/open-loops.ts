@@ -4,7 +4,7 @@ import type { AgentActor } from './actor'
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
-import { decodeHtmlEntities, formatEmailSnippet } from './google-workspace-read'
+import { formatEmailSnippet } from './google-workspace-read'
 import { scoreEmail as scoreAttentionEmail } from '@/lib/email/attention'
 import { retiredRunReason, isTaskInventoryQuestion, isRelevantOpenLoop, openLoopStatus } from './task-lifecycle'
 
@@ -25,8 +25,15 @@ export type OpenLoopInput={
   observedAt?:string|null
 }
 
+// 22 Nov (review of #1566): rows were saved with HTML entities from email text. Decoding here fixes every write
+// and every reply in this file (list, close, snooze, guidance); the list also decodes rows saved before this.
+// Same rules as lib/security/email-redaction decodeHtmlEntities, kept local so this module gains no import.
+function decodeHtmlEntities(value:string){
+  return String(value||'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"')
+    .replace(/&#(?:39|x27);/gi,"'").replace(/&#(\d+);/g,(_m,n)=>{const cp=Number(n);return Number.isFinite(cp)&&cp>0&&cp<=0x10ffff?String.fromCodePoint(cp):''})
+}
 function clean(value:unknown,max=500){
-  return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)
+  return decodeHtmlEntities(String(value??'')).replace(/\s+/g,' ').trim().slice(0,max)
 }
 function normalize(value:unknown){
   return clean(value,500).toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
