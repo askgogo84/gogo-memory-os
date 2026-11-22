@@ -56,6 +56,7 @@ assert.equal(parsed.endAt,'2026-10-03T11:30:00.000Z')
 assert.equal(parsed.remindAt,'2026-10-03T10:40:00.000Z')
 const proposed=await offer()
 assert.match(proposed.text,/4:10/i)
+assert.match(proposed.text,/Want a reminder today at 4:10 pm IST for Food Working Session\? It starts at 4:20 pm\. Reply Yes to set it or No to skip\./)
 assert.equal(store.reminders.length,0,'sharing a meeting only offers; it does not create a reminder')
 assert.ok(store.links[0].text.includes('Saturday, 3 Oct'),'meeting details remain in durable link memory')
 const accepted=await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'web'})
@@ -171,7 +172,7 @@ for(const [at,expected] of [
 }
 clock=Date.parse('2026-10-03T09:28:00Z')
 const futureForward=await offer(forwarded)
-assert.match(futureForward.text,/Food Working Session starts.*4:20 pm.*4:10 pm/i)
+assert.match(futureForward.text,/Want a reminder today at 4:10 pm IST for Food Working Session\? It starts at 4:20 pm\./i)
 clock=Date.parse('2026-10-03T10:45:00Z')
 assert.match((await worker().tryMeetingShareFollowup({actor,text:invitation,surface:'web'})).text,/too soon/i)
 clock=Date.parse('2026-10-03T13:13:00Z')
@@ -338,4 +339,20 @@ console.log('PASS: ordinary images keep existing note, association and document 
   const src=fs.readFileSync(new URL('../lib/agent/meeting-share-followup.ts',import.meta.url),'utf8')
   assert.match(src,/\(\?:Jan\|Feb\|Mar\|Apr\|May\|Jun\|Jul\|Aug\|Sep\|Oct\|Nov\|Dec\)\[a-z\]\*\\\.\?\\s\+\\d\{1,2\}/,'a month-first invite that fails to parse is still held back from generic reminder inference')
 }
+
+  // The forwarded text-path, not just an image, says "tomorrow" in the owner's zone.
+  // No reminder is created until the user replies Yes to this exact saved offer.
+  store.users[0].timezone='Asia/Kolkata'
+  clock=Date.parse('2026-11-22T10:10:00Z')
+  const before=store.reminders.length
+  const tomorrowOffer=await offer('Askgogo<>Fund Raise\nMonday, 23 Nov⋅5:00 – 6:00 pm\nVideo call link: https://meet.google.com/ycz-gire-akz')
+  assert.match(tomorrowOffer.text,/Want a reminder tomorrow at 4:50 pm IST for Askgogo<>Fund Raise\? It starts at 5:00 pm\. Reply Yes to set it or No to skip\./)
+  assert.equal(store.reminders.length,before,'text share remains an offer, not consent')
+  // The invitation day may be tomorrow while the 10-minute reminder is today.
+  const midnight=worker().parseSharedMeeting('Midnight Session\nMonday, 23 Nov · 12:05 – 12:45 am\nhttps://meet.google.com/ycz-gire-akz','Asia/Kolkata',new Date(clock))
+  assert.ok(midnight)
+  const midnightText=await offer('Midnight Session\nMonday, 23 Nov · 12:05 – 12:45 am\nhttps://meet.google.com/ycz-gire-akz')
+  // The reminder is 23:55 on Nov 22; the meeting is 00:05 on Nov 23. Use each event's local day.
+  assert.match(midnightText.text,/Want a reminder today at 11:55 pm IST for Midnight Session\? It starts tomorrow at 12:05 am\./)
+  assert.equal(store.reminders.length,before,'no implicit reminder from a late share')
 console.log('PASS: Google Calendar "⋅" and month-first dates are read')
