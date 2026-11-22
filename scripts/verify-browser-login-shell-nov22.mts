@@ -94,6 +94,13 @@ assert.equal(isBrowserRegistrationBarrier({
   controls:[{tag:'button',label:'Sign up',inForm:true}],
 }),false,'public guide newsletter Sign up is not an account creation form')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Create account Email Subscribe to newsletter',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}],
+    submitLabels:['Sign up'],formText:'Create account Email Subscribe to newsletter'}],
+  controls:[{tag:'button',label:'Sign up',inForm:true}],
+}),true,'email-first account signup with optional newsletter opt-in still blocks Vault')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Sign in to your account',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
   controls:[{tag:'a',label:'Sign up'},{tag:'button',label:'Log in'}],
@@ -449,6 +456,17 @@ const newsletterGuideAfterLogin=await syntheticVaultWorker({
 })
 assert.equal(newsletterGuideAfterLogin.vaultLogin.registrationRefused,undefined,
   'a public article newsletter signup must not masquerade as account registration after a login redirect')
+const signupWithNewsletterOptIn=await syntheticVaultWorker({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Create account Email Subscribe to newsletter',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}],
+    submitLabels:['Sign up'],formText:'Create account Email Subscribe to newsletter'}],
+  signupSubmitVisible:true,signupSubmitInForm:true,signupButtonLabel:'Sign up',
+})
+assert.equal(signupWithNewsletterOptIn.vaultLogin.registrationRefused,true,
+  'real account signup is not mistaken for newsletter when it offers optional updates')
+assert.deepEqual(signupWithNewsletterOptIn.actions,[],
+  'real signup plus newsletter preference must never receive saved credentials')
 const signupWithGenericContinue=await syntheticVaultWorker({
   url:'https://example.com/auth',title:'Welcome',
   text:'Home Help Create account Email Continue Already have an account? Log in',
