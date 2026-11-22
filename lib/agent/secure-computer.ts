@@ -297,6 +297,7 @@ async function model(page){
       url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&visible(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
+        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"]')).filter(el=>el.form===f&&visible(el)).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
       }))
     };
@@ -771,6 +772,7 @@ async function model(page){
       const text=clean(el.innerText||el.textContent);
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:accessibleLabel(el).slice(0,180),
+      ...(el.form?{inForm:true}:{}),
       ...(el.tagName==='INPUT'?{type:String(el.getAttribute('type')||'text').toLowerCase().slice(0,20)}:{}),
       // What a field is for, from attributes a person never sees (adapted from Bops' form matching):
       // name, id, autocomplete ("tel", "one-time-code"), inputmode and maxlength.
@@ -852,6 +854,7 @@ async function model(page){
       controls,
       forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
+        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"]')).filter(el=>el.form===f&&visible(el)).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(actionable).slice(0,60).map(inputs)
       }))
     };
