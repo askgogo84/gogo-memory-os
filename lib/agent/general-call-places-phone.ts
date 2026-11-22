@@ -45,6 +45,16 @@ const address = (p: GooglePlace) => typeof p.formattedAddress === 'string' ? p.f
 const norm = (s: string) => s.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 // Never send phone numbers disguised with spaces, STD parentheses or dashes to a paid provider.
 const includesFormattedPhone = (s: string) => /(?:\d[\s().-]*){10,}/.test(s)
+// A six-digit locality PIN is valid location context, not a phone number. Permit at
+// most one India-shaped PIN in the locality, never in a business name. Keep all
+// 7+ contiguous digits and 10+ formatted digits out of paid provider requests.
+const hasUnsafeNumericRuns = (value: string, allowLocalityPin: boolean) => {
+  const runs = value.match(/\d+/g) || []
+  const pins = runs.filter(run => run.length === 6)
+  return runs.some(run => run.length >= 7) ||
+    pins.length > (allowLocalityPin ? 1 : 0) ||
+    pins.some(pin => !/^[1-9]\d{5}$/.test(pin))
+}
 // Google's regionCode=IN legitimately omits "India" from formattedAddress. A country code
 // in structured addressComponents is required instead; never infer country from query bias.
 const countryIsIndia = (p: GooglePlace) =>
@@ -104,7 +114,8 @@ export async function proposeGeneralCallPhoneFromPlaces(request: PhoneCandidateR
   if (!name || !loc || norm(name) === norm(loc) || /\b(?:hospitalized|diagnosed|symptoms|medication)\b/i.test(name+' '+loc)) return null
   // Do not send unstructured call instructions, patient details, or phone numbers as a Google query.
   if (/\b(?:call|book|reserve|appointment|doctor's|for my|tomorrow|tonight)\b/i.test(name+' '+loc) ||
-      /\d{6,}/.test(name+' '+loc) || includesFormattedPhone(name) || includesFormattedPhone(loc)) return null
+      hasUnsafeNumericRuns(name,false) || hasUnsafeNumericRuns(loc,true) ||
+      includesFormattedPhone(name) || includesFormattedPhone(loc)) return null
   const fetcher = request.fetcher || fetch
   const headers = { 'Content-Type':'application/json', 'X-Goog-Api-Key':key, 'X-Goog-FieldMask':SEARCH_MASK }
   try {
