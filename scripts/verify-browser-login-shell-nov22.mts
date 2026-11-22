@@ -217,14 +217,14 @@ assert.match(source,/const registrationBarrier=isBrowserRegistrationBarrier\(pag
 assert.match(source,/if\(registrationBarrier&&params\.accountCreation!==true&&!publicInstagramEvidence\)\{/,
   'unapproved registration must hand off before the planner or Vault')
 const registrationStop=source.slice(source.indexOf('if(registrationBarrier&&params.accountCreation!==true'),source.indexOf('let signedOutEntry='))
-assert.match(registrationStop,/blockReason:'human_auth_required',authReason:'registration_not_authorized'/,
+assert.match(registrationStop,/blockReason:'human_auth_required',authReason:'login_unavailable'/,
   'registration must preserve the original task through a human auth handoff')
 assert.match(source,/const publicInstagramEvidence=params\.mode==='read'&&!loginish/,
   'a visible Instagram post can remain readable without permitting a saved login')
 const vaultRefusal=source.slice(source.indexOf('const vaultFill=page?.vaultLogin||{}'),source.indexOf('if(!vaultFill.usernameFilled)'))
 assert.match(vaultRefusal,/if\(vaultFill\.registrationRefused===true\)\{/,
   'post-redirect worker refusal must stop before login success or session recording')
-assert.match(vaultRefusal,/blockReason:'human_auth_required',authReason:'registration_not_authorized'/,
+assert.match(vaultRefusal,/blockReason:'human_auth_required',authReason:'login_unavailable'/,
   'worker refusal must hand off to a human instead of reporting login success')
 
 assert.match(source,/if\(!params\.publicOnly && !vaultAttempted && params\.accountCreation!==true && !registrationBarrier && !publicGuideRead/,
