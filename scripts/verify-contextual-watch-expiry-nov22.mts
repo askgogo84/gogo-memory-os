@@ -8,7 +8,10 @@ const source=readFileSync('lib/agent/contextual-travel-watchers.ts','utf8')
 const begin=source.indexOf('export function exactTravelOwnerId(')
 const end=source.indexOf('\nexport async function compileUpcomingTravelWatchers(',begin)
 assert.ok(begin>=0&&end>begin,'locate original owner guard, expiry helper and compiler')
-const compiled=ts.transpileModule(source.slice(begin,end)+'\n;(globalThis as any).__compileForUser=compileForUser;',
+const cleanBegin=source.indexOf('function clean(value:unknown,max=160){')
+const cleanEnd=source.indexOf('\nfunction validIso(',cleanBegin)
+assert.ok(cleanBegin>=0&&cleanEnd>cleanBegin,'extract the exact production clean helper for Gmail term formatting')
+const compiled=ts.transpileModule(source.slice(cleanBegin,cleanEnd)+'\n'+source.slice(begin,end)+'\n;(globalThis as any).__compileForUser=compileForUser;',
   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 assert.match(source,/for\(const desired of desiredConditions\)\{\s*if\(!contextualWatchStillLive\(desired\.condition\.expiresAt,now\)\)continue/,
   'per-watch expiry must gate upsert before any reinsertion')
