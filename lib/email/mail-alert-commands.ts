@@ -18,7 +18,7 @@ export async function tryMailAlertCommand(telegramId: string | number, text: str
   if (!/^(?:0|[1-9]\d*|-[1-9]\d*)$/.test(owner)) return null
   try {
     const exact = BigInt(owner)
-    if (exact < -9223372036854775808n || exact > 9223372036854775807n) return null
+    if (exact < BigInt('-9223372036854775808') || exact > BigInt('9223372036854775807')) return null
   } catch { return null }
   const { data: watcher } = await supabaseAdmin.from('agent_watchers').select('id,condition_json').eq('telegram_id', owner).eq('type', 'email_triage').eq('active', true)
     .order('created_at', { ascending: false }).limit(1).maybeSingle()
