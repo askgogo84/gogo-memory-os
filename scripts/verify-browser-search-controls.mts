@@ -21,9 +21,12 @@ assert.ok(body,'test the emitted worker DOM extraction')
 // Replay the observed public Google accessibility labels through the emitted
 // worker, including a hidden row and an unrelated account control.
 const observedRoot:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:'Flight search results'}
+// These inert fixture nodes have no ancestor form. Real DOM elements expose
+// Element.closest(), which the browser registration classifier now uses.
+// Provide the native method in fixture nodes rather than weakening the runtime guard.
 const observedNode=(label:string,role='button',hidden=false)=>({tagName:'DIV',nodeType:1,id:'',parentElement:observedRoot,children:[],innerText:label,textContent:label,
  getAttribute:(key:string)=>key==='aria-label'?label:key==='role'?role:null,
- getBoundingClientRect:()=>({width:hidden?0:240,height:hidden?0:40}),matches:()=>true,querySelectorAll:()=>[]})
+ getBoundingClientRect:()=>({width:hidden?0:240,height:hidden?0:40}),matches:()=>true,closest:()=>null,querySelectorAll:()=>[]})
 const observedSearch=[observedNode('Where from? Bengaluru BLR','combobox'),observedNode('Where to? Mumbai BOM','combobox'),observedNode('Change ticket type. One way','combobox'),observedNode('Change seating class. Economy','combobox'),observedNode('1 passenger, change number of passengers.')]
 // Actual 7 Oct DOM: the referenced hidden label spans have empty text and
 // aria-label; the separate visible selected-value spans contain the text.
@@ -83,7 +86,7 @@ function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell
   const control:any={tagName:tag,nodeType:1,id:'',parentElement:root,children:[],innerText:field?'':label,textContent:field?'':label,value,
     getAttribute:(name:string)=>name==='role'?role:name==='placeholder'&&field?label:focusShell&&name==='tabindex'?'-1':null,
     getBoundingClientRect:()=>({width:hidden?0:200,height:hidden?0:40}),
-    matches:(selector:string)=>field||tag==='BUTTON'||focusShell||role==='option'&&selector.includes('[role="option"]'),querySelectorAll:()=>focusShell?[{}]:[]}
+    matches:(selector:string)=>field||tag==='BUTTON'||focusShell||role==='option'&&selector.includes('[role="option"]'),querySelectorAll:()=>focusShell?[{}]:[],closest:()=>null}
   root.children=[control]
   root.querySelectorAll=()=>field?[control]:[]
   const document={title:'Simulated provider',body:root,forms:[],
@@ -111,7 +114,7 @@ assert.equal(snapshot('Departure','INPUT',true,false,false,'https://www.google.c
 for(const end of ['origin','destination']){
  const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:'Public flight form'}
  const make=(label:string)=>({tagName:'INPUT',nodeType:1,id:'',children:[],parentElement:root,innerText:'',textContent:'',value:'Mumbai',
-  getAttribute:(key:string)=>key==='placeholder'?label:null,matches:()=>true,querySelectorAll:()=>[],getBoundingClientRect:()=>({width:200,height:40})})
+  getAttribute:(key:string)=>key==='placeholder'?label:null,matches:()=>true,closest:()=>null,querySelectorAll:()=>[],getBoundingClientRect:()=>({width:200,height:40})})
  const background=make('Where from?'),picker=make('Where else?')
  const dialog:any={tagName:'DIV',nodeType:1,id:'',children:[picker],parentElement:root,
   getAttribute:(key:string)=>key==='role'?'dialog':key==='aria-modal'?'true':key==='aria-label'?`Enter your ${end}`:null,
@@ -144,14 +147,14 @@ for(const [provider,label,tag,field] of [
 {
  const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:'From Start typing Bengaluru BLR'}
  const wrapper:any={tagName:'DIV',nodeType:1,id:'',parentElement:root,children:[],innerText:'From Search by place/airport Bengaluru BLR',
-  getAttribute:(key:string)=>key==='role'?'button':null,matches:()=>true,getBoundingClientRect:()=>({width:300,height:100}),
+  getAttribute:(key:string)=>key==='role'?'button':null,matches:()=>true,closest:()=>null,getBoundingClientRect:()=>({width:300,height:100}),
   querySelectorAll:(selector:string)=>selector==='input[role="combobox"][aria-expanded="true"]'?[input]:[]}
  const input:any={tagName:'INPUT',nodeType:1,id:'',parentElement:wrapper,children:[],innerText:'',value:'',
   getAttribute:(key:string)=>key==='role'?'combobox':key==='aria-expanded'?'true':key==='placeholder'?'Start typing..':null,
-  matches:()=>true,getBoundingClientRect:()=>({width:200,height:30}),querySelectorAll:()=>[]}
+  matches:()=>true,closest:()=>null,getBoundingClientRect:()=>({width:200,height:30}),querySelectorAll:()=>[]}
  const option:any={tagName:'DIV',nodeType:1,id:'',parentElement:wrapper,children:[],innerText:'Bengaluru Kempegowda International Airport BLR',
   getAttribute:(key:string)=>key==='role'?'combobox':key==='aria-labelledby'?'Bengaluru':null,
-  matches:()=>true,getBoundingClientRect:()=>({width:200,height:30}),querySelectorAll:()=>[]}
+  matches:()=>true,closest:()=>null,getBoundingClientRect:()=>({width:200,height:30}),querySelectorAll:()=>[]}
  wrapper.children=[input,option];root.children=[wrapper];root.querySelectorAll=()=>[input]
  const doc={title:'Public flight fixture',body:root,forms:[],querySelectorAll:(selector:string)=>selector==='input,textarea,select'?[input]:selector==='a[href]'?[]:selector==='input[placeholder="Start typing.."]'?[input]:selector==='div[aria-labelledby="Bengaluru"]'?[option]:[wrapper,input,option]}
  const page=runInNewContext('(()=>{'+body+'})()',{document:doc,location:{href:'https://fixture.example/flights'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
@@ -207,13 +210,13 @@ assert.ok(!('cdn.zeptonow.com' in browserPageAllowlist('https://zepto.com.exampl
 {
  const field:any={tagName:'INPUT',nodeType:1,id:'q',value:'Sony WH-1000XM5',children:[],parentElement:null,form:{getAttribute:()=> 'get'},
   getAttribute:(key:string)=>key==='placeholder'?'Search Amazon.in':key==='type'?'search':null,
-  getBoundingClientRect:()=>({width:200,height:30}),matches:()=>true,querySelectorAll:()=>[]};
+  getBoundingClientRect:()=>({width:200,height:30}),matches:()=>true,closest:()=>null,querySelectorAll:()=>[]};
  const anchors=Array.from({length:125},(_,i)=>({tagName:'A',nodeType:1,id:'link'+i,children:[],parentElement:null,
   innerText:i===124?'Sony WH-1000XM5 Wireless Headphones Black':'Department '+i,
   textContent:i===124?'Sony WH-1000XM5 Wireless Headphones Black':'Department '+i,
   href:'https://fixture.example/'+(i===124?'product/sony-xm5':'department/'+i),
   getAttribute:(key:string)=>key==='href'?'https://fixture.example/link/'+i:null,
-  getBoundingClientRect:()=>({width:200,height:30}),matches:()=>true,querySelectorAll:()=>[]}));
+  getBoundingClientRect:()=>({width:200,height:30}),matches:()=>true,closest:()=>null,querySelectorAll:()=>[]}));
  const doc={title:'Results',body:{innerText:'Sony WH-1000XM5'},forms:[],querySelectorAll:(selector:string)=>selector==='a[href]'?anchors:selector==='input,textarea,select'?[field]:selector.startsWith('#')?[{}]:[field,...anchors]};
  const page=runInNewContext('(()=>{'+body+'})()',{document:doc,location:{href:'https://fixture.example/search'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})});
  assert.ok(page.links.some((l:any)=>l.href.endsWith('/product/sony-xm5')),'result links beyond navigation must survive the observation budget');
