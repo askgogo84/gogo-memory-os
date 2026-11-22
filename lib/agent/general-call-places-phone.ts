@@ -43,6 +43,8 @@ const validPlaceId = (id: unknown): id is string =>
 const display = (p: GooglePlace) => typeof p.displayName?.text === 'string' ? p.displayName.text.trim() : ''
 const address = (p: GooglePlace) => typeof p.formattedAddress === 'string' ? p.formattedAddress.trim() : ''
 const norm = (s: string) => s.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+// Never send phone numbers disguised with spaces, STD parentheses or dashes to a paid provider.
+const includesFormattedPhone = (s: string) => /(?:\d[\s().-]*){10,}/.test(s)
 // Google's regionCode=IN legitimately omits "India" from formattedAddress. A country code
 // in structured addressComponents is required instead; never infer country from query bias.
 const countryIsIndia = (p: GooglePlace) =>
@@ -102,7 +104,7 @@ export async function proposeGeneralCallPhoneFromPlaces(request: PhoneCandidateR
   if (!name || !loc || norm(name) === norm(loc) || /\b(?:hospitalized|diagnosed|symptoms|medication)\b/i.test(name+' '+loc)) return null
   // Do not send unstructured call instructions, patient details, or phone numbers as a Google query.
   if (/\b(?:call|book|reserve|appointment|doctor's|for my|tomorrow|tonight)\b/i.test(name+' '+loc) ||
-      /\d{6,}/.test(name+' '+loc)) return null
+      /\d{6,}/.test(name+' '+loc) || includesFormattedPhone(name) || includesFormattedPhone(loc)) return null
   const fetcher = request.fetcher || fetch
   const headers = { 'Content-Type':'application/json', 'X-Goog-Api-Key':key, 'X-Goog-FieldMask':SEARCH_MASK }
   try {
