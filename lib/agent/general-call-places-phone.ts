@@ -1,9 +1,10 @@
 /**
- * Google Places (New): business-phone candidate discovery, never automatic calling.
+ * Google Places (New): owner-selected business phone candidate, never automatic calling.
  *
- * SAFE DEFAULT: entirely off without owner-managed flag and API key. The only content sent to
- * Google is businessName + locality; NEVER the user's phone task, health details, hotel stay,
- * payment data or other personal content.
+ * SAFE DEFAULT: entirely off without owner-managed flag and API key. Only an explicitly
+ * owner-selected Google Maps Place ID is sent to Google Place Details; user business names,
+ * locality, free-text tasks, patient or travel details are NEVER sent in search queries.
+ * Name and locality are verified only in memory against the returned structured details.
  *
  * A candidate is not a verified phone number. The user must affirm that this is the right
  * business and telephone number BEFORE the normal separate call-plan approval. The caller
@@ -32,14 +33,13 @@ type GooglePlace = {
   businessStatus?: unknown
   internationalPhoneNumber?: unknown
 }
-type SearchResults = { places?: unknown; nextPageToken?: unknown }
-
 const ORIGIN = 'https://places.googleapis.com'
-const SEARCH_URL = ORIGIN + '/v1/places:searchText'
-const SEARCH_MASK = 'places.id,places.displayName,places.formattedAddress,places.addressComponents,places.businessStatus,nextPageToken'
 const DETAILS_MASK = 'id,displayName,formattedAddress,addressComponents,businessStatus,internationalPhoneNumber'
+// The supported pilot accepts only the common opaque Google Maps ChIJ Place ID form,
+// not arbitrary IDs extracted from prose or a user's task. Other formats need a separately
+// reviewed provenance adapter; an invalid or absent ID never triggers a paid request.
 const validPlaceId = (id: unknown): id is string =>
-  typeof id === 'string' && /^[a-zA-Z0-9_-]{10,180}$/.test(id)
+  typeof id === 'string' && /^ChIJ[A-Za-z0-9_-]{20,76}$/.test(id)
 const display = (p: GooglePlace) => typeof p.displayName?.text === 'string' ? p.displayName.text.trim() : ''
 const address = (p: GooglePlace) => typeof p.formattedAddress === 'string' ? p.formattedAddress.trim() : ''
 const norm = (s: string) => s.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -96,50 +96,48 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Pick<Response,'o
 export type PhoneCandidateRequest = {
   businessName: string
   locality: string
+  /** Explicit owner-selected Google Maps Place ID, not a value guessed from free text. */
+  placeId?: string
   env?: Record<string,string|undefined>
   fetcher?: FetchLike
 }
 
 /**
- * Returns a *candidate for confirmation*, never a plan, booking or call.
- * Requires an exact name, explicit locality, a single operational India listing, and an
- * India number on the same Place ID's Details. Does not trust search result order.
- * Fail closed on duplicate results, provider errors, missing fields or unsafe locations.
+ * An owner-selected Places identity allows a single Details read without transmitting raw
+ * business/locality/task/patient text. There is deliberately NO free-text Google search here:
+ * the owner must select/share the exact Place ID in a trusted upstream UX. The feature is
+ * off until owner-managed API enablement; no caller/route is wired to this pilot.
+ *
+ * A candidate is not provider-verified proof of the correct phone: verify the venue and
+ * number with the person, then obtain a SECOND, separate action-level call-plan approval.
  */
 export async function proposeGeneralCallPhoneFromPlaces(request: PhoneCandidateRequest): Promise<GeneralCallPhoneCandidate|null> {
   const env = request.env || process.env
   const key = env.GOOGLE_MAPS_API_KEY
   if (env.GOGO_GENERAL_CALL_PLACES_LOOKUP !== '1' || !key || key.length < 8) return null
   const name = safeInput(request.businessName,90), loc = safeInput(request.locality,90)
-  if (!name || !loc || norm(name) === norm(loc) || /\b(?:hospitalized|diagnosed|symptoms|medication)\b/i.test(name+' '+loc)) return null
-  // Do not send unstructured call instructions, patient details, or phone numbers as a Google query.
-  if (/\b(?:call|book|reserve|appointment|doctor's|for my|tomorrow|tonight)\b/i.test(name+' '+loc) ||
+  const placeId = request.placeId
+  if (!validPlaceId(placeId) || !name || !loc || norm(name) === norm(loc)) return null
+  // Never send unstructured instructions, health details or numbers in any provider request.
+  // These checks also prevent accidental paid reads with malformed owner-selected inputs.
+  if (/\b(?:call|book|reserve|appointment|doctor's|for my|tomorrow|tonight|patient|consultation|cancel|diabetes|diagnosed|medication|symptoms)\b/i.test(name+' '+loc) ||
       hasUnsafeNumericRuns(name,false) || hasUnsafeNumericRuns(loc,true) ||
       includesFormattedPhone(name) || includesFormattedPhone(loc)) return null
   const fetcher = request.fetcher || fetch
-  const headers = { 'Content-Type':'application/json', 'X-Goog-Api-Key':key, 'X-Goog-FieldMask':SEARCH_MASK }
   try {
-    const response = await fetcher(SEARCH_URL,{ method:'POST', headers, signal:AbortSignal.timeout(5_000),
-      body:JSON.stringify({textQuery:name+', '+loc+', India',pageSize:5,regionCode:'IN',languageCode:'en'}) })
+    const detailsUrl = ORIGIN + '/v1/places/' + encodeURIComponent(placeId)
+    const response = await fetcher(detailsUrl,{ method:'GET',signal:AbortSignal.timeout(5_000),
+      headers:{'X-Goog-Api-Key':key,'X-Goog-FieldMask':DETAILS_MASK} })
     if (!response.ok) return null
-    const parsed:SearchResults=await response.json()
-    // More pages may contain another branch with the same name: never assume the first is unique.
-    if (parsed?.nextPageToken) return null
-    const chosen=uniqueBusinessPlace(parsed?.places,name,loc)
-    if (!chosen || !validPlaceId(chosen.id)) return null
-    const detailsUrl = ORIGIN + '/v1/places/' + encodeURIComponent(chosen.id)
-    const detailed=await fetcher(detailsUrl,{ method:'GET',signal:AbortSignal.timeout(5_000),
-      headers: { 'X-Goog-Api-Key':key, 'X-Goog-FieldMask':DETAILS_MASK } })
-    if (!detailed.ok) return null
-    const detail:GooglePlace=await detailed.json()
-    if (!detail || detail.id !== chosen.id || !eligible(detail,name,loc)) return null
-    const phone=verifiedIndiaPhone(detail.internationalPhoneNumber)
+    const detail:GooglePlace = await response.json()
+    if (!detail || detail.id !== placeId || !eligible(detail,name,loc)) return null
+    const phone = verifiedIndiaPhone(detail.internationalPhoneNumber)
     if (!phone) return null
-    return {placeId:chosen.id,name:display(detail),address:address(detail),phone,
-      mapUrl:'https://www.google.com/maps/place/?q=place_id:'+encodeURIComponent(chosen.id),
+    return {placeId,name:display(detail),address:address(detail),phone,
+      mapUrl:'https://www.google.com/maps/place/?q=place_id:'+encodeURIComponent(placeId),
       source:'Google Places',requiresNumberConfirmation:true,isVerifiedPhone:false}
   } catch {
-    // Fail closed. Never expose provider response bodies or API keys in logs.
+    // No provider bodies, API keys, personal content or raw request data in logs.
     return null
   }
 }
