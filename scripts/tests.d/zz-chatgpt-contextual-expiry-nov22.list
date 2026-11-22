@@ -1,0 +1,2 @@
+# 22 Nov: do not re-create expired contextual flight/Gmail trip monitors after compiler retirement
+npx tsx scripts/verify-contextual-watch-expiry-nov22.mts
