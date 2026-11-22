@@ -264,7 +264,7 @@ async function isActiveRegistrationPage(page){
   // even when the signup heading follows page navigation and other prose.
   if(hasAccountField&&/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText)
      &&/\balready\s+have\s+an?\s+account\b/i.test(fullText))return true;
-  if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
+
   // A registration submit may appear on a login URL/modal with generic title.
   const registrationSubmit=await page.evaluate(() => {
     const buttons=Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]'))
@@ -287,6 +287,7 @@ async function isActiveRegistrationPage(page){
   if(registrationSubmit.associated)return true;
   if(publicGuidePath&&!passwordField)return false;
   if(registrationSubmit.explicit)return true;
+  if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
   return false;
 }
 async function model(page){
