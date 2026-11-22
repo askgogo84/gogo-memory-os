@@ -49,7 +49,7 @@ const includesFormattedPhone = (s: string) => /(?:\d[\s().-]*){10,}/.test(s)
 // most one India-shaped PIN in the locality, never in a business name. Keep all
 // 7+ contiguous digits and 10+ formatted digits out of paid provider requests.
 const hasUnsafeNumericRuns = (value: string, allowLocalityPin: boolean) => {
-  const runs = value.match(/\d+/g) || []
+  const runs: string[] = value.match(/\d+/g) ?? []
   const pins = runs.filter(run => run.length === 6)
   return runs.some(run => run.length >= 7) ||
     pins.length > (allowLocalityPin ? 1 : 0) ||
