@@ -408,7 +408,7 @@ async function fetchAttentionThread(accessToken:string,threadId:string):Promise<
     `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Id&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   )
   if(!res.ok){
-    console.error('Gmail attention thread fetch failed:',threadId,res.status)
+    console.error('Gmail attention thread fetch failed:',res.status)
     return null
   }
   const messages=(res.data.messages||[]).map((message:any)=>{
@@ -445,12 +445,26 @@ async function fetchAttentionThread(accessToken:string,threadId:string):Promise<
 export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=12):Promise<GmailAttentionThread[]>{
   const refs=await listAttentionMessageRefs(accessToken,Math.max(20,maxThreads*3))
   const threadIds=[...new Set<string>((refs||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))].slice(0,Math.max(1,Math.min(20,maxThreads)))
-  const settled=await Promise.allSettled(threadIds.map(id=>fetchAttentionThread(accessToken,id)))
-  if(settled.some(x=>x.status==='rejected'||!x.value))throw new Error('gmail_attention_thread_read_incomplete')
-  return settled
-    .filter((x):x is PromiseFulfilledResult<GmailAttentionThread|null>=>x.status==='fulfilled')
-    .map(x=>x.value)
-    .filter((x):x is GmailAttentionThread=>Boolean(x))
+  // A cron/pulse previously launched all 12+ thread GETs in one burst. Gmail
+  // returned 429 in production on 22 Nov. Bound read-only fanout to 3 and stop
+  // scheduling new requests as soon as any detail is unavailable. Incomplete
+  // reads still throw: a partial inbox must never be claimed as up to date.
+  const found:Array<GmailAttentionThread|null>=Array.from({length:threadIds.length},()=>null)
+  let next=0,failed=false
+  const worker=async()=>{
+    while(!failed){
+      const i=next++
+      if(i>=threadIds.length)return
+      try{
+        const row=await fetchAttentionThread(accessToken,threadIds[i])
+        if(!row){failed=true;return}
+        found[i]=row // preserve provider list order despite differing response latencies
+      }catch{failed=true;return}
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(3,threadIds.length)},()=>worker()))
+  if(failed||found.some(row=>row===null))throw new Error('gmail_attention_thread_read_incomplete')
+  return found as GmailAttentionThread[]
 }
 
 
