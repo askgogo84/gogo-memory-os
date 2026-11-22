@@ -246,7 +246,11 @@ async function isActiveRegistrationPage(page){
   if(/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title))return true;
   const forms=Array.isArray(observed.forms)?observed.forms:[];
   if(forms.some(form=>{
-    try{return registerPath.test(new URL(String(form.action||''),String(observed.url||'https://invalid.example')).pathname)}catch{return false}
+    try{
+      const actionPath=new URL(String(form.action||''),String(observed.url||'https://invalid.example')).pathname;
+      return registerPath.test(actionPath)
+        &&!/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(actionPath);
+    }catch{return false}
   }))return true;
   const leading=String(observed.text||'').replace(/\s+/g,' ').trim().replace(/^(?:instagram|meta)\s+/i,'').slice(0,260);
   const hasAccountField=forms.some(form=>(form.inputs||[]).some(input=>
