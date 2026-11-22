@@ -75,6 +75,18 @@ assert.equal(isBrowserRegistrationBarrier({
   controls:[{tag:'a',label:'Sign up'},{tag:'button',label:'Log in'}],
 }),false,'signup navigation link beside a real login form is not account creation')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Products Help Create account Email Continue Already have an account? Log in',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}]}],
+  controls:[{tag:'button',label:'Continue'},{tag:'a',label:'Log in'}],
+}),true,'signup heading with a generic Continue must block saved credentials before the worker')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/login',title:'Sign in',
+  text:'Sign in to your account. New here? Sign up.',
+  forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+  controls:[{tag:'button',type:'button',label:'Sign up'},{tag:'button',label:'Log in'}],
+}),false,'header Signup navigation button must not make a legitimate login page registration')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Sign in to your account. New here? Sign up.',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
 }),false,'an actual login form with incidental sign-up navigation remains eligible for Vault')
@@ -332,6 +344,16 @@ assert.equal(implicitSignup.vaultLogin.registrationRefused,true,
   'implicit submit on an email-first registration must stop the worker before autofill')
 assert.deepEqual(implicitSignup.actions,[],
   'implicit Create account button must not receive or submit saved Vault identity')
+const signupWithGenericContinue=await syntheticVaultWorker({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Help Create account Email Continue Already have an account? Log in',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}]}],
+  signupSubmitVisible:false,signupButtonLabel:'Continue',
+})
+assert.equal(signupWithGenericContinue.vaultLogin.registrationRefused,true,
+  'a generic Continue on a page with active account creation heading is not login')
+assert.deepEqual(signupWithGenericContinue.actions,[],
+  'generic Continue signup must be refused before filling saved Vault identity')
 const loginRedirectToSignup=await syntheticVaultWorker({
   url:'https://example.com/login',title:'Sign in',text:'Log in',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
