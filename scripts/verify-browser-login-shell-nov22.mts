@@ -340,6 +340,78 @@ assert.equal(observedZeroBox.forms[0].inputs[0].name,'email',
 assert.equal(isBrowserRegistrationBarrier(observedZeroBox),true,
   'zero-box email-first signup must block backend Vault resolution')
 
+// Execute the same actual worker DOM model with no native <form> element.
+// JavaScript-auth panels commonly place an unbound email field and Sign up
+// button in a div; synthesized body evidence must keep this active CTA.
+const formlessBody:any={innerText:'Home Products Sign up Email Log in'}
+const formlessEmail:any={
+  id:'newEmail',tagName:'INPUT',form:null,
+  getAttribute:(key:string)=>key==='name'?'email':key==='type'?'email':null,
+  getBoundingClientRect:()=>({width:180,height:30}),
+}
+const formlessButton:any={
+  tagName:'BUTTON',form:null,innerText:'Sign up',textContent:'Sign up',
+  getAttribute:(key:string)=>key==='type'?'button':null,
+  closest:()=>null,getBoundingClientRect:()=>({width:95,height:26}),
+}
+formlessBody.querySelectorAll=()=>[formlessEmail]
+const observedFormless=await observedModel({
+  evaluate:async(callback:unknown)=>vm.runInNewContext('('+String(callback)+')()',{
+    URL,CSS:{escape:(x:string)=>x},
+    location:{href:'https://example.com/auth'},
+    document:{
+      title:'Welcome',body:formlessBody,forms:[],
+      querySelectorAll:(selector:string)=>selector.includes('button')?[formlessButton]:[formlessEmail],
+      querySelector:()=>null,
+    },
+    getComputedStyle:()=>({visibility:'visible',display:'block'}),
+  }),
+})
+assert.equal(observedFormless.forms.length,1,'unbound email field creates one synthetic body form')
+assert.equal(observedFormless.forms[0].synthetic,true,'synthetic form evidence is explicitly identified')
+assert.equal(observedFormless.forms[0].submitLabels[0],'Sign up',
+  'visible JS signup button must survive actual worker model')
+assert.equal(isBrowserRegistrationBarrier(observedFormless),true,
+  'form-less JS signup must block backend Vault before lookup')
+
+// A type=button Sign up mode switch sharing an actual Log in form is not a submit.
+const loginForm:any={
+  action:'https://example.com/login',method:'post',innerText:'Log in Sign up',
+  getBoundingClientRect:()=>({width:250,height:170}),
+}
+const loginEmail:any={
+  id:'loginEmail',tagName:'INPUT',form:loginForm,
+  getAttribute:(key:string)=>key==='name'?'email':key==='type'?'email':null,
+  getBoundingClientRect:()=>({width:190,height:28}),
+}
+const loginPassword:any={
+  id:'loginPassword',tagName:'INPUT',form:loginForm,
+  getAttribute:(key:string)=>key==='name'?'password':key==='type'?'password':null,
+  getBoundingClientRect:()=>({width:190,height:28}),
+}
+loginForm.querySelectorAll=()=>[loginEmail,loginPassword]
+const submitButton=(label:string,type:string)=>({
+  tagName:'BUTTON',form:loginForm,innerText:label,textContent:label,
+  getAttribute:(key:string)=>key==='type'?type:null,
+  getBoundingClientRect:()=>({width:90,height:25}),closest:()=>loginForm,
+})
+const actualLoginSubmit=submitButton('Log in','submit'),loginModeSwitch=submitButton('Sign up','button')
+const observedLoginSwitch=await observedModel({
+  evaluate:async(callback:unknown)=>vm.runInNewContext('('+String(callback)+')()',{
+    URL,CSS:{escape:(x:string)=>x},location:{href:'https://example.com/login'},
+    document:{
+      title:'Sign in',body:{innerText:'Sign in to your account. Sign up'},
+      forms:[loginForm],
+      querySelectorAll:(selector:string)=>selector.includes('button')?[actualLoginSubmit,loginModeSwitch]:[loginEmail,loginPassword],
+      querySelector:()=>null,
+    },getComputedStyle:()=>({visibility:'visible',display:'block'}),
+  }),
+})
+assert.equal(observedLoginSwitch.forms[0].submitLabels.join(','),'Log in',
+  'non-submitting Sign up mode switch must be omitted from account-submit labels')
+assert.equal(isBrowserRegistrationBarrier(observedLoginSwitch),false,
+  'valid existing-login form must not be blocked by a type=button mode switch')
+
 async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean;signupSubmitType?:string;redirectAfterSubmit?:{url:string;title:string;text:string;forms?:any[]}}){
   const actions:string[]=[]
   const output:string[]=[]
