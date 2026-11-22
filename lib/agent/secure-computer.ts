@@ -305,6 +305,7 @@ async function model(page){
       url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&visible(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
+        formText:clean(f.innerText||'').slice(0,850),
         submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"]')).filter(el=>el.form===f&&visible(el)).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
       }))
@@ -862,6 +863,7 @@ async function model(page){
       controls,
       forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
+        formText:clean(f.innerText||'').slice(0,850),
         submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"]')).filter(el=>el.form===f&&visible(el)).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(actionable).slice(0,60).map(inputs)
       }))
