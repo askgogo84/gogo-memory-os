@@ -123,7 +123,7 @@ export type SecureBrowserResult = {
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed';consequential?:boolean}>
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'|'delivery_location_required'|'account_already_exists'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'|'login_unavailable'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'|'login_unavailable'|'registration_not_authorized'
   credentialSelectionRequired?: boolean
   // Provider booking: where Gogo handed over (OTP needed, payment, or anything else).
   bookingStage?: BookingStage
@@ -257,13 +257,20 @@ async function isActiveRegistrationPage(page){
     /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' '))));
   if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
   // A registration submit may appear on a login URL/modal with generic title.
-  const registrationSubmit=await page.evaluate(() => Array.from(document.querySelectorAll('button[type="submit"],input[type="submit"]'))
+  const registrationSubmit=await page.evaluate(() => Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]'))
     .filter(el=>{
       if(el.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
       const rect=el.getBoundingClientRect(),style=getComputedStyle(el);
       return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden';
     })
-    .some(el=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(el.textContent||el.value||'').trim()))).catch(()=>true);
+    .some(el=>{
+      const label=String(el.textContent||el.value||el.getAttribute('aria-label')||'').replace(/\s+/g,' ').trim();
+      const explicit=/\b(?:register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label);
+      const signUp=/\bsign\s*up\b/i.test(label);
+      // Implicit form buttons (default type=submit) can create accounts too;
+      // ignore an unrelated visible header signup navigation button.
+      return explicit||(signUp&&!!el.closest('form'));
+    })).catch(()=>true);
   return registrationSubmit===true;
 }
 async function model(page){
