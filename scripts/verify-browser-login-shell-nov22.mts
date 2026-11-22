@@ -76,6 +76,11 @@ assert.equal(isBrowserRegistrationBarrier({
   text:'Sign up to see photos and videos from friends: our public guide discusses this phrase.',
 }),false,'quoted public signup content does not become a credential action')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/guides/signup',title:'Public registration guide',
+  text:'Sign up to see photos and videos from friends: this is documentation.',
+  forms:[{action:'https://example.com/guides/signup',inputs:[{name:'newsletterEmail',type:'email'}]}],
+}),false,'a public guide with a newsletter form is not a registration route or credential action')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Log in',
   forms:[{action:'https://example.com/register',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
 }),true,'a registration-targeted password form is not made safe by a sign-in title')
@@ -202,6 +207,11 @@ assert.match(vaultRefusal,/blockReason:'human_auth_required',authReason:'registr
 assert.match(source,/if\(!params\.publicOnly && !registrationBarrier && !vaultAttempted && params\.accountCreation!==true/,
   'credential lookup must be unreachable from an active registration barrier')
 const vaultWorker=source.slice(source.indexOf('const VAULT_LOGIN_SCRIPT=String.raw'),source.indexOf("// 16 Oct: the person's sign-in code"))
+assert.match(vaultWorker,/const registrationSubmit=await page\.evaluate\(\(\) => Array\.from\(document\.querySelectorAll/,
+  'the actual worker must inspect registration controls')
+assert.match(vaultWorker,/const rect=el\.getBoundingClientRect\(\),style=getComputedStyle\(el\)/,
+  'the signup-submit detector must ignore hidden signup forms rather than inspecting all buttons')
+
 assert.match(vaultWorker,/if\(await isActiveRegistrationPage\(page\)\)\{await refuseRegistration\(\);return;\}[\s\S]*?const USER_FIELDS=/,
   'registration refusal must happen before username fields can be filled')
 assert.match(vaultWorker,/if\(await isActiveRegistrationPage\(page\)\)\{await refuseRegistration\(\);return;\}[\s\S]*?const submit=await firstVisible/,
