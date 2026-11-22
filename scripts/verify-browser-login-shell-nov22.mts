@@ -70,6 +70,18 @@ assert.equal(isBrowserRegistrationBarrier({
   controls:[{tag:'button',label:'Continue — Create account'},{tag:'a',label:'Log in'}],
 }),true,'visible implicit registration submit blocks Vault before any credential resolution')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/help/auth',title:'Welcome',
+  text:'Home Help Create account Email Continue. Already have an account? Log in',
+  forms:[{action:'https://example.com/help/auth',inputs:[{name:'email',type:'email'}],submitLabels:['Continue']}],
+  controls:[{tag:'button',label:'Continue',inForm:true}],
+}),true,'a real help-hosted registration form must not be exempted as public documentation')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Product Register new users Log in',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}],submitLabels:['Sign up']}],
+  controls:[{tag:'button',label:'Sign up',inForm:true}],
+}),true,'form-associated Sign up control must stop backend Vault lookup without an Already have account cue')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Sign in to your account',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
   controls:[{tag:'a',label:'Sign up'},{tag:'button',label:'Log in'}],
@@ -232,7 +244,7 @@ assert.match(source,/if\(!params\.publicOnly && !vaultAttempted && params\.accou
 assert.match(source,/const publicGuideRead=params\.mode==='read'&&!loginish/,
   'public guides/newsletter forms may not trigger a stored Vault login')
 const vaultWorker=source.slice(source.indexOf('const VAULT_LOGIN_SCRIPT=String.raw'),source.indexOf("// 16 Oct: the person's sign-in code"))
-assert.match(vaultWorker,/const registrationSubmit=await page\.evaluate\(\(\) => Array\.from\(document\.querySelectorAll/,
+assert.match(vaultWorker,/const registrationSubmit=await page\.evaluate\(\(\) => \{[\s\S]*?Array\.from\(document\.querySelectorAll/,
   'the actual worker must inspect registration controls')
 assert.match(vaultWorker,/const rect=el\.getBoundingClientRect\(\),style=getComputedStyle\(el\)/,
   'the signup-submit detector must ignore hidden signup forms rather than inspecting all buttons')
@@ -387,6 +399,26 @@ assert.equal(implicitSignup.vaultLogin.registrationRefused,true,
   'implicit submit on an email-first registration must stop the worker before autofill')
 assert.deepEqual(implicitSignup.actions,[],
   'implicit Create account button must not receive or submit saved Vault identity')
+const helpHostedSignup=await syntheticVaultWorker({
+  url:'https://example.com/help/auth',title:'Welcome',
+  text:'Home Help Create account Email Continue. Already have an account? Log in',
+  forms:[{action:'https://example.com/help/auth',inputs:[{name:'email',type:'email'}]}],
+  signupSubmitVisible:false,signupButtonLabel:'Continue',
+})
+assert.equal(helpHostedSignup.vaultLogin.registrationRefused,true,
+  'help-hosted email-first signup is active registration despite path exemption')
+assert.deepEqual(helpHostedSignup.actions,[],
+  'help-hosted signup must stop before saved credential autofill')
+const plainSignupSubmit=await syntheticVaultWorker({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Products Log in',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}]}],
+  signupSubmitVisible:true,signupSubmitInForm:true,signupButtonLabel:'Sign up',
+})
+assert.equal(plainSignupSubmit.vaultLogin.registrationRefused,true,
+  'visible form-associated Sign up submit must refuse before passwordless autofill')
+assert.deepEqual(plainSignupSubmit.actions,[],
+  'form-associated signup must not fill saved identity')
 const signupWithGenericContinue=await syntheticVaultWorker({
   url:'https://example.com/auth',title:'Welcome',
   text:'Home Help Create account Email Continue Already have an account? Log in',
