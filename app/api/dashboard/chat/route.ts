@@ -395,7 +395,9 @@ async function handleChatPost(req: NextRequest) {
       const brain:any=await import('@/lib/agent/brain').then(m=>m.runBrain({phone:String(user.whatsapp_id||''),telegramId:Number(user.telegram_id),text,name:user.name||null,timezone:(user as any).timezone||null,userId:String(actor.userId||''),whatsappId:String(user.whatsapp_id||''),surface:'web'})).catch((err:any)=>{console.error('BRAIN_FAILED:',String(err?.message||err).slice(0,160));return null})
       if(brain?.reply){
         await saveConversation(user.telegram_id,text,brain.reply)
-        return NextResponse.json({text:brain.reply,handledBy:'brain',status:'completed'})
+        const isDiagnostic=brain.handledBy==='system-diagnostic'||brain.handledBy==='system-diagnostic-clarify'
+        // Only the deterministic diagnostic may publish check evidence; ordinary brain chat stays text-only.
+        return NextResponse.json({text:brain.reply,handledBy:isDiagnostic?brain.handledBy:'brain',status:'completed',...(isDiagnostic?{checks:brain.checks||[],readOnly:true,mutated:false}:{})})
       }
       if(brain?.text)text=brain.text
     }
