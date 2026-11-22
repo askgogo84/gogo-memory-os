@@ -1,7 +1,7 @@
 // Synthetic-only browser auth evidence gate. Never opens a browser or uses a real account.
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {isBrowserLoginShell} from '../lib/agent/browser-evidence'
+import {isBrowserLoginShell,isBrowserRegistrationBarrier} from '../lib/agent/browser-evidence'
 
 const instagramLogin={
   url:'https://www.instagram.com/accounts/login/?next=%2Fp%2Fexample',
@@ -45,6 +45,31 @@ const genericSignupForm={
 }
 assert.equal(isBrowserLoginShell(genericSignupForm),true,
   'credential-bearing registration form is an auth boundary without login copy')
+// A registration barrier can pause an auth-requiring task but must never be
+// passed to the separate saved-credential login script. No provider I/O.
+assert.equal(isBrowserRegistrationBarrier(genericSignupForm),true,
+  'registration form must not authorize automatic Vault login')
+assert.equal(isBrowserRegistrationBarrier(signupRouteShell),true,
+  'empty Instagram registration route must not authorize Vault login')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/create-account',title:'Join',text:'Register',forms:[],
+}),true,'an active account-creation URL is blocked even before form hydration')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/login',title:'Sign in',text:'Sign in to your account. New here? Sign up.',
+  forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+}),false,'an actual login form with incidental sign-up navigation remains eligible for Vault')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://www.instagram.com/p/example',title:'Instagram',
+  text:'Instagram Sign up to see photos and videos from friends. About Help',
+}),true,'an Instagram sign-up-only gate cannot trigger Vault login')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/guides/signup',title:'Public registration guide',
+  text:'Sign up to see photos and videos from friends: our public guide discusses this phrase.',
+}),false,'quoted public signup content does not become a credential action')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/login',title:'Sign in',text:'Log in',
+  forms:[{action:'https://example.com/register',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+}),true,'a registration-targeted password form is not made safe by a sign-in title')
 assert.equal(isBrowserLoginShell({
   url:'https://www.instagram.com/p/example', title:'Public brand post',
   text:'Instagram Sign up to see photos and videos from friends. brandname New product launch today. November 22 About Help Press Privacy Terms',
@@ -148,6 +173,18 @@ assert.match(assessor.slice(0,650),/typeof detectHumanAuthGate==='function'&&det
   'actual auth gates still refuse verification when the gate exists; old VM harness stubs remain valid')
 assert.match(source,/function pageLooksLikeLogin\(page:any\)\{\s*return isBrowserLoginShell\(page\)/,
   'the same-run auth handoff must recognize signed-out shells')
+// Both layers must refuse account creation before any Vault lookup, field fill,
+// generic Continue or generic submit (the second layer covers redirects).
+assert.match(source,/const registrationBarrier=isBrowserRegistrationBarrier\(page\)/,
+  'the runtime must classify a separate registration barrier')
+assert.match(source,/if\(!params\.publicOnly && !registrationBarrier && !vaultAttempted && params\.accountCreation!==true/,
+  'credential lookup must be unreachable from an active registration barrier')
+const vaultWorker=source.slice(source.indexOf('const VAULT_LOGIN_SCRIPT=String.raw'),source.indexOf("
+// 16 Oct: the person's sign-in code"))
+assert.match(vaultWorker,/if\(await isActiveRegistrationPage\(page\)\)\{await refuseRegistration\(\);return;\}[\s\S]*?const USER_FIELDS=/,
+  'registration refusal must happen before username fields can be filled')
+assert.match(vaultWorker,/if\(await isActiveRegistrationPage\(page\)\)\{await refuseRegistration\(\);return;\}[\s\S]*?const submit=await firstVisible/,
+  'a redirected registration form must be refused before its submit control is clicked')
 assert.match(source,/if \(isBrowserLoginShell\(page\) \|\| detectHumanAuthGate\(page\)\.required \|\| detectProviderAccessBlock\(page\)/,
   'public Obscura observer must fall back instead of completing on login shell')
 // Exercise the real assessor, not only helper calls or string matching. All pages are synthetic;
