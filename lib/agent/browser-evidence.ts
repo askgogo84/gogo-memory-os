@@ -70,15 +70,22 @@ export function isBrowserLoginShell(page:{
   const visibleInstagramPost=instagram&&/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading)
   // Sites may use a combined login/signup call-to-action instead of a standalone login button.
   const activeGate=/^(?:please\s+)?(?:log\s*in|sign\s*in)(?:\s+or\s+sign\s*up)?\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
-  if(body.length<900&&activeGate.test(opening)&&!visibleInstagramPost)return true
+  const openingGate=body.length<900&&activeGate.test(opening)
+  if(openingGate&&!instagram)return true
 
   // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
   // A real post has raw unlabelled caption text; the observer does not supply "Caption:".
-  if(!instagram||body.length>=1100||!/\b(?:log\s*in|sign\s*in)\b/i.test(leading)
+  if(!instagram||(!openingGate&&(body.length>=1100||!/\b(?:log\s*in|sign\s*in)\b/i.test(leading)
      ||!/\bsign\s*up\b/i.test(leading)
-     ||!/\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading))return false
+     ||!/\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading))))return false
   if(visibleInstagramPost)return false
-  const remaining=leading
+  // Combined sign-in banners are not caption evidence. Remove the observed
+  // access prompt and stock "and videos from friends" copy before evaluating
+  // whether an unlabelled public caption is actually present below it.
+  const evidenceBody=openingGate
+    ?opening.replace(activeGate,'').replace(/^\s*(?:and\s+videos?(?:\s+from\s+(?:your\s+)?friends)?|from\s+(?:your\s+)?friends)\b/i,'')
+    :leading
+  const remaining=evidenceBody
     .replace(/\b(?:forgot\s+(?:your\s+)?password|don'?t\s+have\s+an\s+account|already\s+have\s+an\s+account|get\s+the\s+app|download\s+the\s+app|also\s+from\s+meta|meta\s+verified|from\s+meta|log\s*in|sign\s*in|sign\s*up|instagram|threads|locations|privacy|terms|about|help|press|api|jobs|language|english|copyright|home|explore|reels|messages|search|profile|meta)\b/gi,' ')
     .replace(/(?:©|\b20\d{2}\b)/g,' ')
     .toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').trim()
