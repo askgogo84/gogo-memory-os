@@ -255,6 +255,10 @@ async function isActiveRegistrationPage(page){
   const leading=String(observed.text||'').replace(/\s+/g,' ').trim().replace(/^(?:instagram|meta)\s+/i,'').slice(0,260);
   const hasAccountField=forms.some(form=>(form.inputs||[]).some(input=>
     /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' '))));
+  const passwordField=forms.some(form=>(form.inputs||[]).some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))));
+  // Documentation/newsletter content is never an active signup just because
+  // its URL or first sentence describes how signup works.
+  if(publicGuidePath&&!passwordField)return false;
   if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
   // A registration submit may appear on a login URL/modal with generic title.
   const registrationSubmit=await page.evaluate(() => Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]'))
@@ -366,7 +370,11 @@ async function model(page){
         'button:has-text("Send OTP")','button:has-text("Send One Time Password")','a:has-text("Send OTP")','button:has-text("Request OTP")','a:has-text("Sign in with OTP")',
         'button:has-text("Login with OTP")','a:has-text("Login with OTP")','button:has-text("Send code")','input[type="submit"][value*="OTP" i]'
       ]);
-      if(codeButton){ await codeButton.click({timeout:10000}); submitted=true; }
+      if(codeButton){
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+        await codeButton.click({timeout:10000}); submitted=true;
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+      }
       // 16 Oct live: Gogo told him "Swiggy sent a code" but no SMS came. Only say so when the site shows its code screen.
       let codeScreen=false,errorCue='';
       if(codeButton||!passFields.length){
@@ -400,6 +408,9 @@ async function model(page){
       if(submit){
         if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
         await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800);
+        // Provider redirect after a real login submit can land on registration.
+        // Never let the caller interpret that page as successful authentication.
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
       }
     }
     const out=await model(page);
