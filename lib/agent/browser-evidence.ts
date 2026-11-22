@@ -57,7 +57,11 @@ export function isBrowserRegistrationBarrier(page:{
   let path=''
   try{path=new URL(page.url||'').pathname}catch{}
   const registerPath=/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i
-  if(registerPath.test(path))return true
+  // A public help/article URL may end in /signup without being an active form.
+  // Auth routes can be under provider-specific prefixes, but content-guide routes
+  // need an observed form or registration title before they can block reads.
+  const publicGuidePath=/(?:^|\\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\\/|$)/i.test(path)
+  if(registerPath.test(path)&&!publicGuidePath)return true
   const title=String(page.title||'').replace(/\s+/g,' ').trim()
   const body=String(page.text||'').replace(/\s+/g,' ').trim()
   const inputs=(page.forms||[]).flatMap(form=>form.inputs||[])
