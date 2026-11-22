@@ -30,7 +30,22 @@ const SELF_CHECK = new RegExp(String.raw`^${RUN}(?:(?:askgogo|gogo|system)\s+)?(
   + String.raw`|^${RUN}(?:askgogo|gogo|system)\s+health\s+check$`
   + String.raw`|^${RUN}(?:diagnostics?|health\s+check|status\s+check)\s+(?:on|of|for)\s+${SELF_OBJ}$`
   + String.raw`|^(?:diagnose|check|test|verify)\s+${SELF_OBJ}$`, 'i')
-const RUNNING = /^(?:are\s+you|is\s+(?:askgogo|gogo)|is\s+everything|are\s+all\s+(?:your\s+)?(?:systems|services))\s+(?:working|running|up|healthy)(?:\s+(?:properly|correctly|fine|normally|ok|okay))?$|^(?:are\s+you|is\s+(?:askgogo|gogo))\s+(?:ok|okay|fine)$/i
+const RUNNING = /^(?:are\s+you|is\s+(?:askgogo|gogo)|is\s+everything|are\s+all\s+(?:your\s+)?(?:systems|services))\s+(?:working|running|up|healthy)(?:\s+(?:properly|correctly|fine|normally|ok|okay))?$/i
+// 22 Nov: Hinglish asks, whole message only. "sab theek hai?" alone is not ours (it is about life, not AskGogo), so
+// every one names AskGogo or "you" ("tum", "aap") or its systems.
+const HI_YOU = String.raw`(?:(?:kya\s+)?(?:tum|aap|tu|askgogo|gogo))`
+// Review (PR #1568): "tum chal rahe ho?" usually means "are you coming?", so bare "chal raha" needs AskGogo as the subject.
+const HI_GOGO = String.raw`(?:(?:kya\s+)?(?:askgogo|gogo))`
+const HI_RUNNING = new RegExp(String.raw`^${HI_YOU}\s+(?:theek|thik)\s+se\s+(?:kaam\s+kar\s+rah[eia]|chal\s+rah[eia])\s+(?:ho|hai|hain)$`
+  + String.raw`|^${HI_YOU}\s+kaam\s+kar\s+rah[eia]\s+(?:ho|hai|hain)(?:\s+(?:na|theek\s+se|thik\s+se))?$`
+  + String.raw`|^${HI_GOGO}\s+chal\s+rah[eia]\s+(?:hai|hain)(?:\s+(?:na|theek\s+se|thik\s+se))?$`
+  + String.raw`|^(?:kya\s+)?(?:sab|saare|sare|tumhare|aapke)\s+(?:systems?|services)\s+(?:theek|thik|chal\s+rah[eia])\s+(?:hai|hain)$`, 'i')
+const HI_CASUAL = new RegExp(String.raw`^${HI_YOU}\s+(?:theek|thik|okay|ok)\s+(?:ho|hai|hain)$`, 'i')
+const HI_SELF_CHECK = new RegExp(String.raw`^(?:(?:ek|apna|apni|khud\s+ka|khud\s+ki)\s+)?(?:self[\s-]?(?:diagnostics?|tests?|checks?)|system\s+(?:health\s+)?(?:checks?|diagnostics?|tests?)|(?:askgogo|gogo)\s+(?:health\s+check|diagnostics?))\s+(?:karo|kar\s+do|kardo|chalao|chala\s+do|run\s+karo)$`
+  + String.raw`|^(?:apne\s+aap|khud)\s+(?:ko\s+)?(?:check|test|diagnose)\s+(?:karo|kar\s+lo|kar\s+do|kardo)$`
+  + String.raw`|^(?:apne|apni)\s+(?:systems?|services)\s+(?:check|test)\s+(?:karo|kar\s+lo|kar\s+do|kardo)$`, 'i')
+// "Are you ok?" is a check-in, not a request for a report: it gets the headline and anything that needs a look.
+const CASUAL = /^(?:are\s+you|is\s+(?:askgogo|gogo))\s+(?:ok|okay|fine|alright|all\s+right)$/i
 // Bare words with no object: ask which check is meant.
 const BARE = new RegExp(String.raw`^(?:show\s+(?:me\s+)?)?${RUN}(?:diagnostics?(?:\s+report)?|health\s+check|status\s+check|sanity\s+check)$`, 'i')
 // A checklist of AskGogo's own parts ("check WhatsApp pairing, connected services, memory persistence …").
@@ -52,7 +67,7 @@ const TIMEY = /\b(?:today|tonight|tomorrow|morning|evening|monday|tuesday|wednes
 const actionIn = (t: string) => ACTION.test(t.replace(/\bconnected\b/gi, '').replace(/\bscheduled\b/gi, ''))
 
 function core(raw: string): string {
-  return String(raw || '').replace(/[’]/g, "'").replace(/\s+/g, ' ').trim().replace(LEAD, '').replace(TAIL, '').trim()
+  return String(raw || '').replace(/[’]/g, "'").replace(/\s+/g, ' ').trim().replace(/^\*+([^*]+)\*+([?.!]*)$/, '$1$2').replace(LEAD, '').replace(TAIL, '').trim()
 }
 
 export function classifyDiagnosticAsk(raw: string): DiagnosticIntent {
@@ -60,7 +75,8 @@ export function classifyDiagnosticAsk(raw: string): DiagnosticIntent {
   if (full.length < 4 || full.length > 400 || /\n/.test(String(raw || '').trim())) return null
   const t = core(full)
   if (!t) return null
-  if (SELF_CHECK.test(t) || RUNNING.test(t) || DETAILS.test(t)) return 'diagnostic'
+  if (SELF_CHECK.test(t) || RUNNING.test(t) || DETAILS.test(t) || CASUAL.test(t)) return 'diagnostic'
+  if (HI_SELF_CHECK.test(t) || HI_RUNNING.test(t) || HI_CASUAL.test(t)) return 'diagnostic'
   if (BARE.test(t)) return 'ambiguous'
   const parts = COMPONENTS.filter(re => re.test(t)).length
   if (parts >= 3 && CHECKLIST_LEAD.test(t) && !actionIn(t) && !TIMEY.test(t)) return 'diagnostic'
@@ -74,9 +90,14 @@ export function wantsDiagnosticDetails(raw: string): boolean {
   const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
   return DETAILS.test(t)
 }
+/** "Are you ok?", "tum theek ho?": a check-in. Same checks, a short reply (no alerts or open items). */
+export function isCasualCheckIn(raw: string): boolean {
+  const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
+  return CASUAL.test(t) || HI_CASUAL.test(t)
+}
 
 /** Cheap pre-check for route files, so the module is only imported for a likely ask. */
-export const DIAGNOSTIC_GATE = /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|running|up|healthy)|are\s+you\s+(?:working|up|ok|okay|fine|running|healthy)|(?:askgogo|gogo)\s+(?:working|up|ok|okay|fine|running|healthy|status)|yourself|pairing|persistence|watchers|integrations|connected\s+services|approvals|memory|voice/i
+export const DIAGNOSTIC_GATE = /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|running|up|healthy)|are\s+you\s+(?:working|up|ok|okay|fine|alright|all\s+right|running|healthy)|(?:askgogo|gogo)\s+(?:working|up|ok|okay|fine|alright|running|healthy|status)|(?:tum|aap|tu|gogo)\s+(?:theek|thik|thick|ok|okay|kaam\s+kar|chal\s+rah)|khud|apne\s+aap|services|yourself|pairing|persistence|watchers|integrations|connected\s+services|approvals|memory|voice/i
 
 export function ambiguousDiagnosticReply(_raw?: string): string {
   return "Do you want me to check AskGogo itself: WhatsApp, connected accounts, memory, watchers, approvals, voice calls and reminders? Reply *run self-diagnostic*. If you meant something else, tell me what to check. Nothing was changed."
@@ -112,6 +133,22 @@ export function formatDiagnostic(checks: DiagnosticCheck[], now: Date, tz = 'Asi
 }
 
 const clipLine = (v: unknown, n: number) => { const t = String(v ?? '').replace(/\s+/g, ' ').replace(/[*_~`]/g, '').trim().replace(/\b\d{9,20}\b/g, d => '••••' + d.slice(-4)); return t.length > n ? t.slice(0, n - 1).replace(/[\s,;:—-]+$/, '') + '…' : t }
+
+/** The check-in reply: the headline and what needs a look. Alerts, open items and the quiet list are left out. */
+export function formatDiagnosticBrief(checks: DiagnosticCheck[], _now: Date, _tz = 'Asia/Kolkata'): string {
+  const ok = checks.filter(c => c.status === 'operational')
+  const quiet = checks.filter(c => c.status === 'unverified' && c.quiet)
+  const look = checks.filter(c => c.status !== 'operational' && !(c.status === 'unverified' && c.quiet))
+  const worst: DiagnosticStatus = look.some(c => c.status === 'blocked') ? 'blocked' : 'degraded'
+  const head = look.length && ok.length
+    ? `${ICON[worst]} Mostly. ${ok.length} OK, ${look.length} need${look.length === 1 ? 's' : ''} a look:`
+    : look.length ? `${ICON[worst]} Not fully. ${look.length} check${look.length === 1 ? '' : 's'} need${look.length === 1 ? 's' : ''} a look:`
+    : ok.length ? `${ICON.operational} Yes, all good. ${ok.length} check${ok.length === 1 ? '' : 's'} OK, checked just now.`
+    : 'Nothing failed, and there was nothing recent to test.'
+  const lines = look.map(c => `${ICON[c.status]} *${c.label}*: ${WORD[c.status]}. ${c.evidence}`)
+  return [head, ...lines, quiet.length && ok.length ? `Nothing recent to test: ${quiet.map(c => c.label).join(', ')}.` : '', '', 'Reply *self-diagnostic* for the full check. Nothing was sent or changed.']
+    .filter((l, i) => l !== '' || i > 0).join('\n').replace(/\n{3,}/g, '\n\n')
+}
 
 /** 21 Nov (owner, after comparing with Instinct): one line first, only what needs a look, then what came in. */
 export function formatDiagnosticSummary(checks: DiagnosticCheck[], now: Date, tz = 'Asia/Kolkata', queued: QueuedItem[] = []): string {
@@ -173,6 +210,8 @@ export type DiagnosticDeps = {
   timeoutMs?: number
   /** Every check with its evidence, and no queued section. */
   full?: boolean
+  /** A check-in ("are you ok?"): headline and problems only. */
+  brief?: boolean
 }
 
 const HOUR = 3600_000, DAY = 24 * HOUR
@@ -358,6 +397,7 @@ export async function runSystemDiagnostic(actor: AgentActor, deps: DiagnosticDep
   ])
   const tz = actor.timezone || 'Asia/Kolkata'
   if (deps.full) return { text: formatDiagnostic(checks, now, tz), checks }
+  if (deps.brief) return { text: formatDiagnosticBrief(checks, now, tz), checks }
   const queued = await withTimeout(queuedForYou(db, owner, now), ms, [] as QueuedItem[])
   return { text: formatDiagnosticSummary(checks, now, tz, queued), checks }
 }
@@ -369,7 +409,7 @@ export async function trySystemDiagnostic(actor: AgentActor, text: string, deps:
   const base = { handledBy: 'system-diagnostic', status: 'completed' as const, readOnly: true, mutated: false }
   if (intent === 'ambiguous') return { ...base, handledBy: 'system-diagnostic-clarify', text: ambiguousDiagnosticReply(text), checks: [] as DiagnosticCheck[] }
   try {
-    const out = await runSystemDiagnostic(actor, { ...deps, full: deps.full ?? wantsDiagnosticDetails(text) })
+    const out = await runSystemDiagnostic(actor, { ...deps, full: deps.full ?? wantsDiagnosticDetails(text), brief: deps.brief ?? isCasualCheckIn(text) })
     console.log('SYSTEM_DIAGNOSTIC:', JSON.stringify(Object.fromEntries(out.checks.map(c => [c.key, c.status]))))
     return { ...base, text: out.text, checks: out.checks }
   } catch (err: any) {

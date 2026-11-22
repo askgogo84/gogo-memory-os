@@ -336,3 +336,50 @@ console.log('✓ review fixes: stuck calls and failed reads are never quiet, hou
   assert.match(out.text, /Review service billing notice — payment failed/, 'different items stay')
 }
 console.log('✓ repeated alerts and open items are merged into one line')
+
+// ---- 22 Nov: Hinglish asks, and "are you ok?" as a check-in ------------------------------------------------------
+{
+  const HI = ['Tum theek se kaam kar rahe ho?', 'kya tum kaam kar rahe ho', 'Gogo chal raha hai?', 'aap theek se chal rahe ho?',
+    'self diagnostic chalao', 'system check karo', 'Gogo, please system check kar do', 'khud ko check karo', 'apne systems check karo',
+    'kya sab systems theek hai?', 'tumhare services chal rahe hain?', 'tum theek ho?', 'Gogo theek hai?', 'aap ok ho?']
+  for (const t of HI) { assert.equal(d.classifyDiagnosticAsk(t), 'diagnostic', t); assert.ok(d.DIAGNOSTIC_GATE.test(t), 'gate: ' + t) }
+  // Not about AskGogo: life, someone else, or an action with a time.
+  const HI_NOT = ['sab theek hai?', 'sab theek hai', 'Divya theek hai?', 'mummy theek hai kya', 'kal system check karo', 'kal 10 baje system check yaad dilana',
+    'car ka system check karo', 'Nithin ko call karo', 'tum theek ho? mujhe Divya ke baare mein batao', 'kya tum kal free ho?']
+  for (const t of HI_NOT) assert.equal(d.classifyDiagnosticAsk(t), null, t)
+  for (const t of ['Are you ok?', 'are you okay', 'Gogo, are you alright?', 'tum theek ho?', 'Gogo theek hai?']) assert.equal(d.isCasualCheckIn(t), true, t)
+  for (const t of ['Are you working properly?', 'Run a self-diagnostic', 'system check karo', 'tum theek se kaam kar rahe ho?']) assert.equal(d.isCasualCheckIn(t), false, t)
+  for (const t of ['is everything ok?', 'are you ok with this plan?', 'are you free tomorrow?']) assert.equal(d.classifyDiagnosticAsk(t), null, t)
+  // Review (PR #1568): "tum chal rahe ho?" is "are you coming?"; "tum thick ho" is not a check-in; a bold reply word still works.
+  for (const t of ['tum chal rahe ho?', 'kya tum chal rahe ho', 'aap chal rahe ho na', 'tum thick ho', 'tum theek ho? kal milte hain']) assert.equal(d.classifyDiagnosticAsk(t), null, t)
+  for (const t of ['*self-diagnostic*', '*diagnostic details*', 'Gogo chal raha hai na?']) assert.equal(d.classifyDiagnosticAsk(t), 'diagnostic', t)
+  assert.equal(d.wantsDiagnosticDetails('*diagnostic details*'), true)
+
+  // The check-in reply: the headline, what needs a look, no alerts or open items, no queue read, no writes.
+  const withQueue: Tables = { ...healthy,
+    agent_activity: [{ telegram_id: OWNER, event_type: 'watcher_triggered', created_at: ago(5), message: 'Gold alert: 24K at ₹12,557/g' }],
+    agent_open_loops: [{ telegram_id: OWNER, status: 'active', kind: 'followup', priority: 0.9, title: 'Swiggy Builders: no reply', due_at: null }],
+  }
+  const { db, writes } = fakeDb(withQueue)
+  const ok = await d.trySystemDiagnostic(actor, 'Are you ok?', { db, now: NOW, env, ...probes })
+  assert.equal(ok.readOnly, true); assert.equal(ok.mutated, false); assert.equal(ok.checks.length, 8)
+  assert.match(ok.text, /^✅ Yes, all good\. 8 checks OK, checked just now\./)
+  assert.doesNotMatch(ok.text, /Gold alert|Swiggy Builders|In the last 3 days|Still open/)
+  assert.match(ok.text, /Reply \*self-diagnostic\* for the full check\. Nothing was sent or changed\.$/)
+  assert.deepEqual(writes, [])
+  const hi = await d.trySystemDiagnostic(actor, 'tum theek ho?', { db, now: NOW, env, ...probes })
+  assert.match(hi.text, /^✅ Yes, all good\./)
+  const long = await d.trySystemDiagnostic(actor, 'system check karo', { db, now: NOW, env, ...probes })
+  assert.match(long.text, /^\*AskGogo self-diagnostic\*/); assert.match(long.text, /Gold alert/, 'a Hinglish self-check gets the summary')
+  // A check-in with a problem names it.
+  const sick = d.formatDiagnosticBrief([
+    { key: 'm', label: 'Memory persistence', status: 'operational', evidence: 'x', at: null },
+    { key: 'g', label: 'Gmail', status: 'blocked', evidence: 'Google refused the saved sign-in. Reconnect Gmail.', at: null },
+    { key: 'w', label: 'Background watchers', status: 'unverified', evidence: 'x', at: null, quiet: true },
+  ], NOW)
+  assert.match(sick, /^⛔ Mostly\. 1 OK, 1 needs a look:\n.*\*Gmail\*: .*Reconnect Gmail\./)
+  assert.match(sick, /Nothing recent to test: Background watchers\./)
+  const down = d.formatDiagnosticBrief([{ key: 'g', label: 'Gmail', status: 'blocked', evidence: 'x', at: null }], NOW)
+  assert.match(down, /^⛔ Not fully\. 1 check needs a look:/); assert.doesNotMatch(down, /Mostly|0 OK/)
+}
+console.log('✓ Hinglish self-checks are recognised; "are you ok?" gets a short check-in reply')
