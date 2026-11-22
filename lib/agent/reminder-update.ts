@@ -56,7 +56,7 @@ export async function executeApprovedReminderUpdate({actor,runId}:{actor:AgentAc
   const status=verified?'completed':unchanged?'failed':'outcome_unknown',now=new Date().toISOString()
   await supabaseAdmin.from('agent_runs').update({status,updated_at:now,completed_at:verified||unchanged?now:null}).eq('id',runId).eq('telegram_id',tg)
   await supabaseAdmin.from('agent_approvals').update({status:unchanged?'failed':'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
-  await recordDecisionLearning({actor,text:run.metadata_json.learning_text,domain:'reminders',handler:'reminder-update',decisionId:runId,outcome:verified?'verified_success':unchanged?'failed':'unknown',verified,objectKind:'reminder',objectRef:draft.reminderId}).catch(()=>{})
+  await recordDecisionLearning({actor,text:run.metadata_json.learning_text,domain:'reminders',handler:'reminder-update',decisionId:runId,outcome:verified?'verified_success':unchanged?'failed':'unknown',verified,objectKind:'reminder',objectRef:draft.reminderId,readEvidence:verified?{verified:true,source:'canonical_reminders',kind:'canonical_state',objectKind:'reminder',objectRef:draft.reminderId}:undefined}).catch(()=>{})
   if(unchanged)return reply('The reminder changed after the preview. Nothing was updated. Ask again to review and approve its current time.','failed',runId)
   if(!verified)return reply('I could not verify the reminder update. Its outcome is unknown and it will not be retried automatically.','outcome_unknown',runId)
   await rememberTypedObjects(actor.legacyTelegramId,'reminders',[{id:draft.reminderId,title:draft.title}]).catch(()=>{})
