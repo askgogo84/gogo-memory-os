@@ -11,8 +11,15 @@ export function isMailAlertCommand(text: string) {
 
 export async function tryMailAlertCommand(telegramId: string | number, text: string): Promise<string | null> {
   if (!isMailAlertCommand(text)) return null
-  const owner = Number(telegramId)
-  if (!Number.isSafeInteger(owner)) return null
+  // agent_watchers.telegram_id is signed-BIGINT owner text. Never round it through JS Number.
+  // A number from a legacy caller is accepted only if already exactly representable.
+  const owner = typeof telegramId === 'string' ? telegramId
+    : typeof telegramId === 'number' && Number.isSafeInteger(telegramId) ? String(telegramId) : ''
+  if (!/^(?:0|[1-9]\d*|-[1-9]\d*)$/.test(owner)) return null
+  try {
+    const exact = BigInt(owner)
+    if (exact < -9223372036854775808n || exact > 9223372036854775807n) return null
+  } catch { return null }
   const { data: watcher } = await supabaseAdmin.from('agent_watchers').select('id,condition_json').eq('telegram_id', owner).eq('type', 'email_triage').eq('active', true)
     .order('created_at', { ascending: false }).limit(1).maybeSingle()
   const rules = normalizeRules((watcher?.condition_json as any)?.mailAlerts)
