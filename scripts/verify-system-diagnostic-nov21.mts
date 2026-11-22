@@ -383,3 +383,14 @@ console.log('✓ repeated alerts and open items are merged into one line')
   assert.match(down, /^⛔ Not fully\. 1 check needs a look:/); assert.doesNotMatch(down, /Mostly|0 OK/)
 }
 console.log('✓ Hinglish self-checks are recognised; "are you ok?" gets a short check-in reply')
+
+// ---- 22 Nov live: "sab theek hai?" was rewritten by the brain to a diagnostic ask and general chat wrote its own report.
+{
+  for (const t of ['Run a self-diagnostic and tell me if everything is okay.', 'Run a self-diagnostic and let me know whether everything is fine', 'Run a system check, then tell me if everything is working properly', 'Run a self-diagnostic']) assert.equal(d.isDiagnosticRewrite(t), true, t)
+  for (const t of ['Remind me to run a system check and tell me if everything is ok', 'Check if everything is okay with Divya', 'Tell me if everything is okay', 'Run a health check on my car and tell me if everything is ok']) assert.equal(d.isDiagnosticRewrite(t), false, t)
+  const brain = readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8')
+  const iDiag = brain.indexOf('isDiagnosticRewrite(d.instruction)'), iPass = brain.indexOf("if (d.kind === 'handle' && d.rewritten) return { text: d.instruction }")
+  assert.ok(iDiag > 0 && iDiag < iPass, 'a diagnostic rewrite gets the real report before the rewrite is handed on')
+  assert.match(brain.slice(iDiag, iPass), /trySystemDiagnostic\(/)
+}
+console.log('✓ a brain rewrite that asks for a self-diagnostic gets the real read-only report, never a written one')

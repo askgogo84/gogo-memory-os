@@ -90,6 +90,13 @@ export function wantsDiagnosticDetails(raw: string): boolean {
   const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
   return DETAILS.test(t)
 }
+/** A brain rewrite ("Run a self-diagnostic and tell me if everything is okay."): the diagnostic ask plus a
+ *  "tell me whether it is all fine" tail. Only for rewrites; a user's own message still has to match whole. */
+const REPORT_TAIL = /\s*(?:,|and)\s*(?:then\s+)?(?:tell|let)\s+me\s+(?:know\s+)?(?:if|whether)\s+(?:everything|all|it|things)\s+(?:is|are|'s)?\s*(?:ok|okay|fine|working|healthy|good|alright)(?:\s+(?:or\s+not|properly|correctly|now))*\s*[?.!]*$/i
+export function isDiagnosticRewrite(instruction: string): boolean {
+  const t = String(instruction || '').replace(/\s+/g, ' ').trim()
+  return classifyDiagnosticAsk(t) === 'diagnostic' || (REPORT_TAIL.test(t) && classifyDiagnosticAsk(t.replace(REPORT_TAIL, '')) === 'diagnostic')
+}
 /** "Are you ok?", "tum theek ho?": a check-in. Same checks, a short reply (no alerts or open items). */
 export function isCasualCheckIn(raw: string): boolean {
   const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
