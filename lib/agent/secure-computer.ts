@@ -237,9 +237,9 @@ async function isActiveRegistrationPage(page){
   try{path=new URL(page.url()).pathname}catch{}
   if(/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i.test(path))return true;
   const title=String(await page.title().catch(()=>'')||'').replace(/\s+/g,' ').trim();
-  const passwordVisible=(await visibleFields(page,'input[type="password"]')).length>0;
   const titleRegistration=/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title);
-  if(!passwordVisible)return false;
+  // A two-step signup may offer only an email at first. Never click Next first.
+  if(titleRegistration)return true;
   const active=await page.evaluate(()=>{
     const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
     const leading=clean(document.body?.innerText).slice(0,260);
@@ -251,7 +251,7 @@ async function isActiveRegistrationPage(page){
     });
     return prompt||registerSubmit||registerAction;
   }).catch(()=>true);
-  return titleRegistration||active;
+  return active;
 }
 async function model(page){
   return await page.evaluate(() => {
