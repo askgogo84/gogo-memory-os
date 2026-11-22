@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict'
 import {proposeGeneralCallPhoneFromPlaces,uniqueBusinessPlace,verifiedIndiaPhone} from '../lib/agent/general-call-places-phone'
 const pid='ChIJ2xUGxbLJ5zsRm0GPvA1yvQ8',name='Naturals Salon',locality='Rajajinagar, Bengaluru'
-const good={id:pid,displayName:{text:name},formattedAddress:'12 1st Block, Rajajinagar, Bengaluru, Karnataka 560010, India',businessStatus:'OPERATIONAL'}
+const countryIN=[{types:['country','political'],longText:'India',shortText:'IN'}]
+const countryNP=[{types:['country','political'],longText:'Nepal',shortText:'NP'}]
+// regionCode=IN can omit the country from formattedAddress; country must come from addressComponents.
+const good={id:pid,displayName:{text:name},formattedAddress:'12 1st Block, Rajajinagar, Bengaluru, Karnataka 560010',addressComponents:countryIN,businessStatus:'OPERATIONAL'}
 const details={...good,internationalPhoneNumber:'+91 80 2345 6789'}
 let fetches:any[]=[]
 const fakeFetch=(search:any,detail:any)=>{
@@ -13,13 +16,21 @@ const fakeFetch=(search:any,detail:any)=>{
   }
 }
 const active={GOGO_GENERAL_CALL_PLACES_LOOKUP:'1',GOOGLE_MAPS_API_KEY:'synthetic-only-key'}
-assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:{},fetcher:async()=>{throw Error('must not call')}}),null)
-assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:{GOGO_GENERAL_CALL_PLACES_LOOKUP:'1'},fetcher:async()=>{throw Error('no key')}}),null)
+let forbiddenRequests=0
+const forbidden=async()=>{forbiddenRequests++;return {ok:true,json:async()=>({places:[good]})}}
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:{},fetcher:forbidden}),null)
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:{GOGO_GENERAL_CALL_PLACES_LOOKUP:'1'},fetcher:forbidden}),null)
+assert.equal(forbiddenRequests,0,'disabled or missing key MUST NOT contact a billable provider')
 assert.deepEqual(fetches,[])
 assert.equal(uniqueBusinessPlace([good],name,locality)?.id,pid)
 assert.equal(uniqueBusinessPlace([{...good,displayName:{text:'Naturals Salon Koramangala'}}],name,locality),null)
 assert.equal(uniqueBusinessPlace([{...good,formattedAddress:'Koramangala Bengaluru India'}],name,locality),null)
-assert.equal(uniqueBusinessPlace([{...good,formattedAddress:'Rajajinagar Bengaluru, Nepal'}],name,locality),null)
+assert.equal(uniqueBusinessPlace([{...good,addressComponents:countryNP}],name,locality),null)
+assert.equal(uniqueBusinessPlace([{...good,addressComponents:[]}],name,locality),null)
+assert.equal(uniqueBusinessPlace([{...good,formattedAddress:'Rajajinagar Bengaluru, Nepal',addressComponents:countryNP}],name,locality),null)
+assert.equal(uniqueBusinessPlace([{...good,formattedAddress:'Phase 2, Bengaluru',addressComponents:countryIN}],name,'Phase 1, Bengaluru'),null)
+assert.equal(uniqueBusinessPlace([{...good,formattedAddress:'Phase 1, Bengaluru',addressComponents:countryIN}],name,'Phase 1, Bengaluru')?.id,pid)
+assert.equal(uniqueBusinessPlace([good],name,'---'),null,'empty locality tokens must never match')
 assert.equal(uniqueBusinessPlace([{...good,businessStatus:'CLOSED_PERMANENTLY'}],name,locality),null)
 assert.equal(uniqueBusinessPlace([good,good],name,locality),null)
 assert.equal(verifiedIndiaPhone('+91 80 2345 6789'),'+918023456789')
@@ -35,8 +46,8 @@ assert.equal(fetches.length,2)
 assert.equal(fetches[0].url,'https://places.googleapis.com/v1/places:searchText')
 assert.equal(fetches[0].init.method,'POST')
 assert.equal(fetches[0].init.headers['X-Goog-Api-Key'],active.GOOGLE_MAPS_API_KEY)
-assert.equal(fetches[0].init.headers['X-Goog-FieldMask'],'places.id,places.displayName,places.formattedAddress,places.businessStatus,nextPageToken')
-assert.equal(fetches[1].init.headers['X-Goog-FieldMask'],'id,displayName,formattedAddress,businessStatus,internationalPhoneNumber')
+assert.equal(fetches[0].init.headers['X-Goog-FieldMask'],'places.id,places.displayName,places.formattedAddress,places.addressComponents,places.businessStatus,nextPageToken')
+assert.equal(fetches[1].init.headers['X-Goog-FieldMask'],'id,displayName,formattedAddress,addressComponents,businessStatus,internationalPhoneNumber')
 assert.equal(fetches[1].url,'https://places.googleapis.com/v1/places/'+pid)
 const query=JSON.parse(fetches[0].init.body)
 assert.deepEqual(query,{textQuery:name+', '+locality+', India',pageSize:5,regionCode:'IN',languageCode:'en'})
@@ -45,7 +56,7 @@ for(const [why,search,detail,expectedCalls] of [
  ['multiple identical listings',{places:[good,{...good,id:'ChIJ2xUGxbLJ5zsRm0GPvA1yvQ9'}]},details,1],
  ['more pages',{places:[good],nextPageToken:'page-2'},details,1],
  ['wrong venue',{places:[{...good,displayName:{text:'Other Salon'}}]},details,1],
- ['no India location',{places:[{...good,formattedAddress:'Rajajinagar Bengaluru, US'}]},details,1],
+ ['foreign country code',{places:[{...good,addressComponents:countryNP}]},details,1],
  ['replaced details ID',{places:[good]},{...details,id:'ChIJ2xUGxbLJ5zsRm0GPvA1yvQ9'},2],
  ['replaced details name',{places:[good]},{...details,displayName:{text:'Another Salon'}},2],
  ['non-Indian details number',{places:[good]},{...details,internationalPhoneNumber:'+44 2071234567'},2],
@@ -54,7 +65,9 @@ for(const [why,search,detail,expectedCalls] of [
   assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:active,fetcher:fakeFetch(search,detail)}),null,why)
   assert.equal(fetches.length,expectedCalls,why+' stopped safely')
 }
-assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:'call Naturals Salon tomorrow for my health issue',locality,env:active,fetcher:async()=>{throw Error('No call instructions to Google')}}),null)
-assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'08012345678',env:active,fetcher:async()=>{throw Error('No phone queries')}}),null)
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:'call Naturals Salon tomorrow for my health issue',locality,env:active,fetcher:forbidden}),null)
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'08012345678',env:active,fetcher:forbidden}),null)
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'---',env:active,fetcher:forbidden}),null)
+assert.equal(forbiddenRequests,0,'private tasks, phone numbers, and meaningless localities never reach Google')
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:active,fetcher:async()=>{throw Error('provider unavailable')}}),null)
 console.log('PASS: opt-in-only Google Places candidate; exact name/area; stable place ID; no ambiguous, foreign, closed or mismatched phones; NEVER dials, orders, or handles secrets')
