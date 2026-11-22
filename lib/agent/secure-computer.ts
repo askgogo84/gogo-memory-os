@@ -850,7 +850,7 @@ async function model(page){
       text:((openDialog?'[Open dialog] '+String(openDialog.innerText||'').trim()+'\n\n':'')+String(document.body?.innerText||'')).replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       links:Array.from(document.querySelectorAll('a[href]')).filter(actionable).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).sort((a,b)=>relevance(b.text)-relevance(a.text)).slice(0,100),
       controls,
-      forms:[...Array.from(document.forms).filter(visible),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
+      forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(actionable).slice(0,60).map(inputs)
       }))
