@@ -320,12 +320,22 @@ console.log('PASS: ordinary images keep existing note, association and document 
 {
   const now=new Date('2026-11-22T10:10:00Z')
   const live=(sep:string,sp:string,when='Monday, 23 Nov')=>`Askgogo<>Fund Raise\n${when}${sep}5:00${sp}–${sp}6:00${sp}pm\nGoogle Meet joining info\nVideo call link: https://meet.google.com/ycz-gire-akz`
-  for(const v of [live(' · ',' '),live('⋅',' '),live('⋅',' '),live(' • ',' '),live('⋅',' ','Monday, November 23'),live('⋅',' ','Monday, November 23, 2026')]){
+  for(const v of [live(' · ',' '),live('⋅',' '),live('⋅','\u202f'),live(' • ',' '),live('⋅',' ','Monday, November 23'),live('⋅',' ','Monday, November 23, 2026')]){
     const m=worker().parseSharedMeeting(v,'Asia/Kolkata',now)
     assert.ok(m,v)
     assert.equal(m.title,'Askgogo<>Fund Raise'); assert.equal(m.startAt,'2026-11-23T11:30:00.000Z'); assert.equal(m.endAt,'2026-11-23T12:30:00.000Z'); assert.equal(m.remindAt,'2026-11-23T11:20:00.000Z'); assert.equal(m.url,'https://meet.google.com/ycz-gire-akz')
   }
   assert.equal(worker().parseSharedMeeting(live('⋅',' ','Tuesday, 23 Nov'),'Asia/Kolkata',now),null,'a wrong weekday is still refused')
   assert.equal(worker().parseSharedMeeting(live('⋅',' ')+'\nAlso: Tuesday, 24 Nov⋅5:00 – 6:00 pm','Asia/Kolkata',now),null,'two different times are still refused')
+  // Review (PR #1570): another zone named in the invite is never read as the owner's time; titles stay as written.
+  const L='https://meet.google.com/ycz-gire-akz'
+  assert.equal(worker().parseSharedMeeting(`X\nMonday November 23, 2026 ⋅ 5pm – 6pm (Pacific Time - Los Angeles)\n${L}`,'Asia/Kolkata',now),null)
+  assert.equal(worker().parseSharedMeeting(`X\nMonday, 23 Nov⋅5:00 – 6:00 pm\nTime zone: America/New_York\n${L}`,'Asia/Kolkata',now),null)
+  assert.equal(worker().parseSharedMeeting(`X\nMonday, 23 Nov⋅5:00 – 6:00 pm (India Standard Time - Kolkata)\n${L}`,'Asia/Kolkata',now).startAt,'2026-11-23T11:30:00.000Z')
+  assert.equal(worker().parseSharedMeeting(`X\nMonday, 23 Nov⋅5:00 – 6:00 pm (Pacific Time - Los Angeles)\n${L}`,'America/Los_Angeles',now).startAt,'2026-11-24T01:00:00.000Z')
+  assert.equal(worker().parseSharedMeeting(`Team • Sync\nMonday, 23 Nov⋅5:00 – 6:00 pm\n${L}`,'Asia/Kolkata',now).title,'Team • Sync')
+  assert.equal(worker().parseSharedMeeting(`Sunday, May 3 retro prep\nMonday, 23 Nov⋅5:00 – 6:00 pm\n${L}`,'Asia/Kolkata',now).title,'Sunday, May 3 retro prep')
+  const src=fs.readFileSync(new URL('../lib/agent/meeting-share-followup.ts',import.meta.url),'utf8')
+  assert.match(src,/\(\?:Jan\|Feb\|Mar\|Apr\|May\|Jun\|Jul\|Aug\|Sep\|Oct\|Nov\|Dec\)\[a-z\]\*\\\.\?\\s\+\\d\{1,2\}/,'a month-first invite that fails to parse is still held back from generic reminder inference')
 }
 console.log('PASS: Google Calendar "⋅" and month-first dates are read')
