@@ -5,7 +5,7 @@ import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 import { obscuraPilotEligible, type ObscuraRequest } from './obscura-public-read'
 import { tryObscuraPublicRead } from './obscura-pilot-runtime'
 import {ensurePersistentCommerceBrowser, COMMERCE_CDP_URL} from './persistent-commerce-browser'
-import { isLoginDestination, isLoginUrl, isLoginFormPage, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
+import { isLoginDestination, isLoginUrl, isBrowserLoginShell, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
 import { blockedHostsLogLine } from './browser-blocked-hosts'
 import { completeAgentPlanPrompt, completeVisionPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
@@ -1696,7 +1696,7 @@ function sameSite(a:string,b:string){
 }
 
 function pageLooksLikeLogin(page:any){
-  return isLoginFormPage(page)
+  return isBrowserLoginShell(page)
 }
 
 async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;secret:string;keepAlive?:boolean;managedEnv?:Record<string,string>}){
@@ -2087,6 +2087,9 @@ function productLinkNeedsDetail(objective:string,raw:unknown):boolean{
   }catch{return true}
 }
 export async function assessReadOutcome(objective:string,page:any,diagnose:(event:BrowserReadDiagnostic)=>void=()=>{}):Promise<string|null>{
+  // Login pages, signed-out Instagram shells and MFA prompts are not research evidence.
+  // Stop before any title-only or model-verbatim pathway can label footer copy complete.
+  if(isBrowserLoginShell(page)||detectHumanAuthGate(page).required){diagnose({phase:'assessment',reason:'source_unusable'});return null}
   if(productLinkNeedsDetail(objective,page.url)){diagnose({phase:'assessment',reason:'needs_product_detail'});return null}
   if(/\b(?:link|url)\b/i.test(objective)&&!browserSourceUrl(page.url)){diagnose({phase:'assessment',reason:'source_unusable'});return null}
   // Google keeps selected airports, date, cabin and passenger count in ARIA
@@ -2280,7 +2283,7 @@ export async function tryObscuraBrowserRead(
   if (!candidate) { report(failure); return null }
   const page = {url:candidate.url,title:candidate.title,text:candidate.text,
     forms:candidate.forms,links:[],controls:[],actions:[]}
-  if (detectHumanAuthGate(page).required || detectProviderAccessBlock(page) || needsBrowserDeliveryLocation(page)) { report('gated'); return null }
+  if (isBrowserLoginShell(page) || detectHumanAuthGate(page).required || detectProviderAccessBlock(page) || needsBrowserDeliveryLocation(page)) { report('gated'); return null }
   // The assessor must also leave the trusted fallback its 90s.
   const verified = await withinReadBudget(readDeadline-90_000,()=>assessReadOutcome(params.objective,page)).catch(() => null)
   if (!verified) { report('unverified'); return null }
