@@ -62,7 +62,8 @@ export function isBrowserLoginShell(page:{
   // The active access prompt must appear at the beginning of a short signed-out page.
   // Quoted sign-in instructions in public articles or FAQs are not current auth gates.
   const opening=leading.replace(/^(?:instagram|meta)\s+/i,'')
-  const activeGate=/^(?:log\s*in|sign\s*in)\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
+  // Sites may use a combined login/signup call-to-action instead of a standalone login button.
+  const activeGate=/^(?:please\s+)?(?:log\s*in|sign\s*in)(?:\s+or\s+sign\s*up)?\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
   if(body.length<900&&activeGate.test(opening))return true
 
   // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
