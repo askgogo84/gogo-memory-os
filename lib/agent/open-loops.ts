@@ -525,11 +525,12 @@ export function isActionableGmailMessage(message:{subject?:unknown;snippet?:unkn
  */
 export function isGmailThreadCompletionEvidence(message:any):boolean{
   if(isAutomatedGmailMessage(message))return false
-  const body=clean(message?.snippet,1100)
+  const body=clean(message?.snippet,1100).replace(/[’‘]/g,"'")
   if(!body||isUncertainOrNegatedCompletion(body))return false
   // "We received your email" and "Thanks for your message" are acknowledgments,
   // not delivery or completion of the owner's open item.
-  return /\b(?:i|we|our team)\s+(?:(?:have|has|already)\s+){0,2}(?:sent|shared|resent|replied|responded|confirmed|approved|delivered|completed|finished|resolved|submitted|signed)\b/i.test(body)
+  // Straight or curly "I've"/"We've" are equivalent to "I have"/"We have".
+  return /\b(?:i(?:'ve)?|we(?:'ve)?|our team)\s+(?:(?:have|has|already)\s+){0,2}(?:sent|shared|resent|replied|responded|confirmed|approved|delivered|completed|finished|resolved|submitted|signed)\b/i.test(body)
 }
 
 async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string,keepFingerprint:string|null){
