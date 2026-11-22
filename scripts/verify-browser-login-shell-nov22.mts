@@ -215,7 +215,7 @@ assert.match(vaultRefusal,/if\(vaultFill\.registrationRefused===true\)\{/,
 assert.match(vaultRefusal,/blockReason:'human_auth_required',authReason:'registration_not_authorized'/,
   'worker refusal must hand off to a human instead of reporting login success')
 
-assert.match(source,/if\(!params\.publicOnly && !registrationBarrier && !publicGuideRead && !vaultAttempted && params\.accountCreation!==true/,
+assert.match(source,/if\(!params\.publicOnly && !vaultAttempted && params\.accountCreation!==true && !registrationBarrier && !publicGuideRead/,
   'credential lookup must be unreachable from registration and public guide reads')
 assert.match(source,/const publicGuideRead=params\.mode==='read'&&!loginish/,
   'public guides/newsletter forms may not trigger a stored Vault login')
