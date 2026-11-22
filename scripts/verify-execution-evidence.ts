@@ -30,6 +30,14 @@ async function main() {
       assert.equal(written.metadata_json.outcome,'unknown',handler+' must reject boolean-only proof')
       assert.equal(written.metadata_json.verified,false)
     }
+    // null is not a verification success: read-only/non-execution handlers must not
+    // learn a verified win from a bare boolean without receipt/readback evidence.
+    for(const handler of ['calendar-named-read','read-only-schedule','autonomy-status','memory']){
+      await recordDecisionLearning({actor,text:'fixture',domain:'other',handler,objectRef:'object',outcome:'verified_success',verified:true})
+      assert.equal(written.metadata_json.outcome,'unknown',handler+' must reject a boolean-only completion')
+      assert.equal(written.metadata_json.verified,false)
+      assert.equal(written.metadata_json.verification_source,null)
+    }
     const proof={source:'gmail' as const,kind:'provider_readback' as const,objectRef:'thread',providerRef:'message',verified:true}
     assert.equal(hasExecutionEvidence('gmail-send','other',proof),false)
     assert.equal(hasExecutionEvidence('calendar-create','thread',proof),false)
