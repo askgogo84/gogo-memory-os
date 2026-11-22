@@ -1137,6 +1137,20 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // an ordinary "call mom and ask about lunch" keeps the brain and the reminder path (review, PR #1534).
     const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
       || (/^\s*(?:[a-z,!']+\s+){0,6}(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m => m.isCallRequestFor(String(resolvedUser.telegramId), text), () => false))
+    // An owner-confirmed phone reply is not a dial instruction; it produces only an approval-bound call plan.
+    // Forwards, friend flows and approval messages are never consumed as phone-number replies.
+    if(!forwardedMessage&&!preserveFriendFlow&&!approvalIntent(text)&&/^\+?[\d\s().-]{9,24}$/.test(text)){
+      const numberMod:any=await import('@/lib/agent/voice-call').catch(()=>null)
+      if(numberMod?.isGeneralCallNumberReply&&await numberMod.isGeneralCallNumberReply(String(resolvedUser.telegramId),text)){
+        const plan=await numberMod.tryVoiceCall({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||from),name:resolvedUser.name||profileName||'Gogo'},text,surface:'whatsapp'}).catch(()=>null)
+        if(plan){
+          await saveConversation(resolvedUser.telegramId,'user',text)
+          await saveConversation(resolvedUser.telegramId,'assistant',plan.text)
+          await sendWhatsAppMessage(from,plan.text)
+          return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+        }
+      }
+    }
     // 21 Nov: "run a self-diagnostic" / "health check" gets a read-only report before goal intake, the brain or the
     // planner can turn it into a plan or a task (lib/agent/system-diagnostic). Review (PR #1559): never for a forwarded
     // message, a friend-reminder flow or an approval reply, which keep their own handlers. Imported only on a likely ask.

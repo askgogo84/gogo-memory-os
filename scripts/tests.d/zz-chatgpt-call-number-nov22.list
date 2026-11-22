@@ -1,0 +1,2 @@
+# 22 Nov owner-verified general-call phone confirmation (synthetic, provider-free)
+npx tsx scripts/verify-general-call-number-followup-nov22.mts
