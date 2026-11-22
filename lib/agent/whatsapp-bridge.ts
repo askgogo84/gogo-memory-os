@@ -569,7 +569,7 @@ async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHan
   const handler=String(result.handledBy||fallbackHandler)
   const verified=verifiedReadEvidence(handler,result.status,result.verification)
   const outcome=verified?'verified_success':observedOutcome(result.status)
-  await recordDecisionLearning({actor,text,decisionId:learningDecisionId(messageId,result.runId),domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified,objectKind:result.verification?.objectKind||null,objectRef:result.verification?.objectRef||result.runId||null}).catch(()=>{})
+  await recordDecisionLearning({actor,text,decisionId:learningDecisionId(messageId,result.runId),domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified,objectKind:result.verification?.objectKind||null,objectRef:result.verification?.objectRef||result.runId||null,readEvidence:result.verification}).catch(()=>{})
   return {...result,handledBy:handler}
 }
 

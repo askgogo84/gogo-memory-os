@@ -53,7 +53,8 @@ export async function recordShadowRouterOutcome(params:{
   const verified=verifiedReadEvidence(params.actualHandler,params.status,params.verification)
   const outcome=verified?'verified_success':params.actualHandler==='jev-clarification-guard'?'clarified':observedOutcome(params.status)
   await recordDecisionLearning({actor,text:m.user_text,domain,handler:params.actualHandler,decisionId:learningDecisionId(eventId,params.runId),
-    objectKind:learningDecisionId(null,params.runId)?'agent_run':null,objectRef:learningDecisionId(null,params.runId),
+    objectKind:(params.verification as {objectKind?:string|null}|null)?.objectKind||(learningDecisionId(null,params.runId)?'agent_run':null),
+    objectRef:(params.verification as {objectRef?:string|null}|null)?.objectRef||learningDecisionId(null,params.runId),readEvidence:params.verification,
     confidence:m.learned_routing?.useLearned?m.learned_routing.confidence:m.jev_shadow?.intent?.confidence,
     outcome,verified}).catch(()=>{})
   const target=m.correction_target

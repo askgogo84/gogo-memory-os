@@ -391,7 +391,9 @@ async function main() {
   }
   evidenceOwner='2';await learning.recordDecisionLearning({...learn,deliveryRef:{kind:'notification',id:'fixture'}});assert.equal(learningRow.metadata_json.verified,false)
   evidenceOwner='1';evidenceError=true;await learning.recordDecisionLearning({...learn,deliveryRef:{kind:'notification',id:'fixture'}});assert.equal(learningRow.metadata_json.verified,false)
-  await learning.recordDecisionLearning({...learn,handler:'reminder-update'});assert.equal(learningRow.metadata_json.verified,true,'canonical CRUD remains distinct')
+  await learning.recordDecisionLearning({...learn,handler:'reminder-update'});assert.equal(learningRow.metadata_json.verified,false,'canonical CRUD requires exact state, not a bare boolean')
+   await learning.recordDecisionLearning({...learn,handler:'reminder-update',objectKind:'reminder',objectRef:'fixture',readEvidence:{verified:true,source:'canonical_reminders',kind:'canonical_state',objectKind:'reminder',objectRef:'fixture'}})
+   assert.equal(learningRow.metadata_json.verified,true,'verified exact canonical DB state remains valid learning evidence')
   const before=(await query('select count(*) from delivery_worker_runs'))[0].count
   assert.equal((await handler.GET(new Request('https://fixture.invalid/'))).status,401)
   assert.equal((await query('select count(*) from delivery_worker_runs'))[0].count,before,'unauthorized calls create no heartbeat')
