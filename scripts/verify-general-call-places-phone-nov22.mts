@@ -43,6 +43,19 @@ assert.deepEqual(out,{
   requiresNumberConfirmation:true,isVerifiedPhone:false
 })
 assert.equal(fetches.length,2)
+// Six-digit India PIN codes belong to locality, but never a venue name or phone-shaped query.
+const withPin='Rajajinagar, Bengaluru 560010'
+const withPinResult=await proposeGeneralCallPhoneFromPlaces({
+  businessName:name,locality:withPin,env:active,fetcher:fakeFetch({places:[good]},details)
+})
+assert.equal(withPinResult?.phone,'+918023456789','valid Indian PIN must allow candidate discovery')
+assert.equal(fetches.length,2,'valid PIN makes only the expected search and details calls')
+assert.equal(JSON.parse(fetches[0].init.body).textQuery,name+', '+withPin+', India')
+assert.equal(fetches[0].url,'https://places.googleapis.com/v1/places:searchText')
+// Restore the normal two-request fixture for the existing field-mask and URL assertions.
+const normalFetch=fakeFetch({places:[good]},details)
+await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:active,fetcher:normalFetch})
+assert.equal(fetches.length,2)
 assert.equal(fetches[0].url,'https://places.googleapis.com/v1/places:searchText')
 assert.equal(fetches[0].init.method,'POST')
 assert.equal(fetches[0].init.headers['X-Goog-Api-Key'],active.GOOGLE_MAPS_API_KEY)
@@ -71,6 +84,18 @@ assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'Rajajinagar Bengaluru 98765 43210',env:active,fetcher:forbidden}),null)
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'Rajajinagar (080) 2345-6789',env:active,fetcher:forbidden}),null)
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:'Naturals Salon 98765-43210',locality,env:active,fetcher:forbidden}),null)
+for (const [businessName,localityText] of [
+  [name,'Rajajinagar Bengaluru 560010 560011'],
+  [name,'Rajajinagar Bengaluru 000000'],
+  [name,'Rajajinagar Bengaluru 5600100'],
+  [name,'Rajajinagar Bengaluru 9876543'],
+  [name,'Rajajinagar Bengaluru 560010 98765 43210'],
+  ['Naturals Salon 560010',locality],
+] as const) {
+  assert.equal(await proposeGeneralCallPhoneFromPlaces({
+    businessName,locality:localityText,env:active,fetcher:forbidden
+  }),null,'phone-shaped, duplicate PIN or business-name PIN must not reach Google')
+}
 
 assert.equal(forbiddenRequests,0,'private tasks, phone numbers, and meaningless localities never reach Google')
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:active,fetcher:async()=>{throw Error('provider unavailable')}}),null)
