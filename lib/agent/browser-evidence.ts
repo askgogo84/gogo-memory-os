@@ -66,14 +66,15 @@ export function isBrowserRegistrationBarrier(page:{
   const formRegistration=(page.forms||[]).some(form=>{
     try{return registerPath.test(new URL(String(form.action||''),page.url||'https://invalid.example').pathname)}catch{return false}
   })
-  if(password&&(registrationTitle||formRegistration))return true
+  if(registrationTitle||formRegistration)return true // multi-step signups may show only email first
   const opening=body.replace(/^(?:instagram|meta)\s+/i,'').slice(0,260)
   const activeRegistration=/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\s+(?:to|before|for)\b/i.test(opening)
   let instagram=false
   try{instagram=['instagram.com','www.instagram.com'].includes(new URL(page.url||'').hostname.toLowerCase())}catch{}
   // Instagram sometimes exposes only a sign-up prompt, before any form loads.
   if(instagram&&activeRegistration)return true
-  return password&&activeRegistration
+  const hasAccountField=inputs.some(input=>/\b(?:email|phone|mobile|username)\b/i.test([input.name,input.type,input.label].join(' ')))
+  return activeRegistration&&(password||hasAccountField)
 }
 
 /**
