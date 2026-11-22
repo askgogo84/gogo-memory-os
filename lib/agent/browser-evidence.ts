@@ -60,7 +60,7 @@ export function isBrowserRegistrationBarrier(page:{
   // A public help/article URL may end in /signup without being an active form.
   // Auth routes can be under provider-specific prefixes, but content-guide routes
   // need an observed form or registration title before they can block reads.
-  const publicGuidePath=/(?:^|\\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\\/|$)/i.test(path)
+  const publicGuidePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(path)
   if(registerPath.test(path)&&!publicGuidePath)return true
   const title=String(page.title||'').replace(/\s+/g,' ').trim()
   const body=String(page.text||'').replace(/\s+/g,' ').trim()
