@@ -2629,7 +2629,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 26 Oct live: a Swiggy menu read for a food comparison signed in with the saved login and stopped at a text code.
       // A comparison read is a public page: it never signs in (publicOnly); a real sign-in wall still pauses for the person.
       if(params.publicOnly)signedOutEntry=false
-      if(!params.publicOnly&&!registrationBarrier&&!publicGuideRead&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      if(!params.publicOnly&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!registrationBarrier&&!publicGuideRead&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
@@ -2640,7 +2640,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         }
       }
       if(signedOutEntry)vaultEntryChecked=true
-      if(!params.publicOnly && !registrationBarrier && !publicGuideRead && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
+      if(!params.publicOnly && !vaultAttempted && params.accountCreation!==true && !registrationBarrier && !publicGuideRead && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
