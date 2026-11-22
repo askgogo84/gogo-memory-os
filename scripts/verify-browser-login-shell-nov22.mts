@@ -215,8 +215,10 @@ assert.match(vaultRefusal,/if\(vaultFill\.registrationRefused===true\)\{/,
 assert.match(vaultRefusal,/blockReason:'human_auth_required',authReason:'registration_not_authorized'/,
   'worker refusal must hand off to a human instead of reporting login success')
 
-assert.match(source,/if\(!params\.publicOnly && !registrationBarrier && !vaultAttempted && params\.accountCreation!==true/,
-  'credential lookup must be unreachable from an active registration barrier')
+assert.match(source,/if\(!params\.publicOnly && !registrationBarrier && !publicGuideRead && !vaultAttempted && params\.accountCreation!==true/,
+  'credential lookup must be unreachable from registration and public guide reads')
+assert.match(source,/const publicGuideRead=params\.mode==='read'&&!loginish/,
+  'public guides/newsletter forms may not trigger a stored Vault login')
 const vaultWorker=source.slice(source.indexOf('const VAULT_LOGIN_SCRIPT=String.raw'),source.indexOf("// 16 Oct: the person's sign-in code"))
 assert.match(vaultWorker,/const registrationSubmit=await page\.evaluate\(\(\) => Array\.from\(document\.querySelectorAll/,
   'the actual worker must inspect registration controls')
@@ -237,11 +239,15 @@ const scriptStart=source.indexOf(workerMarker)+workerMarker.length
 const scriptEnd=source.indexOf('\n'+tick,scriptStart)
 assert.ok(scriptStart>40&&scriptEnd>scriptStart,'actual Vault script must be extractable')
 const script=source.slice(scriptStart,scriptEnd)
-async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean}){
+async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean;redirectAfterSubmit?:{url:string;title:string;text:string;forms?:any[]}}){
   const actions:string[]=[]
   const output:string[]=[]
   const field=(kind:string)=>({isVisible:async()=>true,fill:async()=>{actions.push('fill:'+kind)}})
-  const submit={isVisible:async()=>true,click:async()=>{actions.push('click:submit')}}
+  let current:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean}=snapshot
+  const submit={isVisible:async()=>true,click:async()=>{
+    actions.push('click:submit')
+    if(snapshot.redirectAfterSubmit)current=snapshot.redirectAfterSubmit
+  }}
   const page={
     goto:async()=>{},waitForTimeout:async()=>{},
     locator:(selector:string)=>{
@@ -256,15 +262,15 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
       if(body.includes('button,input[type="submit"],[role="button"]')){
         // Run the actual visibility filter against an inert signup button.
         const button={
-          textContent:snapshot.signupButtonLabel||'Sign up',value:'',getAttribute:()=>'',closest:(selector:string)=>selector==='form'&&snapshot.signupSubmitInForm!==false?{}:null,
-          getBoundingClientRect:()=>({width:snapshot.signupSubmitVisible?80:0,height:snapshot.signupSubmitVisible?25:0}),
+          textContent:current.signupButtonLabel||'Sign up',value:'',getAttribute:()=>'',closest:(selector:string)=>selector==='form'&&current.signupSubmitInForm!==false?{}:null,
+          getBoundingClientRect:()=>({width:current.signupSubmitVisible?80:0,height:current.signupSubmitVisible?25:0}),
         }
         return vm.runInNewContext('('+body+')()',{
           document:{querySelectorAll:()=>[button]},
           getComputedStyle:()=>({display:'block',visibility:'visible'}),
         })
       }
-      return {...snapshot,forms:snapshot.forms||[]}
+      return {...current,forms:current.forms||[]}
     },
   }
   const context={pages:()=>[page],close:async()=>{}}
@@ -275,6 +281,7 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
     },
     process:{env:{GOGO_LOGIN_URL:snapshot.url,GOGO_VAULT_USERNAME:'fixture-user',GOGO_VAULT_SECRET:'fixture-password'},exit:()=>{throw Error('unexpected script exit')}},
     console:{log:(line:string)=>output.push(line),error:(line:string)=>{throw Error(line)}},
+    URL,
   })
   assert.ok(output.every(line=>!line.includes('fixture-user')&&!line.includes('fixture-password')),
     'credential values must not be reported')
