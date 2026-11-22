@@ -337,6 +337,11 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
     'credential values must not be reported')
   return {actions,vaultLogin:JSON.parse(output.at(-1)!).vaultLogin}
 }
+const zeroBoxWorker=await syntheticVaultWorker(observedZeroBox)
+assert.equal(zeroBoxWorker.vaultLogin.registrationRefused,true,
+  'actual worker must reject a zero-box registration form after the model preserves its email')
+assert.deepEqual(zeroBoxWorker.actions,[],
+  'zero-box registration must not fill or submit any saved credential')
 for(const snapshot of [
   {url:'https://example.com/register',title:'Register',text:'Create your account'},
   {url:'https://example.com/auth',title:'Create account',text:'Welcome',forms:[{inputs:[{name:'email',type:'email'}]}]},
