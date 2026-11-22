@@ -21,8 +21,24 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/open-loops.ts','utf8'
  {exports:actual,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:{},console,Date,Set,Map})
 const actor={legacyTelegramId:123}
 const failures:string[]=[]
+// 23 Nov: reported or claimed completion is not owner-observed completion evidence.
+// Check the classifier itself (RED on the old implementation) and the actual DB writer below.
+const secondhandClaims=[
+ 'Vendor claimed the corrected JSON was delivered.',
+ 'Vendor claims the corrected JSON was sent.',
+ 'Vendor reportedly sent the corrected JSON.',
+ 'Vendor says the corrected JSON was delivered.',
+ 'Vendor told me they sent the corrected JSON.',
+ 'Vendor allegedly delivered the corrected JSON.',
+]
+for(const text of secondhandClaims){
+ assert.equal(actual.isUncertainOrNegatedCompletion(text),true,text+' should not count as owner-verified completion')
+}
+assert.equal(actual.isUncertainOrNegatedCompletion('Vendor delivered the corrected JSON.'),false,'direct owner report can still resolve')
+
 for(const text of [
  'The corrected JSON from Vendor is not received.',
+ ...secondhandClaims,
  "The corrected JSON from Vendor isn't received.",
  'The corrected JSON from Vendor isn’t received.',
  'The corrected JSON from Vendor was not received.',
