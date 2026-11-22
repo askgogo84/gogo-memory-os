@@ -33,6 +33,10 @@ assert.equal(isBrowserLoginShell({
   text:'Caption: New product launch today. 38 likes. Log in Sign up About Help Press',
 }),false,'a genuinely visible Instagram post with caption/likes is not a footer-only shell')
 assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public post',
+  text:'Caption: New product launch today. Log in Sign up About Help Press',
+}),false,'a public caption without likes is still visible research evidence')
+assert.equal(isBrowserLoginShell({
   url:'https://example.com/articles/authentication',title:'A guide to passkeys',
   text:'Our article discusses why many sites use a Sign in link, but this is public article text.',
 }),false,'incidental authentication references must not trigger a handoff')
@@ -46,4 +50,20 @@ assert.match(source,/function pageLooksLikeLogin\(page:any\)\{\s*return isBrowse
   'the same-run auth handoff must recognize signed-out shells')
 assert.match(source,/if \(isBrowserLoginShell\(page\) \|\| detectHumanAuthGate\(page\)\.required \|\| detectProviderAccessBlock\(page\)/,
   'public Obscura observer must fall back instead of completing on login shell')
+// Exercise the real assessor, not only helper calls or string matching. All pages are synthetic;
+// these exits must occur before the model or any provider can be contacted.
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'synthetic-role'
+process.env.OPENAI_API_KEY ||= 'synthetic-api'
+process.env.ANTHROPIC_API_KEY ||= 'synthetic-api'
+const {assessReadOutcome}=await import('../lib/agent/secure-computer')
+for(const page of [instagramLogin,
+  {url:'https://www.instagram.com/p/example',title:'Instagram',text:'Instagram Log in Sign up About Help Press Privacy Terms'},
+  {url:'https://example.com/login',title:'Sign in',text:'Username Password'},
+]){
+  const reasons:string[]=[]
+  const result=await assessReadOutcome('Read the actual post content and author, not the login screen',page,d=>reasons.push(d.reason))
+  assert.equal(result,null,'a login shell must never produce a successful excerpt')
+  assert.deepEqual(reasons,['source_unusable'],'the assessor must block BEFORE asking a model')
+}
 console.log('PASS: login destinations, Instagram footer-only views and explicit auth gates cannot be marked completed; public sign-in navigation remains readable')
