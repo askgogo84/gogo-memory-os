@@ -35,8 +35,9 @@ function load(file:string,mocks:Record<string,unknown>){
 }
 const execution=load('lib/agent/voice-call-execution.ts',{'node:crypto':crypto,'@/lib/services/delivery-state':{}})
 let stored:any=null, last='', claims=0
+const savedNames:string[]=[]
 const db={from:(table:string)=>{
-  const q:any={select:()=>q,eq:()=>q,like:()=>q,order:()=>q,limit:async()=>({data:table==='conversations'?[{role:'assistant',content:last}]:[]})}
+  const q:any={insert:async(row:any)=>{if(table==='memories')savedNames.push(row.content);return {error:null}},select:()=>q,eq:()=>q,like:()=>q,order:()=>q,limit:async()=>({data:table==='conversations'?[{role:'assistant',content:last}]:[]})}
   return q
 }}
 const v=load('lib/agent/voice-call.ts',{
@@ -96,6 +97,11 @@ for (const [venue,ask] of [
   assert.equal(payload.agent_id,general)
   assert.equal(payload.recipient_phone_number,'+918023456789')
   assert.equal(Object.hasOwn(payload.user_data,'contact_number'),false)
+}
+for (const sep of ['. ','\n',', ','; ']) {
+  await chat('call Example Salon on 080 2345 6789 and book a haircut under the name Nithin'+sep+'speak in Hindi')
+  assert.equal(stored.plan.guestName,'Nithin')
+  assert.equal(savedNames.at(-1),'BOOKING_NAME:Nithin')
 }
 const enquiry=await chat('call Example School on 080 2345 6789 and ask whether the class is in Hindi')
 assert.doesNotMatch(enquiry.text,/Call language:/)
