@@ -2089,7 +2089,10 @@ function productLinkNeedsDetail(objective:string,raw:unknown):boolean{
 export async function assessReadOutcome(objective:string,page:any,diagnose:(event:BrowserReadDiagnostic)=>void=()=>{}):Promise<string|null>{
   // Login pages, signed-out Instagram shells and MFA prompts are not research evidence.
   // Stop before any title-only or model-verbatim pathway can label footer copy complete.
-  if(isBrowserLoginShell(page)||detectHumanAuthGate(page).required){diagnose({phase:'assessment',reason:'source_unusable'});return null}
+  if(isBrowserLoginShell(page)||
+    (typeof detectHumanAuthGate==='function'&&detectHumanAuthGate(page).required)){
+    diagnose({phase:'assessment',reason:'source_unusable'});return null
+  }
   if(productLinkNeedsDetail(objective,page.url)){diagnose({phase:'assessment',reason:'needs_product_detail'});return null}
   if(/\b(?:link|url)\b/i.test(objective)&&!browserSourceUrl(page.url)){diagnose({phase:'assessment',reason:'source_unusable'});return null}
   // Google keeps selected airports, date, cabin and passenger count in ARIA
