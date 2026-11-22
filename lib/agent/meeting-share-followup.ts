@@ -74,6 +74,24 @@ function meetingTimeStatus(meeting:Meeting,now=Date.now()){
   return null
 }
 
+/** Plain-text meeting shares should receive the same human-readable, timezone-accurate offer as image shares. */
+function textMeetingOffer(meeting:Meeting,now=Date.now()):string{
+  // Compare local *calendar* days, not 24-hour durations: DST can make a local day 23 or 25 hours.
+  const localDay=(at:number)=>{
+    const p=getLocalParts(new Date(at),meeting.timezone)
+    return Math.floor(Date.UTC(p.year,p.month-1,p.day)/86400000)
+  }
+  const today=localDay(now),reminderDay=localDay(Date.parse(meeting.remindAt))
+  const humanDay=reminderDay===today?'today':reminderDay===today+1?'tomorrow':
+    new Intl.DateTimeFormat('en-GB',{timeZone:meeting.timezone,weekday:'long',day:'numeric',month:'short',year:'numeric'}).format(new Date(meeting.remindAt))
+  const clock=(at:string)=>new Intl.DateTimeFormat('en-US',{timeZone:meeting.timezone,hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(at)).toLowerCase()
+  const zone=meeting.timezone==='Asia/Kolkata'?'IST':meeting.timezone
+  const meetingDay=localDay(Date.parse(meeting.startAt))
+  const startDay=meetingDay===reminderDay?'':meetingDay===today+1?' tomorrow':meetingDay===today?' today':
+    ' on '+new Intl.DateTimeFormat('en-GB',{timeZone:meeting.timezone,weekday:'short',day:'numeric',month:'short'}).format(new Date(meeting.startAt))
+  return `Want a reminder ${humanDay} at ${clock(meeting.remindAt)} ${zone} for ${meeting.title}? It starts${startDay} at ${clock(meeting.startAt)}. Reply Yes to set it or No to skip.`
+}
+
 function reminderId(tg:number,m:Meeting){
   const h=createHash('sha256').update(`${tg}|${m.url}|${m.title}|${m.startAt}|${m.remindAt}`).digest('hex')
   return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`
@@ -124,7 +142,7 @@ async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
     const timeStatus=meetingTimeStatus(meeting)
     if(timeStatus)return reply(timeStatus,'completed')
     if(Date.parse(meeting.remindAt)<=Date.now())return reply(`Saved ${meeting.title} and its Meet link. The meeting starts ${formatInTimezone(meeting.startAt,meeting.timezone)} — too soon for a 10-minute reminder.\nJoin: ${meeting.url}`,'completed')
-    let question=`${meeting.title} starts ${formatInTimezone(meeting.startAt,meeting.timezone)}. Remind you 10 minutes before, at ${formatInTimezone(meeting.remindAt,meeting.timezone)}?`
+    let question=textMeetingOffer(meeting)
     if(image){
       const day=(at:number)=>new Intl.DateTimeFormat('en-CA',{timeZone:meeting.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(at)
       const tomorrow=day(Date.now()+86400000)===day(Date.parse(meeting.startAt))?'tomorrow, ':''
