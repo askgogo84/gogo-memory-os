@@ -77,10 +77,13 @@ export function isBrowserLoginShell(page:{
   const remaining=leading
     .replace(/\b(?:forgot\s+(?:your\s+)?password|don'?t\s+have\s+an\s+account|already\s+have\s+an\s+account|get\s+the\s+app|download\s+the\s+app|also\s+from\s+meta|meta\s+verified|from\s+meta|log\s*in|sign\s*in|sign\s*up|instagram|threads|locations|privacy|terms|about|help|press|api|jobs|language|english|copyright|home|explore|reels|messages|search|profile|meta)\b/gi,' ')
     .replace(/(?:©|\b20\d{2}\b)/g,' ')
-    .toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
-  // Four distinct non-navigation words suffice to preserve actual unlabeled captions.
-  const meaningful=new Set(remaining.split(/\s+/).filter(token=>token.length>=3))
-  return meaningful.size<4
+    .toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').trim()
+  // Treat real letters in any script as content: Indic, Arabic, CJK and more.
+  // A single long CJK caption without spaces is still meaningful public evidence.
+  const meaningful=new Set(remaining.split(/\s+/).filter(token=>Array.from(token).length>=3))
+  const nonLatinLetters=[...remaining.matchAll(/[^\x00-\x7F]/g)].length>=4
+    &&[...remaining.matchAll(/\p{L}/gu)].length>=4
+  return meaningful.size<4&&!nonLatinLetters
 }
 
 /** Preserve only observed public Croma product slugs; never exempt account URLs. */
