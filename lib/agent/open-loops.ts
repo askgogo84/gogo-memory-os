@@ -516,6 +516,22 @@ export function isActionableGmailMessage(message:{subject?:unknown;snippet?:unkn
   return looksLikeIncomingAction(clean(`${message?.subject||''} ${message?.snippet||''}`,1200))
 }
 
+/**
+ * A Gmail thread having any new message is NOT proof that its task is complete.
+ * Preserve old open loops for auto-acknowledgments, vague human replies and
+ * promised/future actions. Only a human-authored, affirmative, already-completed
+ * action in the latest message may enter the existing source-thread reconciliation.
+ * This is a conservative evidence gate, NOT authority to send/reply/submit.
+ */
+export function isGmailThreadCompletionEvidence(message:any):boolean{
+  if(isAutomatedGmailMessage(message))return false
+  const body=clean(message?.snippet,1100)
+  if(!body||isUncertainOrNegatedCompletion(body))return false
+  // "We received your email" and "Thanks for your message" are acknowledgments,
+  // not delivery or completion of the owner's open item.
+  return /\\b(?:i|we|our team)\\s+(?:(?:have|has|already)\\s+){0,2}(?:sent|shared|resent|replied|responded|confirmed|approved|delivered|completed|finished|resolved|submitted|signed)\\b/i.test(body)
+}
+
 async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string,keepFingerprint:string|null){
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
     .select('id,fingerprint')
@@ -710,8 +726,10 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
       continue
     }
 
-    // We successfully inspected this thread and its latest state no longer
-    // represents a waiting/reply loop. Resolve only this verified thread.
+    // The absence of a new action request is not proof an earlier deliverable
+    // arrived. Keep the source-bound loop open for auto-replies, acknowledgments,
+    // ambiguous/negative/future text; do not infer completion from silence.
+    if(!isGmailThreadCompletionEvidence(last))continue
     await resolveOtherGmailLoopsForThread(telegramId,String(thread.id),null)
   }
   return 'ok' as const
