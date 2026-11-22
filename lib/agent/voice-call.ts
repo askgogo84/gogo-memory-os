@@ -703,7 +703,8 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   const closed = callingHoursProblem('+910000000000', new Date())
   if (closed) return { text: closed, handledBy: 'voice-call' }
   // "…under the name Goverdhan" wins; otherwise the account name.
-  const givenName = callBookingName(params.text)
+  // A phone-only reply must preserve the explicit name in the original, owner-bound task.
+  const givenName = callBookingName(numberFollowup || params.text)
   const named = givenName ? [givenName, givenName] : null
   // 29 Oct live: both demo bookings were made "under Gogo" (the account name, which a restaurant hears as AskGogo).
   // A name the user gave once ("under the name Goverdhan") is remembered and used for later calls.
