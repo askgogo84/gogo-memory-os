@@ -12,15 +12,21 @@ assert.deepEqual(f.parseSwiggyFoodAsk('find veg pizza on swiggy'), { dish: 'pizz
 assert.deepEqual(f.parseSwiggyFoodAsk('search Swiggy for masala dosa'), { dish: 'masala dosa', restaurant: null, vegetarian: false })
 assert.deepEqual(f.parseSwiggyFoodAsk('Can you get me non-veg thali from Nagarjuna on Swiggy?'), { dish: 'non-veg thali', restaurant: 'Nagarjuna', vegetarian: false })
 assert.deepEqual(f.parseSwiggyFoodAsk('order biryani from Meghana on Swiggy. Do not order or pay.'), { dish: 'biryani', restaurant: 'Meghana', vegetarian: false })
+assert.deepEqual(f.parseSwiggyFoodAsk('order from Meghana Foods on Swiggy'), { dish: null, restaurant: 'Meghana Foods', vegetarian: false })
+assert.deepEqual(f.parseSwiggyFoodAsk('get dinner from Truffles on swiggy'), { dish: null, restaurant: 'Truffles', vegetarian: false })
 for (const t of ['order milk on Instamart', 'book a table at Toit on Swiggy Dineout', 'where is my Swiggy order', 'track my order on swiggy', 'refund for my swiggy order',
-  'order food on swiggy', 'compare biryani on Swiggy and Zomato please now ok', 'I love swiggy', 'swiggy', 'order biryani from Meghana Foods'])
+  'order food on swiggy', 'compare biryani on Swiggy and Zomato', 'I love swiggy', 'swiggy', 'order biryani from Meghana Foods',
+  // Review (PR #1567): price and comparison asks belong to the comparison flow; other platforms never become a query.
+  'find cheapest biryani on swiggy', 'find the price of biryani on swiggy', 'show me biryani prices on swiggy', 'find biryani on zomato vs on swiggy',
+  'how much is biryani on swiggy', 'order groceries on swiggy', 'order medicines on swiggy', 'get me a cab on swiggy'])
   assert.equal(f.parseSwiggyFoodAsk(t), null, t)
 console.log('✓ food asks are recognised; Instamart, Dineout, order status and vague asks are not')
 
 // Matching and address choice.
 const R = (id: string, name: string) => ({ id, name, distanceKm: 2.34, deliveryMinutes: 31.6 })
-assert.equal(f.matchRestaurant([R('1', 'Meghana Foods Koramangala'), R('2', 'Meghana Biryani')], 'meghana foods')?.id, '1')
-assert.equal(f.matchRestaurant([R('1', 'Truffles')], 'Meghana'), null, 'never a guess')
+assert.deepEqual(f.matchRestaurants([R('1', 'Meghana Foods Koramangala'), R('2', 'Meghana Biryani')], 'meghana foods').map((r: any) => r.id), ['1'])
+assert.equal(f.matchRestaurants([R('1', 'Meghana Foods'), R('2', 'Meghana Biryani')], 'meghana').length, 2, 'several matches are shown, not picked')
+assert.deepEqual(f.matchRestaurants([R('1', 'Truffles')], 'Meghana'), [], 'never a guess')
 const A = (id: string, label: string) => ({ id, label, addressLine: 'x' })
 assert.equal(f.pickAddress([A('a', 'Work'), A('b', 'Home')]).id, 'b'); assert.equal(f.pickAddress([A('a', 'Work')]).id, 'a'); assert.equal(f.pickAddress([]), null)
 
@@ -53,7 +59,7 @@ const OWNER = -3902574319362690
 {
   const calls: string[] = []
   const r = await f.trySwiggyFoodChat({ telegramId: OWNER, text: 'find biryani on swiggy' }, deps(calls))
-  assert.match(r.text, /^Open now on Swiggy for "biryani", delivering to your Home address:\nPowered by Swiggy\n1\. Meghana Foods · about 28 min · 1\.2 km/)
+  assert.match(r.text, /^Open now on Swiggy for "biryani", delivering to your Home address:\nPowered by Swiggy\n1\. Meghana Foods · 28 min · 1\.2 km/, 'values as Swiggy returned them')
   assert.doesNotMatch(r.text, /Closed Place/)
   const miss = await f.trySwiggyFoodChat({ telegramId: OWNER, text: 'order biryani from Truffles on Swiggy' }, deps([]))
   assert.match(miss.text, /I couldn't find Truffles open on Swiggy/); assert.match(miss.text, /Powered by Swiggy/)
@@ -67,6 +73,24 @@ const OWNER = -3902574319362690
   assert.match(down.text, /didn't return a result I could verify.*Nothing was ordered/)
   const noAddr = await f.trySwiggyFoodChat({ telegramId: OWNER, text: 'find biryani on swiggy' }, deps([], { get_addresses: { addresses: [], pagination: { hasMore: false } } }))
   assert.match(noAddr.text, /no saved delivery address/)
+}
+{
+  // Several matching restaurants: listed with attribution, none picked.
+  const two = { search_restaurants: { restaurants: [{ id: 'r1', name: 'Meghana Foods', availabilityStatus: 'OPEN', distanceKm: 1.2, deliveryTimeMinutes: 28 }, { id: 'r9', name: 'Meghana Biryani', availabilityStatus: 'OPEN', distanceKm: 3.7, deliveryTimeMinutes: 41 }] } }
+  const calls: string[] = []
+  const r = await f.trySwiggyFoodChat({ telegramId: OWNER, text: 'order biryani from Meghana on Swiggy' }, deps(calls, two))
+  assert.match(r.text, /^More than one open place on Swiggy matches "Meghana".*\nPowered by Swiggy\n1\. Meghana Foods · 28 min · 1\.2 km\n2\. Meghana Biryani · 41 min · 3\.7 km/s)
+  assert.ok(!calls.includes('search_menu'), 'no menu read for a guess')
+  const open = await f.trySwiggyFoodChat({ telegramId: OWNER, text: 'order from Meghana Foods on Swiggy' }, deps([]))
+  assert.match(open.text, /^Meghana Foods is open on Swiggy, delivering to your Home address\.\nPowered by Swiggy/)
+  const none = await f.trySwiggyFoodChat({ telegramId: OWNER, text: 'find biryani on swiggy' }, deps([], { search_restaurants: { restaurants: [] } }))
+  assert.match(none.text, /^No open restaurant on Swiggy has "biryani".*\nPowered by Swiggy$/s)
+}
+{
+  // The real default: with COMMERCE_SWIGGY_ENABLED unset, nothing is read, no token touched.
+  delete process.env.COMMERCE_SWIGGY_ENABLED
+  const r = await f.trySwiggyFoodChat({ telegramId: OWNER, text: 'find biryani on swiggy' }, { token: async () => { throw new Error('token must not be read') }, client: () => { throw new Error('no client') } })
+  assert.equal(r, null)
 }
 console.log('✓ read-only search and menu with attribution, hand-off to the Swiggy app, honest failures')
 

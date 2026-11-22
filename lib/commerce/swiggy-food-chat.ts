@@ -8,7 +8,8 @@ import {withSwiggyAttribution} from './swiggy-attribution'
 
 // 22 Nov (owner: "continue with Swiggy MCP"): Swiggy Food in chat through the user's own Swiggy MCP connection,
 // from the approved mock. Read-only: restaurant search and menu items, then a hand-off to the Swiggy app. The MCP
-// client allows no food cart or order tool (lib/commerce/mcp.ts), and this module writes nothing.
+// client allows no food cart or order tool (lib/commerce/mcp.ts). The only write is the token refresh inside
+// readCommerceConnection, the same as Instamart.
 // While COMMERCE_SWIGGY_ENABLED is off (until Swiggy's written consent under clause 2.1), it returns null so the
 // existing food search keeps handling these messages exactly as before.
 
@@ -16,7 +17,10 @@ export type SwiggyFoodChatResult = {text: string; handledBy: 'swiggy-food-chat';
 export type FoodAsk = {dish: string | null; restaurant: string | null; vegetarian: boolean}
 
 const SWIGGY_APP = 'https://www.swiggy.com'
-const NOT_FOOD = /\b(?:instamart|dineout|genie|minis|status|refund|refunds|invoice|bill|receipt|account|offers?|coupons?|track|tracking|delivered|cancel|order\s+history|my\s+orders?)\b/i
+const NOT_FOOD = /\b(?:instamart|dineout|genie|minis|status|refund|refunds|invoice|bill|receipt|account|offers?|coupons?|track|tracking|delivered|cancel|order\s+history|my\s+orders?|grocer(?:y|ies)|medicines?|pharmacy|cab|ride|taxi)\b/i
+// Review (PR #1567): a price or comparison ask belongs to the comparison flow (which applies the Swiggy policy), and
+// another platform's name never becomes a Swiggy search query.
+const NOT_OURS = /\b(?:compar\w*|vs\.?|versus|cheap(?:er|est)?|prices?|priced|cost|costs|how\s+much|zomato|zepto|blinkit|magicpin|eatsure|bigbasket|dunzo)\b/i
 const cleanPart = (v: string | undefined) => {
   const s = String(v || '').replace(/^(?:(?:some|a|an|the|me|us)\s+)+/i, '').replace(/\s+(?:please|pls)$/i, '').replace(/\s+/g, ' ').trim()
   return s && s.length <= 80 && /[a-z]/i.test(s) ? s : null
@@ -27,16 +31,19 @@ export function parseSwiggyFoodAsk(text: string): FoodAsk | null {
   const value = String(text || '').replace(/[’]/g, "'").replace(/\s+/g, ' ').trim()
     // Same trailer as the Instamart parser: a closing "do not order / pay" note only restates the rule here.
     .replace(/(?:[.!,;]\s*|\s+)(?:(?:and\s+)?(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:order|pay|check\s*out|checkout|buy|purchase|place\s+(?:the\s+|an?\s+)?order)(?:\s+(?:or|and|,)?\s*(?:order|pay|check\s*out|checkout|buy|purchase|place\s+(?:the\s+|an?\s+)?order))*(?:\s+(?:anything|it))?\s*[.!]*\s*)+$/i, '').trim()
-  if (value.length < 8 || value.length > 200 || NOT_FOOD.test(value)) return null
+  if (value.length < 8 || value.length > 200 || NOT_FOOD.test(value) || NOT_OURS.test(value)) return null
   const lead = String.raw`^(?:(?:hey\s+)?gogo[,\s]+)?(?:please\s+|pls\s+)?(?:(?:can|could|will)\s+you\s+)?(?:please\s+)?`
   const on = String.raw`\s+(?:on|from|via|through|using|in)\s+swiggy(?:\s+food)?(?:\s+(?:please|pls))?\s*[.!?]*$`
+  // "order from Meghana Foods on Swiggy": a restaurant with no dish.
+  const fromOnly = value.match(new RegExp(lead + String.raw`(?:order|get|find|show\s+me)\s+(?:something\s+|food\s+)?from\s+(.{2,60}?)` + on, 'i'))
+  if (fromOnly) { const restaurant = cleanPart(fromOnly[1]); return restaurant ? {dish: null, restaurant, vegetarian: false} : null }
   const m = value.match(new RegExp(lead + String.raw`(?:order|get|find|search(?:\s+for)?|show\s+me|look\s+(?:for|up))\s+(.{2,80}?)(?:\s+from\s+(.{2,60}?))?` + on, 'i'))
     || value.match(new RegExp(lead + String.raw`search\s+swiggy(?:\s+food)?\s+for\s+(.{2,80}?)(?:\s+from\s+(.{2,60}?))?\s*[.!?]*$`, 'i'))
   if (!m) return null
   const vegetarian = /\b(?:veg|vegetarian|pure\s+veg)\b/i.test(value) && !/\bnon[\s-]?veg\b/i.test(value)
   const dish = cleanPart(vegetarian ? m[1]?.replace(/\b(?:pure\s+)?(?:veg|vegetarian)\b/ig, '').replace(/\s+/g, ' ').trim() : m[1]), restaurant = cleanPart(m[2])
   if (!dish && !restaurant) return null
-  if (dish && /^(?:food|something|anything|dinner|lunch|breakfast)$/i.test(dish) && !restaurant) return null
+  if (dish && /^(?:food|something|anything|dinner|lunch|breakfast)$/i.test(dish)) return restaurant ? {dish: null, restaurant, vegetarian} : null
   return {dish, restaurant, vegetarian}
 }
 
@@ -45,11 +52,11 @@ const result = (text: string, status: SwiggyFoodChatResult['status']): SwiggyFoo
 const connectLink = () => commerceOrigin() + '/dashboard/commerce'
 const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 1)
 
-/** Pure. The restaurant whose name contains every typed word, else none (never a guess). */
-export function matchRestaurant(choices: RestaurantChoice[], typed: string): RestaurantChoice | null {
+/** Pure. Restaurants whose name contains every typed word. Several matches are shown, never silently picked. */
+export function matchRestaurants(choices: RestaurantChoice[], typed: string): RestaurantChoice[] {
   const want = words(typed)
-  if (!want.length) return null
-  return choices.find(c => { const have = new Set(words(c.name)); return want.every(w => have.has(w)) }) || null
+  if (!want.length) return []
+  return choices.filter(c => { const have = new Set(words(c.name)); return want.every(w => have.has(w)) })
 }
 
 /** Pure. The address used: the only one, else the one tagged Home, else the first; always named in the reply. */
@@ -58,8 +65,9 @@ export function pickAddress(addresses: CommerceAddress[]): CommerceAddress | nul
   return addresses.length === 1 ? addresses[0] : addresses.find(a => /^home$/i.test(a.label.trim())) || addresses[0]
 }
 
+// Review (PR #1567): Swiggy's numbers are shown as returned (agreement 4(v)), never rounded.
 const restaurantLine = (r: RestaurantChoice, i: number) =>
-  `${i + 1}. ${r.name}${r.deliveryMinutes !== null ? ` · about ${Math.round(r.deliveryMinutes)} min` : ''}${r.distanceKm !== null ? ` · ${r.distanceKm.toFixed(1)} km` : ''}`
+  `${i + 1}. ${r.name}${r.deliveryMinutes !== null ? ` · ${r.deliveryMinutes} min` : ''}${r.distanceKm !== null ? ` · ${r.distanceKm} km` : ''}`
 const itemLine = (f: FoodChoice, i: number) => `${i + 1}. ${f.name}${f.needsCustomization ? ' (has choices to pick in the app)' : ''}`
 
 export function foodHandoff(): string {
@@ -86,7 +94,9 @@ export async function trySwiggyFoodChat(params: {telegramId: number | string; te
     const where = `delivering to your ${address.label} address`
     if (ask.restaurant) {
       const restaurants = await readFoodRestaurants(client, address.id, ask.restaurant)
-      const hit = matchRestaurant(restaurants, ask.restaurant)
+      const hits = matchRestaurants(restaurants, ask.restaurant)
+      if (hits.length > 1) return result(withSwiggyAttribution(`More than one open place on Swiggy matches "${ask.restaurant}", ${where}:\n${hits.slice(0, 5).map(restaurantLine).join('\n')}\n\nSay the full name, for example "order ${ask.dish || 'food'} from ${hits[0].name} on Swiggy".`, 'food'), 'completed')
+      const hit = hits[0]
       if (!hit) {
         const near = restaurants.slice(0, 3)
         return result(withSwiggyAttribution(`I couldn't find ${ask.restaurant} open on Swiggy ${where} right now.` + (near.length ? `\nOpen places that matched:\n${near.map(restaurantLine).join('\n')}` : '') + `\n\n${foodHandoff()}`, 'food'), 'completed')

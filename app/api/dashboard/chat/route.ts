@@ -410,6 +410,7 @@ async function handleChatPost(req: NextRequest) {
     // 22 Nov: Swiggy Food (read-only search and menu, then the Swiggy app). Returns null while Swiggy access is off.
     const swiggyFoodChat:any=(/\bswiggy\b/i.test(text)&&!/\b(?:instamart|dineout)\b/i.test(text))?await import('@/lib/commerce/swiggy-food-chat').catch(()=>null):null
     const swiggyFood=typeof swiggyFoodChat?.trySwiggyFoodChat==='function'?await Promise.resolve().then(()=>swiggyFoodChat.trySwiggyFoodChat({telegramId:actor.legacyTelegramId,text})).catch((err:any)=>{console.error('SWIGGY_FOOD_CHAT_FAILED:',String(err?.message||err).slice(0,160));return null}):null
+    __trace.mark('swiggy-food')
     if(swiggyFood){
       await saveConversation(user.telegram_id,text,swiggyFood.text)
       return NextResponse.json(swiggyFood)
