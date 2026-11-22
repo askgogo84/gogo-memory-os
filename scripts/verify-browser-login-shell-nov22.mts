@@ -55,6 +55,14 @@ assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/create-account',title:'Join',text:'Register',forms:[],
 }),true,'an active account-creation URL is blocked even before form hydration')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/auth',title:'Create account',text:'Welcome',
+  forms:[{inputs:[{name:'email',type:'email'}]}],
+}),true,'email-first registration must stop before clicking Next or creating an account')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/auth',title:'Welcome',text:'Sign up to continue',
+  forms:[{inputs:[{name:'email',type:'email'}]}],
+}),true,'first-step registration copy and an email field cannot authorize Vault')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Sign in to your account. New here? Sign up.',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
 }),false,'an actual login form with incidental sign-up navigation remains eligible for Vault')
