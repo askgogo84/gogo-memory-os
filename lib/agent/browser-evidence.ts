@@ -58,16 +58,29 @@ export function isBrowserLoginShell(page:{
   const loginTitle=/^(?:log\s*in|sign\s*in|login)(?:\s*[-–—|•:]\s*[^\n]{1,100})?$/i.test(title)
   const loginControls=/\b(?:log\s*in|sign\s*in|sign\s*up|username|password)\b/i.test(leading)
   if(loginTitle&&loginControls)return true
-  if(/\b(?:log\s*in|sign\s*in)\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i.test(leading))return true
-  // Instagram's logged-out redirect may show only login/signup controls and footer labels.
-  // It is not evidence of the requested post even though the footer is readable.
+
+  // The active access prompt must appear at the beginning of a short signed-out page.
+  // Quoted sign-in instructions in public articles or FAQs are not current auth gates.
+  const opening=leading.replace(/^(?:instagram|meta)\s+/i,'')
+  const activeGate=/^(?:log\s*in|sign\s*in)\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
+  if(body.length<900&&activeGate.test(opening))return true
+
+  // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
+  // A real post has raw unlabelled caption text; the observer does not supply "Caption:".
   let host=''
   try{host=new URL(page.url||'').hostname.toLowerCase()}catch{}
   const instagram=host==='instagram.com'||host==='www.instagram.com'
-  return instagram&&body.length<1100&&
-    /\b(?:log\s*in|sign\s*in)\b/i.test(leading)&&/\bsign\s*up\b/i.test(leading)&&
-    /\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading)&&
-    !/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading)
+  if(!instagram||body.length>=1100||!/\b(?:log\s*in|sign\s*in)\b/i.test(leading)
+     ||!/\bsign\s*up\b/i.test(leading)
+     ||!/\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading))return false
+  if(/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading))return false
+  const remaining=leading
+    .replace(/\b(?:forgot\s+(?:your\s+)?password|don'?t\s+have\s+an\s+account|already\s+have\s+an\s+account|get\s+the\s+app|download\s+the\s+app|also\s+from\s+meta|meta\s+verified|from\s+meta|log\s*in|sign\s*in|sign\s*up|instagram|threads|locations|privacy|terms|about|help|press|api|jobs|language|english|copyright|home|explore|reels|messages|search|profile|meta)\b/gi,' ')
+    .replace(/(?:©|\b20\d{2}\b)/g,' ')
+    .toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+  // Four distinct non-navigation words suffice to preserve actual unlabeled captions.
+  const meaningful=new Set(remaining.split(/\s+/).filter(token=>token.length>=3))
+  return meaningful.size<4
 }
 
 /** Preserve only observed public Croma product slugs; never exempt account URLs. */
