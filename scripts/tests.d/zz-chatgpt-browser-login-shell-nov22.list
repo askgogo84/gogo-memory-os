@@ -1,0 +1,2 @@
+# 22 Nov P0 browser auth shell, static provider-free fixtures, no Vault/real websites
+npx tsx scripts/verify-browser-login-shell-nov22.mts
