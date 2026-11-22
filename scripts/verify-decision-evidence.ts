@@ -40,6 +40,22 @@ assert.equal(summarizeLearningActivity([...rows,{...rows[0],telegram_id:'other-u
 assert.equal(summarizeEvidence([{...wins[0],outcome:'success',verified:false},wins[0]]).verifiedCompletions,1,'generic completion cannot erase provider proof')
 assert.equal(summarizeEvidence([{...wins[0],outcome:'unknown',verified:false},wins[0]]).verifiedCompletions,0,'new unknown evidence supersedes old provider proof')
 
+// A generic router completion has no new readback and cannot erase a more recent reconciliation.
+const generic={...wins[0],outcome:'success',verified:false,confidence:.9}
+const retracted={...wins[0],outcome:'unknown',verified:false,confidence:.6}
+const oldWin={...wins[0],confidence:.4}
+for(const verdict of ['unknown','outcome_unknown','failed','blocked','corrected','clarified']){
+  const history=[generic,generic,{...retracted,outcome:verdict},oldWin]
+  assert.equal(summarizeEvidence(history).verifiedCompletions,0,verdict)
+  if(verdict==='corrected'||verdict==='failed')assert.ok(rankEvidence(history).avoidHandlers.includes(generic.handler))
+}
+assert.equal(summarizeEvidence([generic,retracted,oldWin]).unknown,1)
+assert.equal(summarizeEvidence([generic,oldWin,retracted]).verifiedCompletions,1,'a newer positive readback can restore the decision')
+assert.equal(summarizeEvidence([generic,{...retracted,decision_id:'other'},oldWin]).verifiedCompletions,1)
+const bucketed=calibrationBuckets([generic,retracted,oldWin])
+assert.equal(bucketed.reduce((n,b)=>n+b.decisions,0),1,'one decision across all confidence buckets')
+assert.equal(bucketed.reduce((n,b)=>n+b.verifiedCompletions,0),0,'the old confidence bucket cannot resurrect retracted evidence')
+
 async function main(){
  const original=supabaseAdmin.from
  const inserts:any[]=[]
