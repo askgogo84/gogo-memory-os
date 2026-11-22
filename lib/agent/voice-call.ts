@@ -9,6 +9,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { beginApprovedVoiceCall, voicePlanHash, voiceAttemptId } from './voice-call-execution'
 import { capabilityPaused, capabilityPausedText } from './policy'
 
+import type { CallLanguage } from './voice-call-language'
+
 const BOLNA = 'https://api.bolna.ai'
 // v3 (21 Nov): phone-menu rule. A new name makes Bolna create the agent with the new instructions on the next call.
 export const CALL_AGENT_NAME = 'AskGogo booking caller v3'
@@ -83,11 +85,19 @@ export function callLead(raw: string): string {
   const t = String(raw || '').trim()
   return CALL_LEAD.test(t) ? t.replace(CALL_LEAD, '').replace(/\s*\?+\s*$/, '').trim() : t
 }
+// A separate instruction avoids treating "ask whether the class is in Hindi" as a voice selection.
+function callLanguageRequest(raw: string) {
+  const match = /(?:[;,.]\s*|\n\s*)(?:please\s+)?speak\s+(?:in\s+)?([a-z]+)(?:\s+(?:on|during)\s+the\s+call)?[.!]?\s*$/i.exec(raw)
+  if (!match) return null
+  return { request:raw.slice(0,match.index).trim(), language:match[1].toLowerCase(), directive:match[0] }
+}
+
 export function parseCallCommand(raw: string): CallCommand | null {
   // The lead-in is dropped only for a new call request. "Can you call them?" is a question, never the yes to a shown plan.
   const led = callLead(raw)
   const t = String(raw || '').trim()
-  const test = t.match(/^(?:(?:do\s+a\s+)?test\s+call(?:\s+me)?|call\s+me\s+(?:to|for\s+a)\s+test|make\s+a\s+test\s+call)(?:\s+(?:on|at|to)\s+([+\d][\d\s-]{8,16}))?[.!]?$/i)
+  const testText = callLanguageRequest(t)?.request ?? t
+  const test = testText.match(/^(?:(?:do\s+a\s+)?test\s+call(?:\s+me)?|call\s+me\s+(?:to|for\s+a)\s+test|make\s+a\s+test\s+call)(?:\s+(?:on|at|to)\s+([+\d][\d\s-]{8,16}))?[.!]?$/i)
   if (test) { const n = test[1] ? indianPhoneFrom(test[1]) : null; return n ? { kind: 'test', number: n } : { kind: 'test' } }
   if (/^(?:yes[,!]?\s*)?(?:(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?|place\s+the\s+call|yes,?\s*call)[.!]?$/i.test(t) && /\bcall\b/i.test(t) && !/\bagain\b/i.test(t)) return { kind: 'approve' }
   // A bare yes only approves when Gogo's latest message is the call plan (checked in tryVoiceCall).
@@ -113,6 +123,7 @@ export type CallPlan = {
   purpose: string; test: boolean; redials: number; createdAt: string; startClock?: string
   /** 'general' = any ask other than a restaurant table. `opening` is the first thing said; `details` is what may be shared. */
   kind?: 'table' | 'general'; opening?: string; details?: string
+  callLanguage?: CallLanguage; voiceAgentId?: string
 }
 
 /** 9 am to 9 pm India time for an Indian number (GOGO_CALL_HOURS="9-21" to change). Another country's number has no
@@ -134,6 +145,7 @@ export function callingHoursProblem(to: string, now: Date, env: Record<string, s
 export function callPlanText(p: CallPlan) {
   if (p.kind === 'general') return [
     '*CALL PLAN · NEEDS YOUR YES*',
+    ...(p.callLanguage ? [`Call language: ${p.callLanguage} (Sarvam via Bolna). The script below is shown in English.`] : []),
     `To: ${p.venue} · ${displayPhone(p.to)}${p.source ? ` (${p.source})` : ''}`,
     `From: ${displayPhone(DEFAULT_FROM_NUMBER)}`,
     `"Hi, I'm an AI assistant from AskGogo, calling for ${p.guestName}. ${p.opening || ''}"`,
@@ -147,6 +159,7 @@ export function callPlanText(p: CallPlan) {
     : `"Hi, I'm an AI assistant from AskGogo, calling for ${p.guestName}. Could I book a table for ${p.partySize || 2} ${p.dateLabel} at ${p.timeLabel}? If that's full, ${p.flexWindow} works."`
   const body = [
     '*CALL PLAN · NEEDS YOUR YES*',
+    ...(p.callLanguage ? [`Call language: ${p.callLanguage} (Sarvam via Bolna). The script below is shown in English.`] : []),
     `To: ${p.venue} · ${displayPhone(p.to)}${p.source ? ` (${p.source})` : ''}`,
     `From: ${displayPhone(DEFAULT_FROM_NUMBER)}`,
     script,
@@ -319,8 +332,16 @@ export async function ensureCallAgent(fetchImpl: typeof fetch = fetch, kind: 'ta
   return (cachedAgentId = id)
 }
 
-export async function placeCall(plan: CallPlan, contactNumber: string, fetchImpl: typeof fetch = fetch) {
-  const agentId = await ensureCallAgent(fetchImpl, plan.kind === 'general' ? 'general' : 'table')
+export async function placeCall(plan: CallPlan, contactNumber: string, fetchImpl: typeof fetch = fetch, owner?: string) {
+  let agentId: string
+  if (plan.callLanguage !== undefined || plan.voiceAgentId !== undefined) {
+    const { sarvamCallProfile } = await import('./voice-call-language')
+    const profile = sarvamCallProfile(owner,plan.callLanguage,plan.kind ?? 'table')
+    if (!profile || profile !== plan.voiceAgentId) throw Error('localized_call_profile_unavailable')
+    agentId = profile
+  } else {
+    agentId = await ensureCallAgent(fetchImpl, plan.kind === 'general' ? 'general' : 'table')
+  }
   const res = await bolna('/call', { method: 'POST', body: {
     agent_id: agentId,
     recipient_phone_number: plan.to,
@@ -331,7 +352,7 @@ export async function placeCall(plan: CallPlan, contactNumber: string, fetchImpl
       : {
       venue: plan.venue, guest_name: plan.guestName, party_size: String(plan.partySize || 2), date_label: plan.dateLabel,
       time_label: plan.timeLabel, flex_window: plan.flexWindow, seating: plan.seating,
-      contact_number: contactNumber, purpose: plan.purpose, timezone: 'Asia/Kolkata',
+      contact_number: plan.callLanguage ? '' : contactNumber, purpose: plan.purpose, timezone: 'Asia/Kolkata',
     },
   } }, fetchImpl)
   const executionId = String(res?.execution_id || '')
@@ -526,11 +547,13 @@ export function generalCallFromNumberReply(state: any, replyText: string, lastAs
       !p.prompt || p.prompt !== lastAssistant || typeof p.original !== 'string' || p.original.length > 450) return null
   const original = callLead(p.original)
   if (parseCallCommand(original)?.kind !== 'book') return null
-  const pieces = splitCallAsk(stripCallBookingName(original))
+  const languageRequest = callLanguageRequest(original)
+  const task = languageRequest?.request ?? original
+  const pieces = splitCallAsk(stripCallBookingName(task))
   if (!pieces || pieces.phone || pieces.unreadable || !pieces.venue || PERSONAL_CALLEE.test(pieces.venue) ||
       isTableAsk(pieces.ask) || pieces.ask.length > 250) return null
-  const named = callBookingName(original)
-  const next = 'call '+pieces.venue+' on '+phone+' and '+pieces.ask+(named ? ' under the name '+named : '')
+  const named = callBookingName(task)
+  const next = 'call '+pieces.venue+' on '+phone+' and '+pieces.ask+(named ? ' under the name '+named : '')+(languageRequest?.directive ?? '')
   return parseCallCommand(next)?.kind === 'book' ? next : null
 }
 
@@ -683,11 +706,16 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     const hours = callingHoursProblem(plan.to, new Date())
     if (hours) return { text: hours, handledBy: 'voice-call' }
     if (!voiceCallsEnabled()) return { text: 'Calling isn\'t switched on yet (the voice provider key is missing). Nothing was called.', handledBy: 'voice-call' }
+    if (plan.callLanguage !== undefined || plan.voiceAgentId !== undefined) {
+      const { sarvamCallProfile } = await import('./voice-call-language')
+      const profile = sarvamCallProfile(tg,plan.callLanguage,plan.kind ?? 'table')
+      if (!profile || profile !== plan.voiceAgentId) return { text:'The voice profile for that plan is unavailable or has changed. Ask for a fresh plan. Nothing was called.',handledBy:'voice-call' }
+    }
     const contact = params.actor.whatsappId ? '+' + String(params.actor.whatsappId).replace(/\D/g, '') : ''
     const placement = await beginApprovedVoiceCall({ owner: String(tg), plan,
       approvedPlanHash: String(state?.payload?.approvalHash || ''),
       shownText: await latestAssistantText(tg), expectedText: callPlanText(plan), surface: params.surface,
-      db: supabaseAdmin, place: () => placeCall(plan, contact) })
+      db: supabaseAdmin, place: () => placeCall(plan, contact, fetch, String(tg)) })
     if (placement.status === 'outcome_unknown') return { text: `The call to ${plan.venue} may have started, but I couldn't confirm its status. I haven't repeated it. Check the task before trying again.`, handledBy: 'voice-call' }
     if (placement.status === 'rejected') return { text: `The calling provider rejected this attempt to ${plan.venue}. Nothing was called or booked. Ask for a fresh call plan to try again.`, handledBy: 'voice-call' }
     if (placement.status === 'blocked') return { text: placement.reason === 'call_already_attempted' || placement.reason === 'previous_call_requires_reconciliation'
@@ -702,6 +730,20 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   // no number lookup, no brief written, nothing saved. The check at approval time stays as the backstop.
   const closed = callingHoursProblem('+910000000000', new Date())
   if (closed) return { text: closed, handledBy: 'voice-call' }
+  const languageRequest = callLanguageRequest(numberFollowup || params.text)
+  let voiceProfile: Pick<CallPlan,'callLanguage'|'voiceAgentId'> = {}
+  if (languageRequest) {
+    const language = languageRequest.language
+    if (cmd.kind === 'book') cmd = { ...cmd, text:callLead(languageRequest.request) }
+    if (language !== 'english') {
+      const callLanguage = language === 'hindi' ? 'Hindi' : language === 'kannada' ? 'Kannada' : null
+      const ask = cmd.kind === 'book' ? splitCallAsk(stripCallBookingName(cmd.text)) : null
+      const { sarvamCallProfile } = await import('./voice-call-language')
+      const profile = sarvamCallProfile(tg,callLanguage,ask && !isTableAsk(ask.ask) ? 'general' : 'table')
+      if (!callLanguage || !profile) return {text:'That call language is unavailable for this account. Nothing was called.',handledBy:'voice-call'}
+      voiceProfile = {callLanguage,voiceAgentId:profile}
+    }
+  }
   // "…under the name Goverdhan" wins; otherwise the account name.
   // A phone-only reply must preserve the explicit name in the original, owner-bound task.
   const givenName = callBookingName(numberFollowup || params.text)
@@ -715,7 +757,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   if (cmd.kind === 'test') {
     const own = cmd.number || indianPhoneFrom(String(params.actor.whatsappId || ''))
     if (!own) return { text: "I don't have an Indian mobile number for you to test-call.", handledBy: 'voice-call' }
-    plan = { venue: 'your phone', to: own, source: cmd.number ? 'the number you gave' : 'your WhatsApp number', guestName, partySize: null, date: null, dateLabel: 'today', timeLabel: 'now', flexWindow: 'n/a', seating: 'n/a',
+    plan = { ...voiceProfile, venue: 'your phone', to: own, source: cmd.number ? 'the number you gave' : 'your WhatsApp number', guestName, partySize: null, date: null, dateLabel: 'today', timeLabel: 'now', flexWindow: 'n/a', seating: 'n/a',
       purpose: 'This is a short test call. Say hello, explain you are testing how you sound for future restaurant bookings, ask if the audio is clear, then thank them and end.', test: true, redials: 0, createdAt: now }
   } else {
     const rr = await import('@/lib/agent/restaurant-reservation')
@@ -738,14 +780,14 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
         const pickerHint=showPicker?' You can check a business listing at https://app.askgogo.in/dashboard/call-number, then reply here with the number you confirm.':''
         const prompt=`To call ${callee}, please reply with the correct Indian business phone number. I won't search the web for a number or place a call. After you send it, I'll show the full call plan and ask for a separate yes. Nothing was called.${pickerHint}`
         // A number-only reply is bound to this exact question, this owner and the original task.
-        await fs.saveFollowupState(tg,CALL_NUMBER_STATE,{owner:String(tg),original:cmd.text,prompt})
+        await fs.saveFollowupState(tg,CALL_NUMBER_STATE,{owner:String(tg),original:cmd.text+(languageRequest?.directive ?? ''),prompt})
         const stored=await fs.getLatestFollowupState(tg,CALL_NUMBER_STATE).catch(()=>null)
         if(stored?.payload?.owner===String(tg)&&stored?.payload?.prompt===prompt) return {text:prompt,handledBy:'voice-call-number-needed'}
         return {text:`To call ${callee} I need their number. Please resend the entire request with the business number. Nothing was called.`,handledBy:'voice-call'}
       }
       const hit = { phone: general.phone, source: known ? known.source : 'the number you gave' }
       const brief = await compileCallAsk(general.ask, general.venue, guestName)
-      plan = { venue: general.venue, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
+      plan = { ...voiceProfile, venue: general.venue, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
         purpose: brief.task, opening: brief.opening, details: brief.details, kind: 'general', test: false, redials: 0, createdAt: now }
       if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
       await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: voicePlanHash(String(tg), plan) })
@@ -769,7 +811,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     if (!found) return { text: `I couldn't find a phone number for ${intent.restaurant}. Send it, like *call ${intent.restaurant} on 080 1234 5678 and book a table…*. Nothing was called.`, handledBy: 'voice-call' }
     const start = intent.preferredStart || '20:00'
     const window = flexWindowLabel(start, rr.reservationClockLabel)
-    plan = { venue: intent.restaurant, to: found.phone, source: found.source, guestName, partySize: intent.partySize || 2,
+    plan = { ...voiceProfile, venue: intent.restaurant, to: found.phone, source: found.source, guestName, partySize: intent.partySize || 2,
       // The call says "today" when no day was named, so the booking record uses today's date too (round 6, #36).
       date: intent.requestedDate || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
       dateLabel: intent.requestedDate ? rr.reservationDayLabel(intent.requestedDate, start) : 'today', timeLabel: rr.reservationClockLabel(start),

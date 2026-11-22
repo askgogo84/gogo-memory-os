@@ -65,3 +65,18 @@ Order for a canary, one switch at a time, each with the owner's explicit approva
 3. Turn on ONE switch. Speech-to-text first; planner last (it also drives the signed-in browser agent).
 4. Watch `cost_events` / model usage for provider `sarvam` and the fallback rate before the next switch.
 Rollback: remove the switch, or remove the id from the list. No deploy is needed beyond the env change taking effect.
+
+## Outbound Hindi and Kannada pilot
+
+Append a separate instruction to a call request, for example `test call me; speak in Kannada` or `call Example Salon on <business number> and ask if they open Sunday; speak in Hindi`. The approval card names the voice language and provider. A request for an unavailable profile stops before a plan is shown. Existing English calls retain their original approval and retry identity.
+
+The owner provisions distinct Bolna agents using Sarvam transcription and synthesis in the chosen language. Use the existing general or table script for the corresponding profile, including its disclosure, data-sharing limits, no-payment rule, phone-menu exit, and outcome reporting. Localize the AI/recording disclosure and spoken text, preserve the existing user-data variable names and use only details from the card. A localized profile receives no customer callback number. If the venue needs one, the caller says the guest will provide it directly. Keep the agent configuration fixed under each ID; use a new ID when changing a profile.
+
+| Language | Table or self-test agent | General business agent |
+|---|---|---|
+| Hindi | `BOLNA_SARVAM_HI_TABLE_AGENT_ID` | `BOLNA_SARVAM_HI_GENERAL_AGENT_ID` |
+| Kannada | `BOLNA_SARVAM_KN_TABLE_AGENT_ID` | `BOLNA_SARVAM_KN_GENERAL_AGENT_ID` |
+
+Only populate the profile being tested. For this pilot the existing Sarvam production, key, owner allowlist, STT and TTS gates and the dedicated `GOGO_SARVAM_CALLS=on` switch must all pass. Normal voice kill-switch, India calling hours, recipient and approval rules also apply. An ID reused across configured profiles is refused. Disabling the switch, removing the owner, or replacing the agent ID invalidates a pending localized call. No provisioning or live acceptance is performed by the test suite.
+
+Start with an owner-approved self-test of voice, AI/recording disclosure and comprehension in each language. Validate the salon, hotel or clinic scenario only with an approved destination, script and time. Record the actual outcome from the provider before marking a live case accepted.
