@@ -76,19 +76,22 @@ export function isBrowserRegistrationBarrier(page:{
     } catch { return false }
   })
   if(registrationTitle||formRegistration)return true // multi-step signups may show only email first
-  const articlePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|faq|tutorials?)(?:\/|$)/i.test(path)
   const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(body)
   const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(body)
   const newsletterForm=(form:NonNullable<typeof page.forms>[number])=>{
     const fields=form.inputs||[]
+    // A newsletter checkbox in a real account form is not permission to treat
+    // the entire account registration as a newsletter subscription.
     if(fields.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))))return false
     const fieldEvidence=[form.action||'',...fields.flatMap(input=>[input.name,input.label])].join(' ')
-    const formText=String(form.formText||'')
-    const formAccountCue=/\b(?:create\s+(?:an?\s+|your\s+)?account|register(?:\s+an?\s+account)?|already\s+have\s+an?\s+account)\b/i.test(formText)
-    if(formAccountCue)return false
-    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence)
-      ||(articlePath&&/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(formText))
-      ||(articlePath&&!password&&!(signupCopy&&existingAccountCopy))
+    const formText=String(form.formText||'').replace(/\s+/g,' ').trim()
+    const explicitAccount=/\b(?:create\s+(?:an?\s+|your\s+)?account|register(?:\s+an?\s+account)?|already\s+have\s+an?\s+account)\b/i.test(formText)
+    if(explicitAccount)return false
+    const newsletterEvidence=/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence+' '+formText)
+    if(!newsletterEvidence)return false // Never exempt a form based on its URL alone.
+    const signupSubmit=(form.submitLabels||[]).some(label=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))
+    const newsletterHeading=/^(?:newsletter\b|subscribe\b|subscription\b|sign\s*up\s+(?:now\s+)?(?:for|to)\s+(?:our\s+)?(?:newsletter\b|email\s+updates\b))/i.test(formText)
+    return !signupSubmit||newsletterHeading
   }
   const credentialForms=(page.forms||[]).filter(form=>!newsletterForm(form))
   const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
