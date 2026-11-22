@@ -58,7 +58,7 @@ for (const bad of ['Sagar Clinic on 0821 2345678', 'Novotel on 98450 1234', 'Air
   eq([cp(bad).phone, cp(bad).unreadable], [null, true], `unreadable, never guessed or replaced: ${bad}`)
 eq([cp('Manipal Hospital').phone, cp('Manipal Hospital').unreadable], [null, false], 'no number typed')
 const vsrc = readFileSync('lib/agent/voice-call.ts', 'utf8')
-ok(vsrc.includes('if (general.unreadable) return { text: `I couldn\'t read the phone number in that message') && vsrc.includes('if (!general.phone) return { text: `To call ${callee} I need their number') && !/findNamedPhone|pickNamedPhone/.test(vsrc), 'a general call needs the number in the message; no web lookup exists for it')
+ok(vsrc.includes("if (general.unreadable) return { text: `I couldn't read the phone number in that message") && vsrc.includes("if (!general.phone) {") && !/findNamedPhone|pickNamedPhone/.test(vsrc), 'general calls never look up a number on the web; owner supplies one on the plan or in a follow-up')
 ok(/ v[2-9]$/.test(vc.GENERAL_CALL_AGENT_NAME), 'the general agent has a new name, so an agent made from an earlier draft is never reused (v3 on 21 Nov: phone menus)')
 
 // 4. The brief: a faithful restatement or the person's own words (review B3, D2).
