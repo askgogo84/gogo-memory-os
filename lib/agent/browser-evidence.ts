@@ -34,7 +34,10 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
   const descriptors=inputs.map(input=>`${input.name||''} ${input.type||''} ${input.label||''}`)
   const copy=`${page.title||''} ${page.text||''}`
   const loginCopy=/\b(sign in|log in|login|account login)\b/i.test(copy)
-  if(descriptors.some(value=>/\bpassword\b/i.test(value))&&loginCopy)return true
+  const registrationCopy=/\b(?:sign\s*up|create\s+(?:an?\s+)?account|register)\b/i.test(copy)
+  // Registration forms asking for a password are auth barriers; newsletter/email
+  // sign-up fields without a password are not.
+  if(descriptors.some(value=>/\bpassword\b/i.test(value))&&(loginCopy||registrationCopy))return true
   const loginInput=descriptors.some(value=>/\b(username|email|phone|mobile|login)\b/i.test(value))
   const activePrompt=/\b(?:sign in|log in|login) (?:to continue|to your account|required)\b/i.test(copy)
     || /^(?:sign in|log in|login)(?:\s*[-–—|:]|$)/i.test(page.title?.trim()||'')
@@ -51,6 +54,13 @@ export function isBrowserLoginShell(page:{
   forms?:Array<{inputs?:Array<{name?:string;type?:string;label?:string}>}>
 }):boolean {
   if(isLoginFormPage(page))return true
+  // Instagram's registration route can render as an empty shell before controls load.
+  // Restrict this check to its exact trusted host and path, not arbitrary /signup links.
+  try {
+    const url=new URL(page.url||'')
+    if((url.hostname==='instagram.com'||url.hostname==='www.instagram.com')
+      &&/^\/accounts\/emailsignup\/?$/i.test(url.pathname))return true
+  }catch{}
   const title=String(page.title||'').replace(/\s+/g,' ').trim()
   const body=String(page.text||'').replace(/\s+/g,' ').trim()
   const leading=body.slice(0,1800)
@@ -70,7 +80,10 @@ export function isBrowserLoginShell(page:{
   const visibleInstagramPost=instagram&&/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading)
   // Sites may use a combined login/signup call-to-action instead of a standalone login button.
   const activeGate=/^(?:please\s+)?(?:log\s*in|sign\s*in)(?:\s+or\s+sign\s*up)?\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
-  const openingGate=body.length<900&&activeGate.test(opening)
+  // Some signed-out Instagram pages show only a sign-up gate, with no "Log in".
+  // Strip this gate before applying the existing real-caption evidence heuristic.
+  const signupGate=/^(?:please\s+)?sign\s*up\s+(?:to|before)\s+(?:see|view|watch|access|read)\s+(?:(?:photos?\s+and\s+videos?)|(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page))\b/i
+  const openingGate=body.length<900&&(activeGate.test(opening)||signupGate.test(opening))
   if(openingGate&&!instagram)return true
 
   // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
@@ -83,7 +96,7 @@ export function isBrowserLoginShell(page:{
   // access prompt and stock "and videos from friends" copy before evaluating
   // whether an unlabelled public caption is actually present below it.
   const evidenceBody=openingGate
-    ?opening.replace(activeGate,'')
+    ?opening.replace(activeGate,'').replace(signupGate,'')
       .replace(/^\s*(?:and\s+videos?(?:\s+from\s+(?:your\s+)?friends)?|from\s+(?:your\s+)?friends)\b/i,'')
       // Login walls also carry account-creation marketing. It is not post copy.
       .replace(/\b(?:create\s+an?\s+account|join\s+instagram)(?:\s+to\s+(?:see|view|watch|explore|share)\s+(?:more\s+)?(?:photos?(?:\s+and\s+videos?)?|videos?|posts?|content))?\b/gi,'')
