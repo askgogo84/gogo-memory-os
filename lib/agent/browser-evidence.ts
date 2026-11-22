@@ -28,6 +28,23 @@ export function hasSignInEntry(page:{links?:Array<{text?:string}>;controls?:Arra
   return labels.some(value=>/^(?:log ?in|sign ?in)(?:\s*(?:\/|or)\s*sign ?up)?$/i.test(String(value||'').trim()))
 }
 
+/** A signup/registration barrier is evidence to PAUSE, never authority for
+ * automatic Vault sign-in. Keep distinct from the broader read-auth shell gate.
+ */
+export function isBrowserRegistrationBarrier(page:{url?:string;title?:string;text?:string}):boolean {
+  try {
+    const path=new URL(page.url||'').pathname
+    if(/(?:^|\/)(?:signup|sign-up|register|registration|create-account|emailsignup)(?:\/|$)/i.test(path))return true
+  }catch{}
+  const title=String(page.title||'').replace(/\s+/g,' ').trim()
+  if(/^(?:sign\s*up|create\s+(?:an?\s+|your\s+)?account|register|registration)(?:\s*[-–—|•:].*)?$/i.test(title))return true
+  const opening=String(page.text||'').replace(/\s+/g,' ').trim()
+    .replace(/^(?:instagram|meta)\s+/i,'').slice(0,400)
+  // A heading for account creation is not a sign-in offer.
+  // A guide quoting the same text later in the body is not an active gate.
+  return /^(?:please\s+)?(?:sign\s*up|create\s+(?:an?\s+|your\s+)?account|register)\s+(?:to|before|for)\b/i.test(opening)
+}
+
 export function isLoginFormPage(page:{url?:string;title?:string;text?:string;forms?:Array<{inputs?:Array<{name?:string;type?:string;label?:string}>}>}):boolean {
   if(isLoginUrl(page.url||''))return true
   const inputs=(page.forms||[]).flatMap(form=>form.inputs||[])
