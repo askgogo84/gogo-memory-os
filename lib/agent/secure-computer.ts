@@ -2569,7 +2569,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         try {
           const url=new URL(String(page.url||''))
           return ['instagram.com','www.instagram.com'].includes(url.hostname.toLowerCase())
-            &&/^\\/(?:p|reel)\\//i.test(url.pathname)
+            &&/^\/(?:p|reel)\//i.test(url.pathname)
             &&!(page.forms||[]).some((f:any)=>(f.inputs||[]).some((i:any)=>/password|email|phone|username/i.test([i.name,i.type,i.label].join(' '))))
         } catch { return false }
       })()
