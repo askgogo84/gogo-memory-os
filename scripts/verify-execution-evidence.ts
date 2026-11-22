@@ -38,6 +38,23 @@ async function main() {
       assert.equal(written.metadata_json.verified,false)
       assert.equal(written.metadata_json.verification_source,null)
     }
+    for(const item of [
+      {handler:'gmail-verification',source:'gmail',kind:'read',objectKind:'gmail_send'},
+      {handler:'watcher-status',source:'canonical_watchers',kind:'read',objectKind:'watcher'},
+      {handler:'calendar-named-read',source:'google_calendar',kind:'read',objectKind:'calendar_event'},
+      {handler:'reminder-query',source:'canonical_reminders',kind:'read',objectKind:'reminder'},
+      {handler:'reminder-update',source:'canonical_reminders',kind:'canonical_state',objectKind:'reminder'},
+    ]) {
+      const evidence={verified:true,source:item.source,kind:item.kind,objectKind:item.objectKind,objectRef:'exact-object'}
+      const base={actor,text:'fixture',domain:'other' as const,handler:item.handler,objectKind:item.objectKind,objectRef:'exact-object',outcome:'verified_success' as const,verified:true}
+      await recordDecisionLearning({...base,readEvidence:evidence})
+      assert.equal(written.metadata_json.verified,true,item.handler+' must preserve verified exact-object evidence')
+      assert.equal(written.metadata_json.verification_source,item.source)
+      for(const bad of [{...evidence,objectRef:'different-owner-object'},{...evidence,source:'untrusted'},{...evidence,verified:false}]) {
+        await recordDecisionLearning({...base,readEvidence:bad})
+        assert.equal(written.metadata_json.outcome,'unknown',item.handler+' must reject mismatched read proof')
+      }
+    }
     const proof={source:'gmail' as const,kind:'provider_readback' as const,objectRef:'thread',providerRef:'message',verified:true}
     assert.equal(hasExecutionEvidence('gmail-send','other',proof),false)
     assert.equal(hasExecutionEvidence('calendar-create','thread',proof),false)
