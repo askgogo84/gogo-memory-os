@@ -2621,7 +2621,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
           forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
           blockReason:'human_auth_required',authReason:'registration_not_authorized'}
       }
-      let signedOutEntry=!registrationBarrier&&!publicGuideRead&&!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      let signedOutEntry=!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      if(registrationBarrier||publicGuideRead)signedOutEntry=false
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
       // A human may just have completed sign-in in this same page. A stale session marker
