@@ -28,6 +28,7 @@ type GooglePlace = {
   id?: unknown
   displayName?: { text?: unknown }
   formattedAddress?: unknown
+  addressComponents?: unknown
   businessStatus?: unknown
   internationalPhoneNumber?: unknown
 }
@@ -35,21 +36,30 @@ type SearchResults = { places?: unknown; nextPageToken?: unknown }
 
 const ORIGIN = 'https://places.googleapis.com'
 const SEARCH_URL = ORIGIN + '/v1/places:searchText'
-const SEARCH_MASK = 'places.id,places.displayName,places.formattedAddress,places.businessStatus,nextPageToken'
-const DETAILS_MASK = 'id,displayName,formattedAddress,businessStatus,internationalPhoneNumber'
+const SEARCH_MASK = 'places.id,places.displayName,places.formattedAddress,places.addressComponents,places.businessStatus,nextPageToken'
+const DETAILS_MASK = 'id,displayName,formattedAddress,addressComponents,businessStatus,internationalPhoneNumber'
 const validPlaceId = (id: unknown): id is string =>
   typeof id === 'string' && /^[a-zA-Z0-9_-]{10,180}$/.test(id)
 const display = (p: GooglePlace) => typeof p.displayName?.text === 'string' ? p.displayName.text.trim() : ''
 const address = (p: GooglePlace) => typeof p.formattedAddress === 'string' ? p.formattedAddress.trim() : ''
 const norm = (s: string) => s.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-const localityMatch = (addr: string, loc: string) =>
-  norm(loc).split(/\s+/).filter(t => t.length > 2).every(t => norm(addr).split(/\s+/).includes(t))
+// Google's regionCode=IN legitimately omits "India" from formattedAddress. A country code
+// in structured addressComponents is required instead; never infer country from query bias.
+const countryIsIndia = (p: GooglePlace) =>
+  Array.isArray(p.addressComponents) && p.addressComponents.some((c: any) =>
+    c && c.shortText === 'IN' && Array.isArray(c.types) && c.types.includes('country'))
+const localityMatch = (addr: string, loc: string) => {
+  // Keep short, numeric, and unit tokens: "Phase 1" must NOT match "Phase 2".
+  const tokens = norm(loc).split(/\s+/).filter(Boolean)
+  const inAddress = new Set(norm(addr).split(/\s+/).filter(Boolean))
+  return tokens.length > 0 && tokens.some(t => /[a-z]{2,}/.test(t)) &&
+    tokens.every(t => inAddress.has(t))
+}
 const eligible = (p: GooglePlace, business: string, locality: string) =>
   validPlaceId(p.id) && p.businessStatus === 'OPERATIONAL' &&
   norm(display(p)) === norm(business) &&
   address(p).length >= 10 &&
-  localityMatch(address(p), locality) &&
-  /\bIndia\b/i.test(address(p))
+  countryIsIndia(p) && localityMatch(address(p), locality)
 
 /** A unique exact business-name + locality match, not the provider's top-ranked guess. */
 export function uniqueBusinessPlace(raw: unknown, name: string, locality: string): GooglePlace | null {
@@ -66,7 +76,7 @@ export function verifiedIndiaPhone(raw: unknown): string | null {
 function safeInput(s: unknown, max: number): string | null {
   if (typeof s !== 'string' || s.length > max) return null
   const value = s.trim().replace(/\s+/g,' ')
-  if (value.length < 3 || !/^[a-zA-Z0-9 ,.'()&-]+$/.test(value) || /\b(?:https?|www|@)\b/i.test(value)) return null
+  if (value.length < 3 || !/^[a-zA-Z0-9 ,.'()&-]+$/.test(value) || /\b(?:https?|www|@)\b/i.test(value) || !norm(value).split(/\s+/).some(t => /[a-z]{2,}/.test(t))) return null
   return value
 }
 
