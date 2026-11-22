@@ -16,6 +16,7 @@ export const CALL_AGENT_NAME = 'AskGogo booking caller v3'
 export const GENERAL_CALL_AGENT_NAME = 'AskGogo general caller v3'
 export const DEFAULT_FROM_NUMBER = '+918065539020'
 export const PLAN_STATE = 'voice_call_plan'
+export const CALL_NUMBER_STATE = 'voice_call_number_needed'
 export const MAX_REDIALS = 2
 
 export function voiceCallsEnabled(env: Record<string, string | undefined> = process.env) {
@@ -501,6 +502,57 @@ export function unknownCallee(text: string): string | null {
   return callee.name || null
 }
 
+
+/** Only a stand-alone, fully readable Indian number may complete a pending general-call request. */
+export function callNumberReply(raw: string): string | null {
+  const s = String(raw || '').trim()
+  if (!/^\+?[\d\s().-]{9,24}$/.test(s)) return null
+  const d = s.replace(/\D/g,'')
+  if (!(d.length === 10 || (d.length === 11 && d.startsWith('0')) || (d.length === 12 && d.startsWith('91')))) return null
+  return indianPhoneFrom(s)
+}
+
+/** Convert a fresh, owner-bound number-only reply into a *new request*, not permission to dial.
+ * The original ask must be a general business call. The prompt must still be the user's latest
+ * assistant message and must have been written within ten minutes. No web number is accepted.
+ */
+export function generalCallFromNumberReply(state: any, replyText: string, lastAssistant: string, owner: string, now = Date.now()): string | null {
+  const phone = callNumberReply(replyText)
+  const p = state?.payload
+  const at = Date.parse(String(state?.created_at || ''))
+  const age = now-at
+  if (!phone || state?.type !== 'followup_state' || state?.kind !== CALL_NUMBER_STATE || !p ||
+      String(p.owner || '') !== owner || !Number.isFinite(at) || age < -60_000 || age > 10*60_000 ||
+      !p.prompt || p.prompt !== lastAssistant || typeof p.original !== 'string' || p.original.length > 450) return null
+  const original = callLead(p.original)
+  if (parseCallCommand(original)?.kind !== 'book') return null
+  const pieces = splitCallAsk(stripCallBookingName(original))
+  if (!pieces || pieces.phone || pieces.unreadable || !pieces.venue || PERSONAL_CALLEE.test(pieces.venue) ||
+      isTableAsk(pieces.ask) || pieces.ask.length > 250) return null
+  const named = callBookingName(original)
+  const next = 'call '+pieces.venue+' on '+phone+' and '+pieces.ask+(named ? ' under the name '+named : '')
+  return parseCallCommand(next)?.kind === 'book' ? next : null
+}
+
+/** Keep string owner IDs exact; never convert the key to JS Number for a privileged lookup. */
+export async function confirmedGeneralCallNumberRequest(owner: string, text: string, db: {from:(t:string)=>any} = supabaseAdmin): Promise<string | null> {
+  if (!/^-?[1-9]\d{0,18}$/.test(String(owner)) || !callNumberReply(text)) return null
+  try {
+    const {data, error}=await db.from('memories').select('content,created_at').eq('telegram_id',owner).order('created_at',{ascending:false}).limit(25)
+    if (error) return null
+    const state=(data||[]).map((r:any)=>{try{return JSON.parse(String(r.content||''))}catch{return null}})
+      .find((x:any)=>x?.type==='followup_state'&&x?.kind===CALL_NUMBER_STATE)
+    if (!state) return null
+    const last=await db.from('conversations').select('role,content').eq('telegram_id',owner)
+      .order('created_at',{ascending:false}).order('role',{ascending:true}).limit(1)
+    if (last.error || last.data?.[0]?.role !== 'assistant') return null
+    return generalCallFromNumberReply(state,text,String(last.data[0].content||''),owner)
+  } catch { return null }
+}
+export async function isGeneralCallNumberReply(owner: string, text: string): Promise<boolean> {
+  return Boolean(await confirmedGeneralCallNumberRequest(owner,text))
+}
+
 /** For the routes: is this a call request, counting a venue this person has called before? */
 export async function isCallRequestFor(owner: string, text: string): Promise<boolean> {
   if (parseCallCommand(text)?.kind === 'book') return true
@@ -592,6 +644,8 @@ export async function compileCallAsk(ask: string, venue: string, guestName = 'my
 export async function tryVoiceCall(params: { actor: Actor; text: string; surface: 'web' | 'whatsapp' }): Promise<Reply | null> {
   const tg = params.actor.legacyTelegramId
   let cmd = parseCallCommand(params.text)
+  const numberFollowup = !cmd ? await confirmedGeneralCallNumberRequest(String(tg),params.text) : null
+  if (numberFollowup) cmd = { kind: 'book', text: numberFollowup }
   if (!cmd) {
     // A venue called before ("call Toit and ask…"): the same flow as a named business, with that call's number.
     const name = unknownCallee(params.text)
@@ -677,13 +731,22 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       if (general.unreadable) return { text: `I couldn't read the phone number in that message, so I haven't planned a call. Send one 10-digit mobile number or a landline with its STD code, like *call ${callee} on 080 1234 5678 and ${general.ask}*.`, handledBy: 'voice-call' }
       const known = general.phone ? null : await knownCallVenue(String(tg), callee)
       if (known) { general.phone = known.phone; general.venue = known.venue }
-      if (!general.phone) return { text: `To call ${callee} I need their number, so the call reaches the right place. Send it with the request, like *call ${callee} on 080 1234 5678 and ${general.ask}*. Nothing was called.`, handledBy: 'voice-call' }
+      if (!general.phone) {
+        const prompt=`To call ${callee}, please reply with the correct Indian business phone number. I won't search the web for a number or place a call. After you send it, I'll show the full call plan and ask for a separate yes. Nothing was called.`
+        // A number-only reply is bound to this exact question, this owner and the original task.
+        await fs.saveFollowupState(tg,CALL_NUMBER_STATE,{owner:String(tg),original:cmd.text,prompt})
+        const stored=await fs.getLatestFollowupState(tg,CALL_NUMBER_STATE).catch(()=>null)
+        if(stored?.payload?.owner===String(tg)&&stored?.payload?.prompt===prompt) return {text:prompt,handledBy:'voice-call-number-needed'}
+        return {text:`To call ${callee} I need their number. Please resend the entire request with the business number. Nothing was called.`,handledBy:'voice-call'}
+      }
       const hit = { phone: general.phone, source: known ? known.source : 'the number you gave' }
       const brief = await compileCallAsk(general.ask, general.venue, guestName)
       plan = { venue: general.venue, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
         purpose: brief.task, opening: brief.opening, details: brief.details, kind: 'general', test: false, redials: 0, createdAt: now }
       if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
       await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: voicePlanHash(String(tg), plan) })
+      // The number supplied in a follow-up only generated a plan; it was never itself permission to dial.
+      if(numberFollowup) await fs.clearFollowupState(tg,CALL_NUMBER_STATE)
       return { text: callPlanText(plan), handledBy: 'voice-call-plan' }
     }
     const parts = stripCallBookingName(cmd.text).match(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?(.+?)\s+(?:and|to)\s+(?:book|reserve)\s+(.+)$/i)
