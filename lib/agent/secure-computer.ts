@@ -303,8 +303,13 @@ async function isActiveRegistrationPage(page){
   }).catch(()=>({associated:true,explicit:true}));
   // A Sign up action must belong to the same non-newsletter credential
   // form. An unrelated footer newsletter beside a login form is not a barrier.
-  if(credentialForms.some(form=>(form.submitLabels||[]).some(label=>
-    /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))))return true;
+  if(credentialForms.some(form=>{
+    const syntheticSignup=form.synthetic!==true||(!publicGuidePath
+      &&/(?:^|\/)(?:auth|sign-?up|register|registration|create-?account)(?:\/|$)/i.test(path)
+      &&signupCopy&&/\b(?:log\s*in|sign\s*in)\b/i.test(fullText));
+    return syntheticSignup&&(form.submitLabels||[]).some(label=>
+      /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')));
+  }))return true;
   if(publicGuidePath&&!passwordField)return false;
   if(registrationSubmit.explicit&&credentialForms.length>0)return true;
   if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
