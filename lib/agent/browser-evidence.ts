@@ -67,7 +67,7 @@ export function isBrowserLoginShell(page:{
   const instagram=host==='instagram.com'||host==='www.instagram.com'
   // The observer can see real post copy below a sign-in banner. Preserve the
   // already-supported caption/engagement evidence before classifying a shell.
-  const visibleInstagramPost=instagram&&/\\b(?:\\d+\\s+likes?|\\d+\\s+comments?|view all comments)\\b|\\bcaption\\s*:/i.test(leading)
+  const visibleInstagramPost=instagram&&/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading)
   // Sites may use a combined login/signup call-to-action instead of a standalone login button.
   const activeGate=/^(?:please\s+)?(?:log\s*in|sign\s*in)(?:\s+or\s+sign\s*up)?\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
   if(body.length<900&&activeGate.test(opening)&&!visibleInstagramPost)return true
