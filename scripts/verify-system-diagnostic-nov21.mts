@@ -324,3 +324,15 @@ for (const t of ['diagnostic report', 'the diagnostic report', 'show me the diag
 for (const t of ['send me the diagnostic report', 'car diagnostic report', 'my diagnostic report', 'lab diagnostic report', 'what did the diagnostic report say']) assert.equal(d.classifyDiagnosticAsk(t), null, t)
 for (const t of ['diagnostic details', 'self-diagnostic report', 'full self-diagnostic', 'system diagnostic report']) { assert.equal(d.classifyDiagnosticAsk(t), 'diagnostic', t); assert.equal(d.wantsDiagnosticDetails(t), true, t) }
 console.log('✓ review fixes: stuck calls and failed reads are never quiet, housekeeping is not an alert, bare "diagnostic report" asks first')
+// 22 Nov live: identical alerts and identical open items were listed several times.
+{
+  const t: Tables = { ...healthy,
+    agent_activity: [1, 2, 3].map(h => ({ telegram_id: OWNER, event_type: 'watcher_triggered', created_at: ago(h), message: 'Mail alerts: 1 email(s) flagged.', metadata_json: { type: 'email_triage' } })),
+    agent_open_loops: [0.9, 0.8, 0.7].map(p => ({ telegram_id: OWNER, status: 'active', kind: 'followup', priority: p, title: p === 0.7 ? 'Review service billing notice — payment failed' : 'Review service billing notice — Payment Failed And Shutdown Coming Soon', due_at: null })),
+  }
+  const out = await d.runSystemDiagnostic(actor, { ...fakeDb(t), now: NOW, env, ...probes })
+  assert.equal((out.text.match(/Mail alerts: 1 email\(s\) flagged\./g) || []).length, 1); assert.match(out.text, /\(3 times\)/)
+  assert.equal((out.text.match(/Payment Failed And Shutdown Coming Soon/g) || []).length, 1)
+  assert.match(out.text, /Review service billing notice — payment failed/, 'different items stay')
+}
+console.log('✓ repeated alerts and open items are merged into one line')

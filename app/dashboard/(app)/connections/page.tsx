@@ -23,11 +23,11 @@ function ConnRow({name,state,available,operations,approval,verification,detail,h
       <div className="text-[16px] font-medium text-[#f2efea]">{name}</div>
       <div>
         <div className={`text-[14px] font-medium ${available?'text-[#7fb069]':'text-[#9a9a9a]'}`}>{state}</div>
-        {detail&&<div className="mt-1 text-[13px] leading-4 text-[#666]">{detail}</div>}
+        {detail&&<div className="mt-1 text-[13px] leading-4 text-[#8f8f8f]">{detail}</div>}
       </div>
-      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#555]">Supported operations</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{operations}</div></div>
-      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#555]">Approval boundary</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{approval}</div></div>
-      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#555]">Verification</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{verification}</div></div>
+      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#8f8f8f]">Supported operations</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{operations}</div></div>
+      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#8f8f8f]">Approval boundary</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{approval}</div></div>
+      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#8f8f8f]">Verification</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{verification}</div></div>
       {href&&<span className="text-[13px] text-[#2fb8a6]">Open →</span>}
     </div>
   </div>
@@ -126,7 +126,7 @@ export default async function ConnectionsPage(){
     </section>}
 
     <section className="mt-5 final-dark-panel overflow-hidden">
-      <div className="hidden border-b border-[#1f1f1f] px-4 py-3 text-[12px] uppercase tracking-[.14em] text-[#555] lg:grid lg:grid-cols-[170px_130px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <div className="hidden border-b border-[#1f1f1f] px-4 py-3 text-[12px] uppercase tracking-[.14em] text-[#8f8f8f] lg:grid lg:grid-cols-[170px_130px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
         <div>Connection</div><div>Availability</div><div>Operations</div><div>Approval</div><div>Evidence</div><div />
       </div>
       <div className="px-4">
