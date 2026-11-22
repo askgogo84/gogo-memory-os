@@ -41,6 +41,14 @@ assert.equal(isBrowserLoginShell({
   text:'Log in Sign up brandname New product launch today. November 22 About Help Press Privacy Terms',
 }),false,'unlabelled Instagram caption is real readable page content')
 assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public Hindi post',
+  text:'Log in Sign up brandname नया उत्पाद आज उपलब्ध है। हमारी पूरी जानकारी यहाँ पढ़ें। About Help Press Privacy Terms',
+}),false,'Unicode Hindi caption is visible public evidence, not a sign-in shell')
+assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public CJK post',
+  text:'Log in Sign up 新製品を本日発表しました詳細はこちらをご覧ください About Help Press Privacy Terms',
+}),false,'unspaced Unicode caption should not disappear into ASCII-only footer normalization')
+assert.equal(isBrowserLoginShell({
   url:'https://example.com/articles/authentication',title:'A guide to passkeys',
   text:'Our article discusses why many sites use a Sign in link, but this is public article text.',
 }),false,'incidental authentication references must not trigger a handoff')
