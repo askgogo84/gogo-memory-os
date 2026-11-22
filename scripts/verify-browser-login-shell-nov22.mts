@@ -9,6 +9,19 @@ const instagramLogin={
   text:'Instagram Log in Sign up Forgot password? About Help Privacy Terms',
 }
 assert.equal(isBrowserLoginShell(instagramLogin),true,'a redirected Instagram login must pause')
+const combinedInstagramGate={
+  url:'https://www.instagram.com/p/example',title:'Instagram',
+  text:'Instagram Please log in or sign up to see photos and videos from friends. Sign up. About Help Privacy Terms',
+}
+assert.equal(isBrowserLoginShell(combinedInstagramGate),true,
+  'a combined log-in-or-sign-up gate is not public post evidence')
+const combinedGenericGate={
+  url:'https://example.com/post/42',title:'Example',
+  text:'Log in or sign up to view this post. Create an account to continue.',
+}
+assert.equal(isBrowserLoginShell(combinedGenericGate),true,
+  'combined auth prompts also block other providers')
+
 assert.equal(isBrowserLoginShell({
   url:'https://www.instagram.com/p/example',title:'Instagram',
   text:'Instagram\nLog in\nSign up\nAbout\nHelp\nPress\nAPI\nJobs\nPrivacy\nTerms\nLocations',
@@ -53,6 +66,11 @@ assert.equal(isBrowserLoginShell({
   text:'Our article discusses why many sites use a Sign in link, but this is public article text.',
 }),false,'incidental authentication references must not trigger a handoff')
 assert.equal(isBrowserLoginShell({
+  url:'https://example.com/guides/instagram-auth',title:'How public sign-in pages work',
+  text:'This public guide quotes the phrase "Log in or sign up to see photos and videos" while explaining authentication.',
+}),false,'a quoted combined sign-in prompt is not an active page gate')
+
+assert.equal(isBrowserLoginShell({
   url:'https://example.com/guides/auth',title:'A guide to passkeys',
   text:'For protected content, users must sign in to continue. This public guide explains the sign-in flow and available authentication options.',
 }),false,'a quoted instruction is not an active sign-in gate')
@@ -75,7 +93,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'synthetic-role'
 process.env.OPENAI_API_KEY ||= 'synthetic-api'
 process.env.ANTHROPIC_API_KEY ||= 'synthetic-api'
 const {assessReadOutcome}=await import('../lib/agent/secure-computer')
-for(const page of [instagramLogin,
+for(const page of [instagramLogin, combinedInstagramGate, combinedGenericGate,
   {url:'https://www.instagram.com/p/example',title:'Instagram',text:'Instagram Log in Sign up About Help Press Privacy Terms'},
   {url:'https://example.com/login',title:'Sign in',text:'Username Password'},
 ]){
