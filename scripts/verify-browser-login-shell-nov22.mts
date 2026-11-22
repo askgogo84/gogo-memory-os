@@ -340,11 +340,11 @@ assert.equal(observedZeroBox.forms[0].inputs[0].name,'email',
 assert.equal(isBrowserRegistrationBarrier(observedZeroBox),true,
   'zero-box email-first signup must block backend Vault resolution')
 
-async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean;redirectAfterSubmit?:{url:string;title:string;text:string;forms?:any[]}}){
+async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean;signupSubmitType?:string;redirectAfterSubmit?:{url:string;title:string;text:string;forms?:any[]}}){
   const actions:string[]=[]
   const output:string[]=[]
   const field=(kind:string)=>({isVisible:async()=>true,fill:async()=>{actions.push('fill:'+kind)}})
-  let current:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean}=snapshot
+  let current:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean;signupSubmitType?:string}=snapshot
   const submit={isVisible:async()=>true,click:async()=>{
     actions.push('click:submit')
     if(snapshot.redirectAfterSubmit)current=snapshot.redirectAfterSubmit
@@ -372,7 +372,7 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
         })
       }
       const observedForms=(current.forms||[]).map((f,i)=>{
-        const observedSubmit=i===0&&current.signupSubmitVisible===true&&current.signupSubmitInForm!==false
+        const observedSubmit=i===0&&current.signupSubmitVisible===true&&current.signupSubmitInForm!==false&&current.signupSubmitType!=='button'
         return {...f,submitLabels:[...(f.submitLabels||[]),...(observedSubmit?[current.signupButtonLabel||'Sign up']:[])]}
       })
       return {...current,forms:observedForms}
