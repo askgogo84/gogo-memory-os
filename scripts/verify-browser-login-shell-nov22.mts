@@ -64,6 +64,17 @@ assert.equal(isBrowserRegistrationBarrier({
   forms:[{inputs:[{name:'email',type:'email'}]}],
 }),true,'first-step registration copy and an email field cannot authorize Vault')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Products Help Create account Continue. Already have an account? Log in',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}]}],
+  controls:[{tag:'button',label:'Continue — Create account'},{tag:'a',label:'Log in'}],
+}),true,'visible implicit registration submit blocks Vault before any credential resolution')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/login',title:'Sign in',text:'Sign in to your account',
+  forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+  controls:[{tag:'a',label:'Sign up'},{tag:'button',label:'Log in'}],
+}),false,'signup navigation link beside a real login form is not account creation')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Sign in to your account. New here? Sign up.',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
 }),false,'an actual login form with incidental sign-up navigation remains eligible for Vault')
@@ -226,7 +237,7 @@ const scriptStart=source.indexOf(workerMarker)+workerMarker.length
 const scriptEnd=source.indexOf('\n'+tick,scriptStart)
 assert.ok(scriptStart>40&&scriptEnd>scriptStart,'actual Vault script must be extractable')
 const script=source.slice(scriptStart,scriptEnd)
-async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean}){
+async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean}){
   const actions:string[]=[]
   const output:string[]=[]
   const field=(kind:string)=>({isVisible:async()=>true,fill:async()=>{actions.push('fill:'+kind)}})
@@ -242,10 +253,10 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
     getByText:()=>({first:()=>submit}),
     evaluate:async(fn:unknown)=>{
       const body=String(fn)
-      if(body.includes('button[type="submit"],input[type="submit"]')){
+      if(body.includes('button,input[type="submit"],[role="button"]')){
         // Run the actual visibility filter against an inert signup button.
         const button={
-          textContent:'Sign up',value:'',closest:()=>null,
+          textContent:snapshot.signupButtonLabel||'Sign up',value:'',getAttribute:()=>'',closest:(selector:string)=>selector==='form'&&snapshot.signupSubmitInForm!==false?{}:null,
           getBoundingClientRect:()=>({width:snapshot.signupSubmitVisible?80:0,height:snapshot.signupSubmitVisible?25:0}),
         }
         return vm.runInNewContext('('+body+')()',{
@@ -298,12 +309,22 @@ assert.deepEqual(loginWithHiddenSignup.actions.slice(0,2),['fill:user','fill:pas
 const loginWithVisibleSignup=await syntheticVaultWorker({
   url:'https://example.com/login',title:'Sign in',text:'Log in. New here? Sign up.',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
-  signupSubmitVisible:true,
+  signupSubmitVisible:true,signupSubmitInForm:true,
 })
 assert.equal(loginWithVisibleSignup.vaultLogin.registrationRefused,true,
   'a visible signup submit is active registration and must stop Vault')
 assert.deepEqual(loginWithVisibleSignup.actions,[],
   'an active visible registration submit cannot receive saved credentials')
+const implicitSignup=await syntheticVaultWorker({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Help Create account. Already have an account? Log in.',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'}]}],
+  signupSubmitVisible:true,signupSubmitInForm:false,signupButtonLabel:'Continue — Create account',
+})
+assert.equal(implicitSignup.vaultLogin.registrationRefused,true,
+  'implicit submit on an email-first registration must stop the worker before autofill')
+assert.deepEqual(implicitSignup.actions,[],
+  'implicit Create account button must not receive or submit saved Vault identity')
 
 // Exercise the real assessor, not only helper calls or string matching. All pages are synthetic;
 // these exits must occur before the model or any provider can be contacted.
