@@ -332,6 +332,17 @@ assert.equal(implicitSignup.vaultLogin.registrationRefused,true,
   'implicit submit on an email-first registration must stop the worker before autofill')
 assert.deepEqual(implicitSignup.actions,[],
   'implicit Create account button must not receive or submit saved Vault identity')
+const loginRedirectToSignup=await syntheticVaultWorker({
+  url:'https://example.com/login',title:'Sign in',text:'Log in',
+  forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+  redirectAfterSubmit:{url:'https://example.com/register',title:'Create account',text:'Sign up to proceed',forms:[]},
+})
+assert.equal(loginRedirectToSignup.vaultLogin.registrationRefused,true,
+  'registration after login submit must be refused, never treated as a verified login')
+assert.equal(loginRedirectToSignup.vaultLogin.submitted,true,
+  'test must exercise a real login submission before the registration redirect')
+assert.deepEqual(loginRedirectToSignup.actions.slice(0,2),['fill:user','fill:password'],
+  'login credentials are entered only on the originally observed actual login page')
 
 // Exercise the real assessor, not only helper calls or string matching. All pages are synthetic;
 // these exits must occur before the model or any provider can be contacted.
