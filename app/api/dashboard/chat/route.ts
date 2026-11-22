@@ -407,6 +407,14 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,instamart.text)
       return NextResponse.json(instamart)
     }
+    // 22 Nov: Swiggy Food (read-only search and menu, then the Swiggy app). Returns null while Swiggy access is off.
+    const swiggyFoodChat:any=(/\bswiggy\b/i.test(text)&&!/\b(?:instamart|dineout)\b/i.test(text))?await import('@/lib/commerce/swiggy-food-chat').catch(()=>null):null
+    const swiggyFood=typeof swiggyFoodChat?.trySwiggyFoodChat==='function'?await Promise.resolve().then(()=>swiggyFoodChat.trySwiggyFoodChat({telegramId:actor.legacyTelegramId,text})).catch((err:any)=>{console.error('SWIGGY_FOOD_CHAT_FAILED:',String(err?.message||err).slice(0,160));return null}):null
+    __trace.mark('swiggy-food')
+    if(swiggyFood){
+      await saveConversation(user.telegram_id,text,swiggyFood.text)
+      return NextResponse.json(swiggyFood)
+    }
     // Phone calls (Bolna): a call plan needs an explicit "yes call"; "test call me" rings the owner's own phone.
     const voiceMod:any=(/^\s*(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?(?:call|redial|phone|ring|test\s+call|do\s+a\s+test\s+call|make\s+a\s+test\s+call|place\s+the\s+call|try\s+again)\b|^\s*(?:no|don'?t\s+call|do\s+not\s+call|cancel\s+(?:the\s+)?call)[.!]?\s*$/i.test(text) || callCommand || (/^\s*(?:yes|yeah|yep|yup|ok|okay|sure|go\s+ahead|do\s+it|please\s+do|haan|ha)(?:\s+please)?[.!]*\s*$/i.test(text)&&await callPlanWasLastReply(user.telegram_id)))?await import('@/lib/agent/voice-call').catch(()=>null):null
     const voice=typeof voiceMod?.tryVoiceCall==='function'?await Promise.resolve().then(()=>voiceMod.tryVoiceCall({actor,text,surface:'web'})).catch((err:any)=>{console.error('VOICE_CALL_FAILED:',String(err?.message||err).slice(0,160));return null}):null
