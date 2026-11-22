@@ -2601,6 +2601,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
             &&!(page.forms||[]).some((f:any)=>(f.inputs||[]).some((i:any)=>/password|email|phone|username/i.test([i.name,i.type,i.label].join(' '))))
         } catch { return false }
       })()
+      // A public documentation/news article can show a newsletter field and
+      // navigation to sign in, but this is not permission to autofill identity.
+      const publicGuideRead=params.mode==='read'&&!loginish&&(()=>{
+        try{
+          return /(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(new URL(String(page.url||'')).pathname)
+        }catch{return false}
+      })()
       if(registrationBarrier&&params.accountCreation!==true&&!publicInstagramEvidence){
         const handoffReservation=params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
         return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,
@@ -2609,7 +2616,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
           forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
           blockReason:'human_auth_required',authReason:'registration_not_authorized'}
       }
-      let signedOutEntry=!registrationBarrier&&!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      let signedOutEntry=!registrationBarrier&&!publicGuideRead&&!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
       // A human may just have completed sign-in in this same page. A stale session marker
@@ -2617,7 +2624,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 26 Oct live: a Swiggy menu read for a food comparison signed in with the saved login and stopped at a text code.
       // A comparison read is a public page: it never signs in (publicOnly); a real sign-in wall still pauses for the person.
       if(params.publicOnly)signedOutEntry=false
-      if(!params.publicOnly&&!registrationBarrier&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      if(!params.publicOnly&&!registrationBarrier&&!publicGuideRead&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
@@ -2628,7 +2635,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         }
       }
       if(signedOutEntry)vaultEntryChecked=true
-      if(!params.publicOnly && !registrationBarrier && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
+      if(!params.publicOnly && !registrationBarrier && !publicGuideRead && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
