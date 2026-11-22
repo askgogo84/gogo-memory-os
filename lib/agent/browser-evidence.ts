@@ -53,6 +53,7 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
 export function isBrowserRegistrationBarrier(page:{
   url?:string;title?:string;text?:string;
   forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string}>}>
+  controls?:Array<{tag?:string;role?:string;type?:string;label?:string;text?:string}>
 }):boolean {
   let path=''
   try{path=new URL(page.url||'').pathname}catch{}
@@ -77,13 +78,24 @@ export function isBrowserRegistrationBarrier(page:{
   if(registrationTitle||formRegistration)return true // multi-step signups may show only email first
   // A public guide with a newsletter email field is not an account-creation form.
   if(publicGuidePath&&!password)return false
+  const hasAccountField=inputs.some(input=>/\b(?:email|phone|mobile|username)\b/i.test([input.name,input.type,input.label].join(' ')))
+  // The browser observer supplies *visible* controls. An email-first account
+  // creation screen may have a generic title and navigation before its heading:
+  // classify its actual submit action before retrieving ANY stored credentials.
+  const registrationAction=(page.controls||[]).some(control=>{
+    const tag=String(control.tag||'').toLowerCase(),role=String(control.role||'').toLowerCase()
+    const label=String(control.label||control.text||'').replace(/\s+/g,' ').trim()
+    const clickTarget=tag==='button'||(tag==='input'&&control.type==='submit')||role==='button'
+    return clickTarget&&/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label)
+      &&(password||hasAccountField)
+  })
+  if(registrationAction)return true
   const opening=body.replace(/^(?:instagram|meta)\s+/i,'').slice(0,260)
   const activeRegistration=/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\s+(?:to|before|for)\b/i.test(opening)
   let instagram=false
   try{instagram=['instagram.com','www.instagram.com'].includes(new URL(page.url||'').hostname.toLowerCase())}catch{}
   // Instagram sometimes exposes only a sign-up prompt, before any form loads.
   if(instagram&&activeRegistration)return true
-  const hasAccountField=inputs.some(input=>/\b(?:email|phone|mobile|username)\b/i.test([input.name,input.type,input.label].join(' ')))
   return activeRegistration&&(password||hasAccountField)
 }
 
