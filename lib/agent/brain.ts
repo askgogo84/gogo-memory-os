@@ -9,7 +9,7 @@
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
 import { isStopOneReminder } from '../bot/stop-reminder-phrase'
-import { classifyDiagnosticAsk } from './system-diagnostic'
+import { classifyDiagnosticAsk, diagnosticRewriteCore } from './system-diagnostic'
 import { isConnectMailAsk } from '../email/connect-phrases'
 import { tripAsk } from '@/lib/agent/trip-plan'
 import { personAsk } from '@/lib/agent/people'
@@ -738,6 +738,21 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
     const saved = await saveFollowup(p.telegramId, d.question).catch(() => false)
     if (saved) return { reply: `Still searching. I'll answer that the moment the results are in.` }
     return null
+  }
+  // 22 Nov live: "sab theek hai?" right after a self-diagnostic was rewritten to "Run a self-diagnostic and tell me if
+  // everything is okay." and handed on; the diagnostic check runs before the brain, so general chat wrote its own
+  // report ("Yes, boss, all 7 checks passed") with no provider check behind it. A rewrite that is a diagnostic ask
+  // now gets the real read-only report.
+  // Review (PR #1569): the core without the "tell me if…" tail is what the handler matches; a failed actor lookup
+  // falls back to handing the rewrite on, as before; a forwarded message never runs it (same rule as the routes).
+  const diagCore = d.kind === 'handle' && d.rewritten && !p.forwarded ? diagnosticRewriteCore(d.instruction) : null
+  if (diagCore) {
+    try {
+      const m = await import('./system-diagnostic')
+      const actor = await (await import('./actor')).resolveAgentActor({ telegramId: String(p.telegramId), whatsappId: p.whatsappId || undefined, surface: p.surface === 'web' ? 'web' : 'whatsapp' } as any)
+      const diag = await m.trySystemDiagnostic(actor, diagCore)
+      if (diag?.text) return { reply: diag.text }
+    } catch (err: any) { console.error('BRAIN_DIAGNOSTIC_FAILED:', String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60)) }
   }
   if (d.kind === 'handle' && d.rewritten) return { text: d.instruction }
   return null

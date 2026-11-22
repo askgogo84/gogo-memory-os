@@ -90,6 +90,19 @@ export function wantsDiagnosticDetails(raw: string): boolean {
   const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
   return DETAILS.test(t)
 }
+/** A brain rewrite ("Run a self-diagnostic and tell me if everything is okay."): the diagnostic ask plus a
+ *  "tell me whether it is all fine" tail. Only for rewrites; a user's own message still has to match whole. */
+const REPORT_TAIL = /\s*(?:,|and)\s*(?:then\s+)?(?:tell|let)\s+me\s+(?:know\s+)?(?:if|whether)\s+(?:everything|all|it|things)\s+(?:is|are|'s)?\s*(?:ok|okay|fine|working|healthy|good|alright)(?:\s+(?:or\s+not|properly|correctly|now))*\s*[?.!]*$/i
+/** The diagnostic ask inside a brain rewrite, with the tail removed, or null. Review (PR #1569): pass this core to
+ *  trySystemDiagnostic; the whole rewrite does not match the strict classifier. */
+export function diagnosticRewriteCore(instruction: string): string | null {
+  const t = String(instruction || '').replace(/\s+/g, ' ').trim()
+  if (classifyDiagnosticAsk(t) === 'diagnostic') return t
+  if (!REPORT_TAIL.test(t)) return null
+  const core = t.replace(REPORT_TAIL, '').trim()
+  return classifyDiagnosticAsk(core) === 'diagnostic' ? core : null
+}
+export function isDiagnosticRewrite(instruction: string): boolean { return diagnosticRewriteCore(instruction) !== null }
 /** "Are you ok?", "tum theek ho?": a check-in. Same checks, a short reply (no alerts or open items). */
 export function isCasualCheckIn(raw: string): boolean {
   const t = core(String(raw || '').replace(/\s+/g, ' ').trim())
