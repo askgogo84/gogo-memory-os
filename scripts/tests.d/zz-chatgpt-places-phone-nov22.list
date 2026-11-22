@@ -1,0 +1,2 @@
+# 22 Nov: paid Places API candidate only; all provider requests are mocked; no dialing
+npx tsx scripts/verify-general-call-places-phone-nov22.mts
