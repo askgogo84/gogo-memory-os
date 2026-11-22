@@ -257,7 +257,7 @@ async function handleChatPost(req: NextRequest) {
     // 21 Nov: "run a self-diagnostic" / "health check" reached goal intake (a list of "check …" became a goal plan) or
     // the general planner (an agent run with steps and todos). It gets a read-only report instead, before either can
     // take it: statuses with evidence, no sends, calls, schedule changes or approvals. Imported only on a likely ask.
-    if (text.length <= 400 && /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|running|up|healthy)|are\s+you\s+(?:working|up|ok|okay|fine|running|healthy)|(?:askgogo|gogo)\s+(?:working|up|ok|okay|fine|running|healthy|status)|yourself|pairing|persistence|watchers|integrations|connected\s+services|approvals|memory|voice/i.test(text)) {
+    if (text.length <= 400 && /diagnos|health[\s-]?check|self[\s-]?(?:test|check)|system|status\s+check|sanity\s+check|everything\s+(?:working|running|up|healthy)|are\s+you\s+(?:working|up|ok|okay|fine|alright|all\s+right|running|healthy)|(?:askgogo|gogo)\s+(?:working|up|ok|okay|fine|alright|running|healthy|status)|(?:tum|aap|tu|gogo)\s+(?:theek|thik|thick|ok|okay|kaam\s+kar|chal\s+rah)|khud|apne\s+aap|services|yourself|pairing|persistence|watchers|integrations|connected\s+services|approvals|memory|voice/i.test(text)) {
       const diag: any = await import('@/lib/agent/system-diagnostic').then(m => m.trySystemDiagnostic(actor, text), () => null)
       if (diag) {
         await saveConversation(user.telegram_id, text, diag.text)
