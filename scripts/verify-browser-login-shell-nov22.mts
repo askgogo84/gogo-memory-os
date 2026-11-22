@@ -251,6 +251,44 @@ const scriptStart=source.indexOf(workerMarker)+workerMarker.length
 const scriptEnd=source.indexOf('\n'+tick,scriptStart)
 assert.ok(scriptStart>40&&scriptEnd>scriptStart,'actual Vault script must be extractable')
 const script=source.slice(scriptStart,scriptEnd)
+// Execute the actual in-sandbox model against a display:contents form. Its
+// visible email field must be retained even when the form itself has no box.
+const modelStart=script.indexOf('async function model(page){')
+const modelEnd=script.indexOf('\n\n(async()=>{',modelStart)
+assert.ok(modelStart>=0&&modelEnd>modelStart,'actual browser page model must be extractable')
+const observedModel=vm.runInNewContext(script.slice(modelStart,modelEnd)+'\nmodel',{URL})
+const zeroBoxForm:any={
+  action:'https://example.com/auth',method:'post',
+  getBoundingClientRect:()=>({width:0,height:0}),
+  querySelectorAll:()=>[],
+}
+const visibleEmail:any={
+  id:'signupEmail',tagName:'INPUT',form:zeroBoxForm,
+  getAttribute:(key:string)=>key==='name'?'email':key==='type'?'email':null,
+  getBoundingClientRect:()=>({width:190,height:32}),
+}
+zeroBoxForm.querySelectorAll=()=>[visibleEmail]
+const observedZeroBox=await observedModel({
+  evaluate:async(callback:unknown)=>vm.runInNewContext('('+String(callback)+')()',{
+    URL,CSS:{escape:(x:string)=>x},
+    location:{href:'https://example.com/auth'},
+    document:{
+      title:'Welcome',
+      body:{innerText:'Home Help Create account Email Continue Already have an account? Log in'},
+      forms:[zeroBoxForm],
+      querySelectorAll:()=>[visibleEmail],
+      querySelector:()=>null,
+    },
+    getComputedStyle:()=>({visibility:'visible',display:'contents'}),
+  }),
+})
+assert.equal(observedZeroBox.forms.length,1,
+  'display:contents form must not disappear when its account field is visible')
+assert.equal(observedZeroBox.forms[0].inputs[0].name,'email',
+  'actual model must preserve visible email fields inside zero-box form')
+assert.equal(isBrowserRegistrationBarrier(observedZeroBox),true,
+  'zero-box email-first signup must block backend Vault resolution')
+
 async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean;signupButtonLabel?:string;signupSubmitInForm?:boolean;redirectAfterSubmit?:{url:string;title:string;text:string;forms?:any[]}}){
   const actions:string[]=[]
   const output:string[]=[]
