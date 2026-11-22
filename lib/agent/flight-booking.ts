@@ -267,7 +267,7 @@ function exactBookingConversationOwner(actor: AgentActor): string | null {
   const owner = String(raw)
   if (!/^-?[1-9]\d{0,18}$/.test(owner)) return null
   const id = BigInt(owner)
-  return id >= -(1n << 63n) && id <= (1n << 63n) - 1n ? owner : null
+  return id >= BigInt('-9223372036854775808') && id <= BigInt('9223372036854775807') ? owner : null
 }
 
 /** The person's message before this one (the details they sent before a re-ask). Chat history only; nothing new is stored. */
