@@ -490,8 +490,13 @@ export async function knownCallVenue(owner: string, typed: string, db: { from: (
   const name = String(typed || '').trim()
   // Review (PR #1561): WhatsApp-created owners are negative ids (lib/dashboard/owner-identity.ts); same check as
   // beginApprovedVoiceCall.
-  const o = String(owner || '')
-  if (!/^-?\d{1,16}$/.test(o) || !Number.isSafeInteger(Number(o)) || name.length < 3 || name.length > 60 || PERSONAL_CALLEE.test(name) || genericCallee(name)) return null
+  const o = String(owner ?? '')
+  // The downstream voice-call actor is still a JS-number legacy ID. Fail closed for
+  // out-of-range owners rather than rounding a 64-bit identity during routing.
+  // Do not coerce the owner to Number before any privileged friend/call lookup.
+  if (!/^-?[1-9]\d{0,18}$/.test(o) ||
+      BigInt(o) > BigInt(Number.MAX_SAFE_INTEGER) || BigInt(o) < -BigInt(Number.MAX_SAFE_INTEGER) ||
+      name.length < 3 || name.length > 60 || PERSONAL_CALLEE.test(name) || genericCallee(name)) return null
   try {
     // A friend of that name is a person, never the venue ("call Hari and ask…" with Hari Super Sandwich called before).
     const friends = await db.from('friend_contacts').select('name').eq('owner_telegram_id', o).limit(200)
@@ -503,9 +508,10 @@ export async function knownCallVenue(owner: string, typed: string, db: { from: (
     for (const row of data) {
       const plan = row?.metadata_json?.plan
       if (!plan || plan.test || typeof plan.venue !== 'string' || !/^\+91\d{10}$/.test(String(plan.to || ''))) continue
-      // Review (PR #1561): only a number the person typed themselves is reused. A table plan's number can come from a
-      // web lookup, which the general-call rule above refuses; a call the provider rejected never vouches for a number.
-      if (!/^the number you gave\b/.test(String(plan.source || '')) || row?.status === 'failed') continue
+      // Reuse only an owner-typed number from a call with a finalized completed outcome.
+      // Running, blocked, failed and outcome_unknown runs do not prove a call was made,
+      // so never promote their old plan into a trusted known-venue shortcut.
+      if (!/^the number you gave\b/.test(String(plan.source || '')) || row?.status !== 'completed') continue
       if (sameVenue(name, plan.venue)) return { venue: plan.venue, phone: String(plan.to), source: `the number you gave for ${plan.venue} earlier` }
     }
   } catch {}
