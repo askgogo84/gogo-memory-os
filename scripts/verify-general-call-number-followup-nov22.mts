@@ -15,6 +15,10 @@ assert.equal(v.splitCallAsk(next)?.phone,'+918023456789')
 assert.equal(v.isTableAsk(v.splitCallAsk(next)?.ask||''),false)
 assert.equal(v.parseCallCommand(next)?.kind,'book')
 assert.equal(v.callNumberReply('080 2345 6789'),'+918023456789')
+const named={...st,payload:{...st.payload,original:'call Naturals Salon Rajajinagar and book a haircut tomorrow at 6pm under the name Nithin'}}
+const namedNext=v.generalCallFromNumberReply(named,'080 2345 6789',prompt,owner,now)
+assert.equal(v.callBookingName(namedNext),'Nithin','the explicit recipient is preserved across the phone-number step')
+
 for(const bad of [
  '080 2345 6789 or 080 2345 6780','123456','080 2345 6789 and pay me',
  '1800 100 1000','+44 2071231234',''+String(123456789012345),
@@ -49,6 +53,7 @@ assert.equal(await v.confirmedGeneralCallNumberRequest(owner,'080 2345 6789',fak
 assert.equal(await v.confirmedGeneralCallNumberRequest(owner,'080 2345 6789',fakeDb([stateRow],[{role:'assistant',content:'new question'}]) as any),null)
 const source=readFileSync('lib/agent/voice-call.ts','utf8')
 assert.match(source,/if\(numberFollowup\) await fs\.clearFollowupState\(tg,CALL_NUMBER_STATE\)/)
+assert.match(source,/callBookingName\(numberFollowup \|\| params\.text\)/,'guest name is read from the original approved request, not just phone-number reply')
 assert.match(source,/saveFollowupState\(tg,CALL_NUMBER_STATE/)
 assert.match(source,/CALL PLAN · NEEDS YOUR YES/)
 const dash=readFileSync('app/api/dashboard/chat/route.ts','utf8'),wa=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
