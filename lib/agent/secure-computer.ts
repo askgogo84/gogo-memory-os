@@ -233,25 +233,28 @@ async function readyLoginFields(page, selector){
 // Fail closed after navigation and after any login panel transition. A saved
 // Vault password is NEVER consent to sign up, even on a redirected form.
 async function isActiveRegistrationPage(page){
+  // Use the same observed model as the existing Vault worker; never infer
+  // registration intent from a credential, or from a public article's links.
+  const observed=await model(page).catch(()=>null);
+  if(!observed||typeof observed!=='object')return true; // no snapshot => no write
   let path='';
-  try{path=new URL(page.url()).pathname}catch{}
-  if(/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i.test(path))return true;
-  const title=String(await page.title().catch(()=>'')||'').replace(/\s+/g,' ').trim();
-  const titleRegistration=/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title);
-  // A two-step signup may offer only an email at first. Never click Next first.
-  if(titleRegistration)return true;
-  const active=await page.evaluate(()=>{
-    const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
-    const leading=clean(document.body?.innerText).slice(0,260);
-    const prompt=/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\s+(?:to|before|for)\b/i.test(leading.replace(/^(?:instagram|meta)\s+/i,''));
-    const registerSubmit=Array.from(document.querySelectorAll('button[type="submit"],input[type="submit"]'))
-      .some(el=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(clean(el.textContent||el.value||'')));
-    const registerAction=Array.from(document.forms).some(form=>{
-      try{return /(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i.test(new URL(form.action,location.href).pathname)}catch{return false}
-    });
-    return prompt||registerSubmit||registerAction;
-  }).catch(()=>true);
-  return active;
+  try{path=new URL(String(observed.url||'')).pathname}catch{}
+  const registerPath=/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i;
+  if(registerPath.test(path))return true;
+  const title=String(observed.title||'').replace(/\s+/g,' ').trim();
+  if(/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title))return true;
+  const forms=Array.isArray(observed.forms)?observed.forms:[];
+  if(forms.some(form=>{
+    try{return registerPath.test(new URL(String(form.action||''),String(observed.url||'https://invalid.example')).pathname)}catch{return false}
+  }))return true;
+  const leading=String(observed.text||'').replace(/\s+/g,' ').trim().replace(/^(?:instagram|meta)\s+/i,'').slice(0,260);
+  const hasAccountField=forms.some(form=>(form.inputs||[]).some(input=>
+    /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' '))));
+  if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
+  // A registration submit may appear on a login URL/modal with generic title.
+  const registrationSubmit=await page.evaluate(() => Array.from(document.querySelectorAll('button[type="submit"],input[type="submit"]'))
+    .some(el=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(el.textContent||el.value||'').trim()))).catch(()=>true);
+  return registrationSubmit===true;
 }
 async function model(page){
   return await page.evaluate(() => {
