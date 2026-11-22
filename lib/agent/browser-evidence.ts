@@ -80,8 +80,14 @@ export function isBrowserRegistrationBarrier(page:{
   const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(body)
   const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(body)
   const newsletterForm=(form:NonNullable<typeof page.forms>[number])=>{
-    const evidence=[form.action||'',form.formText||'',...(form.inputs||[]).flatMap(input=>[input.name,input.label])].join(' ')
-    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(evidence)
+    const fields=form.inputs||[]
+    if(fields.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))))return false
+    const fieldEvidence=[form.action||'',...fields.flatMap(input=>[input.name,input.label])].join(' ')
+    const formText=String(form.formText||'')
+    const formAccountCue=/\b(?:create\s+(?:an?\s+|your\s+)?account|register(?:\s+an?\s+account)?|already\s+have\s+an?\s+account)\b/i.test(formText)
+    if(formAccountCue)return false
+    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence)
+      ||(articlePath&&/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(formText))
       ||(articlePath&&!password&&!(signupCopy&&existingAccountCopy))
   }
   const credentialForms=(page.forms||[]).filter(form=>!newsletterForm(form))
