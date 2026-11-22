@@ -81,7 +81,7 @@ export function isBrowserRegistrationBarrier(page:{
   const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(body)
   const newsletterForm=(form:NonNullable<typeof page.forms>[number])=>{
     const evidence=[form.action||'',form.formText||'',...(form.inputs||[]).flatMap(input=>[input.name,input.label])].join(' ')
-    return /\b(?:newsletters?|subscri(?:be|ption)|mailing[-\s]?list|email[-\s]?updates)\b/i.test(evidence)
+    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(evidence)
       ||(articlePath&&!password&&!(signupCopy&&existingAccountCopy))
   }
   const credentialForms=(page.forms||[]).filter(form=>!newsletterForm(form))
