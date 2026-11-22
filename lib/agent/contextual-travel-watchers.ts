@@ -305,17 +305,6 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     if(retireError)throw new Error('context_watch_retire_failed')
   }
 
-  const budget=await getCostBudget(telegramId)
-  const {data:activeWeb,error:countError}=await supabaseAdmin.from('agent_watchers')
-    .select('id,condition_json')
-    .eq('telegram_id',telegramId).eq('active',true)
-    .in('type',['web_search','web_page','product_stock'])
-  if(countError)throw new Error(`context_watch_count_failed:${countError.message}`)
-  const manualCount=(activeWeb||[]).filter((row:any)=>row.condition_json?.contextual!==true).length
-  const existingContextKeys=new Set((activeWeb||[])
-    .filter((row:any)=>row.condition_json?.contextRoot===root)
-    .map((row:any)=>String(row.condition_json?.contextKey||'')))
-  let slots=Math.max(0,Number(budget.activeWebWatchersMax||0)-manualCount)
   let created=0,reused=0,stopped=0,skipped=0
   const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,telegram_id,content').eq('telegram_id',owner)
     .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
@@ -337,13 +326,26 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     if(error)throw new Error('context_watch_reconcile_retire_failed')
     stopped+=omittedWeather.length
   }
+  // Count all active web monitors after retirement, including those retained from an earlier pass.
+  const budget=await getCostBudget(telegramId)
+  const {data:activeWeb,error:countError}=await supabaseAdmin.from('agent_watchers')
+    .select('id,condition_json')
+    .eq('telegram_id',telegramId).eq('active',true)
+    .in('type',['web_search','web_page','product_stock'])
+  if(countError)throw new Error(`context_watch_count_failed:${countError.message}`)
+  const existingContextKeys=new Set((activeWeb||[])
+    .filter((row:any)=>row.condition_json?.contextRoot===root)
+    .map((row:any)=>String(row.condition_json?.contextKey||'')))
+  const limit=budget.activeWebWatchersMax
+  let slots=Number.isSafeInteger(limit)?Math.max(0,limit-(activeWeb?.length||0)):0
   for(const desired of desiredConditions){
     if(!contextualWatchStillLive(desired.condition.expiresAt,now))continue
     const key=String(desired.condition.contextKey)
     if(!existingContextKeys.has(key)&&slots<=0){skipped++;continue}
     const result=await upsertContextWatcher({telegramId,type:'web_search',condition:desired.condition})
     if(result.stopped){stopped++;continue}
-    if(result.created){created++;slots--}else reused++
+    if(!existingContextKeys.has(key)){slots--;existingContextKeys.add(key)}
+    if(result.created)created++;else reused++
   }
 
   if(user?.gmail_connected&&contextualWatchStillLive(expiresAt,now)){
@@ -424,7 +426,8 @@ export async function compileTravelWatchersForUser(telegramId:string|number){
   // Report tracking only when the flight-status monitor is actually active (plan limits can skip it).
   const {data:active}=await supabaseAdmin.from('agent_watchers').select('id')
     .eq('telegram_id',owner).eq('active',true)
-    .eq('condition_json->>contextualKind','travel').eq('condition_json->>contextClass','flight_status').limit(1)
+    .eq('condition_json->>contextualKind','travel').eq('condition_json->>contextClass','flight_status')
+    .eq('condition_json->>contextKey',`${rootFor(group)}:flight_status`).limit(1)
   return {...r,tracking:Boolean(active?.length),flights:group.map(row=>normalizeFlightNo(clean(row.flight_no,20))).filter(Boolean)}
 }
 
