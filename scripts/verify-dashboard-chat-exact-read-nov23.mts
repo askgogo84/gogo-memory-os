@@ -21,7 +21,7 @@ async function exercise({ owner, returned, error, expected }: Scenario) {
   let reads = 0
   const db = { from(table: string) {
     reads++
-    assert.equal(table, 'users', 'only the authenticated user's row is read')
+    assert.equal(table, 'users', 'only the authenticated owner row is read')
     return {
       select(cols: string) {
         assert.equal(cols, 'telegram_id, whatsapp_id, name')
