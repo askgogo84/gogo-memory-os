@@ -67,7 +67,7 @@ export function isBrowserLoginShell(page:{
   return instagram&&body.length<1100&&
     /\b(?:log\s*in|sign\s*in)\b/i.test(leading)&&/\bsign\s*up\b/i.test(leading)&&
     /\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading)&&
-    !/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments|caption:)\b/i.test(leading)
+    !/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading)
 }
 
 /** Preserve only observed public Croma product slugs; never exempt account URLs. */
