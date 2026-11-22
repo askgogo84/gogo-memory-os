@@ -52,7 +52,7 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
  */
 export function isBrowserRegistrationBarrier(page:{
   url?:string;title?:string;text?:string;
-  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string}>;submitLabels?:string[]}>
+  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string}>;submitLabels?:string[];formText?:string}>
   controls?:Array<{tag?:string;role?:string;type?:string;label?:string;text?:string;inForm?:boolean}>
 }):boolean {
   let path=''
@@ -76,22 +76,29 @@ export function isBrowserRegistrationBarrier(page:{
     } catch { return false }
   })
   if(registrationTitle||formRegistration)return true // multi-step signups may show only email first
-  const hasAccountField=inputs.some(input=>/\b(?:email|phone|mobile|username)\b/i.test([input.name,input.type,input.label].join(' ')))
+  const articlePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|faq|tutorials?)(?:\/|$)/i.test(path)
+  const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(body)
+  const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(body)
+  const newsletterForm=(form:NonNullable<typeof page.forms>[number])=>{
+    const evidence=[form.action||'',form.formText||'',...(form.inputs||[]).flatMap(input=>[input.name,input.label])].join(' ')
+    return /\b(?:newsletters?|subscri(?:be|ption)|mailing[-\s]?list|email[-\s]?updates)\b/i.test(evidence)
+      ||(articlePath&&!password&&!(signupCopy&&existingAccountCopy))
+  }
+  const credentialForms=(page.forms||[]).filter(form=>!newsletterForm(form))
+  const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
+    /\b(?:email|phone|mobile|username)\b/i.test([input.name,input.type,input.label].join(' '))))
   // An email-first signup may use an ordinary Continue action, while navigation
   // precedes the actual Create account heading. "Already have an account?"
   // distinguishes its active signup content from a login page's Sign up link.
-  const activeSignupContext=hasAccountField
-    &&/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(body)
-    &&/\balready\s+have\s+an?\s+account\b/i.test(body)
+  const activeSignupContext=hasAccountField&&signupCopy&&existingAccountCopy
   if(activeSignupContext)return true
   // Bind Sign up to its actual observed form (rather than a header control).
   // A newsletter signup CTA on a public guide is not account registration.
-  const formSubmitRegistration=(page.forms||[]).some(form=>{
+  const formSubmitRegistration=credentialForms.some(form=>{
     const formHasAccountField=(form.inputs||[]).some(input=>
       /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' ')))
-    return formHasAccountField&&(!publicGuidePath||activeSignupContext)
-      &&(form.submitLabels||[]).some(label=>
-        /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))
+    return formHasAccountField&&(form.submitLabels||[]).some(label=>
+      /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))
   })
   if(formSubmitRegistration)return true
   // A public guide with a newsletter field remains readable unless we
@@ -105,8 +112,7 @@ export function isBrowserRegistrationBarrier(page:{
     // An explicit Create account / Register submit on an active account form
     // remains a strict fail-closed signal even with a generic page title.
     return clickTarget&&(password||hasAccountField)
-      &&(/\b(?:register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label)
-          ||(control.inForm===true&&/\bsign\s*up\b/i.test(label)))
+      &&/\b(?:register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label)
   })
   if(registrationAction)return true
   const opening=body.replace(/^(?:instagram|meta)\s+/i,'').slice(0,260)
