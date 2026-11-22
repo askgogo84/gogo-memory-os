@@ -82,6 +82,18 @@ assert.equal(isBrowserRegistrationBarrier({
   controls:[{tag:'button',label:'Sign up',inForm:true}],
 }),true,'form-associated Sign up control must stop backend Vault lookup without an Already have account cue')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/help/auth',title:'Welcome',
+  text:'Home Help Sign up Log in',
+  forms:[{action:'https://example.com/help/auth',inputs:[{name:'email',type:'email'}],submitLabels:['Sign up'],formText:'Sign up Email'}],
+  controls:[{tag:'button',label:'Sign up',inForm:true}],
+}),true,'help-hosted email-first account Sign up submit blocks Vault even with no Already have account copy')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/guides/signup',title:'Public guide',
+  text:'Sign up to see photos and videos from friends. Here is the public guide.',
+  forms:[{action:'https://example.com/guides/signup',inputs:[{name:'newsletterEmail',type:'email'}],submitLabels:['Sign up'],formText:'Sign up for newsletter'}],
+  controls:[{tag:'button',label:'Sign up',inForm:true}],
+}),false,'public guide newsletter Sign up is not an account creation form')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Sign in to your account',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
   controls:[{tag:'a',label:'Sign up'},{tag:'button',label:'Log in'}],
@@ -419,6 +431,24 @@ assert.equal(plainSignupSubmit.vaultLogin.registrationRefused,true,
   'visible form-associated Sign up submit must refuse before passwordless autofill')
 assert.deepEqual(plainSignupSubmit.actions,[],
   'form-associated signup must not fill saved identity')
+const helpHostedPlainSignup=await syntheticVaultWorker({
+  url:'https://example.com/help/auth',title:'Welcome',
+  text:'Home Help Sign up Log in',
+  forms:[{action:'https://example.com/help/auth',inputs:[{name:'email',type:'email'}],submitLabels:['Sign up'],formText:'Sign up Email'}],
+  signupSubmitVisible:true,signupSubmitInForm:true,signupButtonLabel:'Sign up',
+})
+assert.equal(helpHostedPlainSignup.vaultLogin.registrationRefused,true,
+  'help-hosted form-associated Sign up must stop Vault with no Already account cue')
+assert.deepEqual(helpHostedPlainSignup.actions,[],
+  'help-hosted account Sign up cannot receive Vault identity')
+const newsletterGuideAfterLogin=await syntheticVaultWorker({
+  url:'https://example.com/guides/signup',title:'Public registration guide',
+  text:'Sign up to see photos and videos from friends. This guide is public.',
+  forms:[{action:'https://example.com/guides/signup',inputs:[{name:'newsletterEmail',type:'email'}],submitLabels:['Sign up'],formText:'Sign up for newsletter'}],
+  signupSubmitVisible:true,signupSubmitInForm:true,signupButtonLabel:'Sign up',
+})
+assert.equal(newsletterGuideAfterLogin.vaultLogin.registrationRefused,undefined,
+  'a public article newsletter signup must not masquerade as account registration after a login redirect')
 const signupWithGenericContinue=await syntheticVaultWorker({
   url:'https://example.com/auth',title:'Welcome',
   text:'Home Help Create account Email Continue Already have an account? Log in',
