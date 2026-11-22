@@ -326,8 +326,16 @@ async function model(page){
       forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&visible(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
         formText:clean(f.innerText||'').slice(0,850),
-        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"]')).filter(el=>el.form===f&&visible(el)).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
-        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
+        synthetic:f===document.body,
+        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]')).filter(el=>{
+          if(!visible(el))return false;
+          const tag=el.tagName?.toLowerCase()||'',type=(el.getAttribute('type')||'').toLowerCase();
+          const actualSubmit=tag==='button'?(type!=='button'&&type!=='reset'):tag==='input'&&type==='submit';
+          // Do not treat a login mode-switch button as an account submit.
+          // The synthetic body form must still see its own unbound signup CTA.
+          return f===document.body?(!el.form&&!el.closest('form')):el.form===f&&actualSubmit;
+        }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>visible(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
     };
   });
@@ -884,8 +892,16 @@ async function model(page){
       forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
         formText:clean(f.innerText||'').slice(0,850),
-        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"]')).filter(el=>el.form===f&&visible(el)).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
-        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(actionable).slice(0,60).map(inputs)
+        synthetic:f===document.body,
+        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]')).filter(el=>{
+          if(!actionable(el))return false;
+          const tag=el.tagName?.toLowerCase()||'',type=(el.getAttribute('type')||'').toLowerCase();
+          const actualSubmit=tag==='button'?(type!=='button'&&type!=='reset'):tag==='input'&&type==='submit';
+          // Do not treat a login mode-switch button as an account submit.
+          // The synthetic body form must still see its own unbound signup CTA.
+          return f===document.body?(!el.form&&!el.closest('form')):el.form===f&&actualSubmit;
+        }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>actionable(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
     };
   });
