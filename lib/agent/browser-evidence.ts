@@ -41,6 +41,51 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
   return loginInput&&activePrompt
 }
 
+/**
+ * Detect a signed-out content shell, not an ordinary page that merely links to Sign in.
+ * A login/footer shell must never be treated as source evidence for the original task.
+ * Only visible copy, a URL path, field metadata and narrow, fail-closed cues are used.
+ */
+export function isBrowserLoginShell(page:{
+  url?:string; title?:string; text?:string;
+  forms?:Array<{inputs?:Array<{name?:string;type?:string;label?:string}>}>
+}):boolean {
+  if(isLoginFormPage(page))return true
+  const title=String(page.title||'').replace(/\s+/g,' ').trim()
+  const body=String(page.text||'').replace(/\s+/g,' ').trim()
+  const leading=body.slice(0,1800)
+  // Exact sign-in headers and explicit content access gates are not account navigation links.
+  const loginTitle=/^(?:log\s*in|sign\s*in|login)(?:\s*[-–—|•:]\s*[^\n]{1,100})?$/i.test(title)
+  const loginControls=/\b(?:log\s*in|sign\s*in|sign\s*up|username|password)\b/i.test(leading)
+  if(loginTitle&&loginControls)return true
+
+  // The active access prompt must appear at the beginning of a short signed-out page.
+  // Quoted sign-in instructions in public articles or FAQs are not current auth gates.
+  const opening=leading.replace(/^(?:instagram|meta)\s+/i,'')
+  const activeGate=/^(?:log\s*in|sign\s*in)\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
+  if(body.length<900&&activeGate.test(opening))return true
+
+  // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
+  // A real post has raw unlabelled caption text; the observer does not supply "Caption:".
+  let host=''
+  try{host=new URL(page.url||'').hostname.toLowerCase()}catch{}
+  const instagram=host==='instagram.com'||host==='www.instagram.com'
+  if(!instagram||body.length>=1100||!/\b(?:log\s*in|sign\s*in)\b/i.test(leading)
+     ||!/\bsign\s*up\b/i.test(leading)
+     ||!/\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading))return false
+  if(/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading))return false
+  const remaining=leading
+    .replace(/\b(?:forgot\s+(?:your\s+)?password|don'?t\s+have\s+an\s+account|already\s+have\s+an\s+account|get\s+the\s+app|download\s+the\s+app|also\s+from\s+meta|meta\s+verified|from\s+meta|log\s*in|sign\s*in|sign\s*up|instagram|threads|locations|privacy|terms|about|help|press|api|jobs|language|english|copyright|home|explore|reels|messages|search|profile|meta)\b/gi,' ')
+    .replace(/(?:©|\b20\d{2}\b)/g,' ')
+    .toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').trim()
+  // Treat real letters in any script as content: Indic, Arabic, CJK and more.
+  // A single long CJK caption without spaces is still meaningful public evidence.
+  const meaningful=new Set(remaining.split(/\s+/).filter(token=>Array.from(token).length>=3))
+  const nonLatinLetters=[...remaining.matchAll(/[^\x00-\x7F]/g)].length>=4
+    &&[...remaining.matchAll(/\p{L}/gu)].length>=4
+  return meaningful.size<4&&!nonLatinLetters
+}
+
 /** Preserve only observed public Croma product slugs; never exempt account URLs. */
 export function publicCromaProductUrl(raw:unknown):string|null {
   try {
