@@ -350,6 +350,10 @@ console.log('✓ repeated alerts and open items are merged into one line')
   for (const t of ['Are you ok?', 'are you okay', 'Gogo, are you alright?', 'tum theek ho?', 'Gogo theek hai?']) assert.equal(d.isCasualCheckIn(t), true, t)
   for (const t of ['Are you working properly?', 'Run a self-diagnostic', 'system check karo', 'tum theek se kaam kar rahe ho?']) assert.equal(d.isCasualCheckIn(t), false, t)
   for (const t of ['is everything ok?', 'are you ok with this plan?', 'are you free tomorrow?']) assert.equal(d.classifyDiagnosticAsk(t), null, t)
+  // Review (PR #1568): "tum chal rahe ho?" is "are you coming?"; "tum thick ho" is not a check-in; a bold reply word still works.
+  for (const t of ['tum chal rahe ho?', 'kya tum chal rahe ho', 'aap chal rahe ho na', 'tum thick ho', 'tum theek ho? kal milte hain']) assert.equal(d.classifyDiagnosticAsk(t), null, t)
+  for (const t of ['*self-diagnostic*', '*diagnostic details*', 'Gogo chal raha hai na?']) assert.equal(d.classifyDiagnosticAsk(t), 'diagnostic', t)
+  assert.equal(d.wantsDiagnosticDetails('*diagnostic details*'), true)
 
   // The check-in reply: the headline, what needs a look, no alerts or open items, no queue read, no writes.
   const withQueue: Tables = { ...healthy,
@@ -373,7 +377,9 @@ console.log('✓ repeated alerts and open items are merged into one line')
     { key: 'g', label: 'Gmail', status: 'blocked', evidence: 'Google refused the saved sign-in. Reconnect Gmail.', at: null },
     { key: 'w', label: 'Background watchers', status: 'unverified', evidence: 'x', at: null, quiet: true },
   ], NOW)
-  assert.match(sick, /^⚠️ Mostly\. 1 OK, 1 needs a look:\n.*\*Gmail\*: .*Reconnect Gmail\./)
-  assert.doesNotMatch(sick, /Background watchers/)
+  assert.match(sick, /^⛔ Mostly\. 1 OK, 1 needs a look:\n.*\*Gmail\*: .*Reconnect Gmail\./)
+  assert.match(sick, /Nothing recent to test: Background watchers\./)
+  const down = d.formatDiagnosticBrief([{ key: 'g', label: 'Gmail', status: 'blocked', evidence: 'x', at: null }], NOW)
+  assert.match(down, /^⛔ Not fully\. 1 check needs a look:/); assert.doesNotMatch(down, /Mostly|0 OK/)
 }
 console.log('✓ Hinglish self-checks are recognised; "are you ok?" gets a short check-in reply')

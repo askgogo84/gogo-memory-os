@@ -34,10 +34,13 @@ const RUNNING = /^(?:are\s+you|is\s+(?:askgogo|gogo)|is\s+everything|are\s+all\s
 // 22 Nov: Hinglish asks, whole message only. "sab theek hai?" alone is not ours (it is about life, not AskGogo), so
 // every one names AskGogo or "you" ("tum", "aap") or its systems.
 const HI_YOU = String.raw`(?:(?:kya\s+)?(?:tum|aap|tu|askgogo|gogo))`
-const HI_RUNNING = new RegExp(String.raw`^${HI_YOU}\s+(?:theek|thik|thick)\s+(?:se\s+)?(?:kaam\s+kar\s+rah[eia]\s+(?:ho|hai|hain)|chal\s+rah[eia]\s+(?:ho|hai|hain))$`
-  + String.raw`|^${HI_YOU}\s+(?:kaam\s+kar\s+rah[eia]|chal\s+rah[eia])\s+(?:ho|hai|hain)(?:\s+(?:na|theek\s+se|thik\s+se))?$`
+// Review (PR #1568): "tum chal rahe ho?" usually means "are you coming?", so bare "chal raha" needs AskGogo as the subject.
+const HI_GOGO = String.raw`(?:(?:kya\s+)?(?:askgogo|gogo))`
+const HI_RUNNING = new RegExp(String.raw`^${HI_YOU}\s+(?:theek|thik)\s+se\s+(?:kaam\s+kar\s+rah[eia]|chal\s+rah[eia])\s+(?:ho|hai|hain)$`
+  + String.raw`|^${HI_YOU}\s+kaam\s+kar\s+rah[eia]\s+(?:ho|hai|hain)(?:\s+(?:na|theek\s+se|thik\s+se))?$`
+  + String.raw`|^${HI_GOGO}\s+chal\s+rah[eia]\s+(?:hai|hain)(?:\s+(?:na|theek\s+se|thik\s+se))?$`
   + String.raw`|^(?:kya\s+)?(?:sab|saare|sare|tumhare|aapke)\s+(?:systems?|services)\s+(?:theek|thik|chal\s+rah[eia])\s+(?:hai|hain)$`, 'i')
-const HI_CASUAL = new RegExp(String.raw`^${HI_YOU}\s+(?:theek|thik|thick|okay|ok)\s+(?:ho|hai|hain)$`, 'i')
+const HI_CASUAL = new RegExp(String.raw`^${HI_YOU}\s+(?:theek|thik|okay|ok)\s+(?:ho|hai|hain)$`, 'i')
 const HI_SELF_CHECK = new RegExp(String.raw`^(?:(?:ek|apna|apni|khud\s+ka|khud\s+ki)\s+)?(?:self[\s-]?(?:diagnostics?|tests?|checks?)|system\s+(?:health\s+)?(?:checks?|diagnostics?|tests?)|(?:askgogo|gogo)\s+(?:health\s+check|diagnostics?))\s+(?:karo|kar\s+do|kardo|chalao|chala\s+do|run\s+karo)$`
   + String.raw`|^(?:apne\s+aap|khud)\s+(?:ko\s+)?(?:check|test|diagnose)\s+(?:karo|kar\s+lo|kar\s+do|kardo)$`
   + String.raw`|^(?:apne|apni)\s+(?:systems?|services)\s+(?:check|test)\s+(?:karo|kar\s+lo|kar\s+do|kardo)$`, 'i')
@@ -64,7 +67,7 @@ const TIMEY = /\b(?:today|tonight|tomorrow|morning|evening|monday|tuesday|wednes
 const actionIn = (t: string) => ACTION.test(t.replace(/\bconnected\b/gi, '').replace(/\bscheduled\b/gi, ''))
 
 function core(raw: string): string {
-  return String(raw || '').replace(/[’]/g, "'").replace(/\s+/g, ' ').trim().replace(LEAD, '').replace(TAIL, '').trim()
+  return String(raw || '').replace(/[’]/g, "'").replace(/\s+/g, ' ').trim().replace(/^\*+([^*]+)\*+([?.!]*)$/, '$1$2').replace(LEAD, '').replace(TAIL, '').trim()
 }
 
 export function classifyDiagnosticAsk(raw: string): DiagnosticIntent {
@@ -131,19 +134,23 @@ export function formatDiagnostic(checks: DiagnosticCheck[], now: Date, tz = 'Asi
 
 const clipLine = (v: unknown, n: number) => { const t = String(v ?? '').replace(/\s+/g, ' ').replace(/[*_~`]/g, '').trim().replace(/\b\d{9,20}\b/g, d => '••••' + d.slice(-4)); return t.length > n ? t.slice(0, n - 1).replace(/[\s,;:—-]+$/, '') + '…' : t }
 
-/** 21 Nov (owner, after comparing with Instinct): one line first, only what needs a look, then what came in. */
 /** The check-in reply: the headline and what needs a look. Alerts, open items and the quiet list are left out. */
 export function formatDiagnosticBrief(checks: DiagnosticCheck[], _now: Date, _tz = 'Asia/Kolkata'): string {
   const ok = checks.filter(c => c.status === 'operational')
+  const quiet = checks.filter(c => c.status === 'unverified' && c.quiet)
   const look = checks.filter(c => c.status !== 'operational' && !(c.status === 'unverified' && c.quiet))
-  const head = look.length
-    ? `${ICON.degraded} Mostly. ${ok.length} OK, ${look.length} need${look.length === 1 ? 's' : ''} a look:`
+  const worst: DiagnosticStatus = look.some(c => c.status === 'blocked') ? 'blocked' : 'degraded'
+  const head = look.length && ok.length
+    ? `${ICON[worst]} Mostly. ${ok.length} OK, ${look.length} need${look.length === 1 ? 's' : ''} a look:`
+    : look.length ? `${ICON[worst]} Not fully. ${look.length} check${look.length === 1 ? '' : 's'} need${look.length === 1 ? 's' : ''} a look:`
     : ok.length ? `${ICON.operational} Yes, all good. ${ok.length} check${ok.length === 1 ? '' : 's'} OK, checked just now.`
     : 'Nothing failed, and there was nothing recent to test.'
   const lines = look.map(c => `${ICON[c.status]} *${c.label}*: ${WORD[c.status]}. ${c.evidence}`)
-  return [head, ...lines, '', 'Reply *self-diagnostic* for the full check. Nothing was sent or changed.'].join('\n')
+  return [head, ...lines, quiet.length && ok.length ? `Nothing recent to test: ${quiet.map(c => c.label).join(', ')}.` : '', '', 'Reply *self-diagnostic* for the full check. Nothing was sent or changed.']
+    .filter((l, i) => l !== '' || i > 0).join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
+/** 21 Nov (owner, after comparing with Instinct): one line first, only what needs a look, then what came in. */
 export function formatDiagnosticSummary(checks: DiagnosticCheck[], now: Date, tz = 'Asia/Kolkata', queued: QueuedItem[] = []): string {
   const ok = checks.filter(c => c.status === 'operational')
   const quiet = checks.filter(c => c.status === 'unverified' && c.quiet)
