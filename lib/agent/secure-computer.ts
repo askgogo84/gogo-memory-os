@@ -123,7 +123,7 @@ export type SecureBrowserResult = {
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed';consequential?:boolean}>
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'|'delivery_location_required'|'account_already_exists'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'|'login_unavailable'|'registration_not_authorized'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'|'login_unavailable'
   credentialSelectionRequired?: boolean
   // Provider booking: where Gogo handed over (OTP needed, payment, or anything else).
   bookingStage?: BookingStage
@@ -2619,7 +2619,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
           title:safeText(page.title,300),summary:'This page asks to create an account. Gogo stopped; sign in to an existing account in Take Control, then resume the same task.',
           pageText:'Gogo paused at account registration. No Vault credentials were entered or account created.',
           forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
-          blockReason:'human_auth_required',authReason:'registration_not_authorized'}
+          blockReason:'human_auth_required',authReason:'login_unavailable'}
       }
       let signedOutEntry=!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
       if(registrationBarrier||publicGuideRead)signedOutEntry=false
@@ -2683,7 +2683,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
                 title:safeText(page.title,300),summary:'This site redirected to account registration. Gogo stopped; sign in to an existing account in Take Control, then resume the original task.',
                 pageText:'Gogo stopped before account creation. The login attempt was not verified.',
                 forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
-                blockReason:'human_auth_required',authReason:'registration_not_authorized'}
+                blockReason:'human_auth_required',authReason:'login_unavailable'}
             }
             if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,openerLabel:vaultFill.openerLabel||null,openerClicks:vaultFill.openerClicks||0,headerCues:vaultFill.headerCues||null,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
             if(vaultFill.phoneCode&&vaultFill.codeRequested){vaultPhoneCodeRequested=true;if(credential.viaWhatsAppNumber)phoneLoginViaWhatsApp=true}
