@@ -259,6 +259,11 @@ async function isActiveRegistrationPage(page){
   // Documentation/newsletter content is never an active signup just because
   // its URL or first sentence describes how signup works.
   if(publicGuidePath&&!passwordField)return false;
+  const fullText=String(observed.text||'').replace(/\s+/g,' ').trim();
+  // Generic Continue on an email-first account creation form is consequential,
+  // even when the signup heading follows page navigation and other prose.
+  if(hasAccountField&&/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText)
+     &&/\balready\s+have\s+an?\s+account\b/i.test(fullText))return true;
   if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
   // A registration submit may appear on a login URL/modal with generic title.
   const registrationSubmit=await page.evaluate(() => Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]'))
