@@ -21,6 +21,13 @@ const combinedGenericGate={
 }
 assert.equal(isBrowserLoginShell(combinedGenericGate),true,
   'combined auth prompts also block other providers')
+const accountCreationShell={
+  url:'https://www.instagram.com/p/example',title:'Instagram',
+  text:'Log in to view this post. Create an account to see more photos and videos. Sign up. About Help Privacy Terms',
+}
+assert.equal(isBrowserLoginShell(accountCreationShell),true,
+  'account-creation promotion after login does not establish readable post evidence')
+
 assert.equal(isBrowserLoginShell({
   url:'https://www.instagram.com/p/example',title:'Public post',
   text:'Instagram Log in or sign up to view this post. brandname New product launch today. 38 likes. About Help Press',
@@ -111,7 +118,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'synthetic-role'
 process.env.OPENAI_API_KEY ||= 'synthetic-api'
 process.env.ANTHROPIC_API_KEY ||= 'synthetic-api'
 const {assessReadOutcome}=await import('../lib/agent/secure-computer')
-for(const page of [instagramLogin, combinedInstagramGate, combinedGenericGate,
+for(const page of [instagramLogin, combinedInstagramGate, combinedGenericGate, accountCreationShell,
   {url:'https://www.instagram.com/p/example',title:'Instagram',text:'Instagram Log in Sign up About Help Press Privacy Terms'},
   {url:'https://example.com/login',title:'Sign in',text:'Username Password'},
 ]){
