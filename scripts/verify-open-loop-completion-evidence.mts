@@ -35,6 +35,9 @@ for(const text of secondhandClaims){
  assert.equal(actual.isUncertainOrNegatedCompletion(text),true,text+' should not count as owner-verified completion')
 }
 assert.equal(actual.isUncertainOrNegatedCompletion('Vendor delivered the corrected JSON.'),false,'direct owner report can still resolve')
+for(const text of ['I received the quarterly reports from Vendor.','I received the insurance claim document from Vendor.']){
+ assert.equal(actual.isUncertainOrNegatedCompletion(text),false,text+' is a direct owner receipt, not hearsay')
+}
 
 for(const text of [
  'The corrected JSON from Vendor is not received.',
@@ -77,6 +80,18 @@ for(const text of ['Vendor sent the corrected JSON.','Vendor delivered the corre
  writes.length=0
  const result=await actual.autoResolveOpenLoopsFromTurn({actor,text})
  if(result.length!==1||writes.length!==1||writes[0]?.status!=='resolved')failures.push(`${text} incorrectly blocked clear completion`)
+}
+// Preserve affirmative receipts when the deliverable itself is named reports or a claim.
+for(const [title,completedText] of [
+ ['Waiting on Vendor to send quarterly reports','I received the quarterly reports from Vendor.'],
+ ['Waiting on Vendor to send insurance claim document','I received the insurance claim document from Vendor.'],
+] as const){
+ rows=[{...fixture,title,summary:title}]
+ writes.length=0
+ const result=await actual.autoResolveOpenLoopsFromTurn({actor,text:completedText})
+ assert.equal(result.length,1,completedText+' must resolve the named, unambiguous loop')
+ assert.equal(writes.length,1,completedText+' updates once only')
+ assert.equal(writes[0]?.status,'resolved',completedText+' is affirmative owner evidence')
 }
 rows=[fixture,{...fixture,id:'synthetic-other',title:'Waiting on Vendor to send corrected JSON',summary:'Waiting for corrected JSON'}]
 writes.length=0
