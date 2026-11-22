@@ -1,0 +1,59 @@
+# Complements (does not replace) the existing PR-merge-ref and main-push CI.
+# Existing .github/workflows/ci.yml verifies the proposed merged tree.
+# This workflow tests the immutable PR source head itself, so review evidence
+# never accidentally attributes a synthetic merge checkout to the PR head.
+name: AskGogo exact PR-head CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-literal-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # CI-only fixture values, identical to the existing main verify workflow.
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - name: Checkout immutable pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify checked-out SHA is the literal pull request head
+        env:
+          EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [[ "$actual" != "$EXPECTED_PR_HEAD" ]]; then
+            echo "::error::Expected literal PR head $EXPECTED_PR_HEAD, checked out $actual"
+            exit 1
+          fi
+          echo "Verified immutable PR head: $actual"
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full regression suite
+        run: node scripts/run-tests-parallel.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build with fixture credentials
+        run: npm run build
