@@ -4,7 +4,7 @@ import type { AgentActor } from './actor'
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
-import { formatEmailSnippet } from './google-workspace-read'
+import { decodeHtmlEntities, formatEmailSnippet } from './google-workspace-read'
 import { scoreEmail as scoreAttentionEmail } from '@/lib/email/attention'
 import { retiredRunReason, isTaskInventoryQuestion, isRelevantOpenLoop, openLoopStatus } from './task-lifecycle'
 
@@ -1094,13 +1094,15 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   const lines=loops.map((loop:any,index:number)=>{
     const badge=loop.kind==='approval'?'🛡️':loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='mission'?'🧠':loop.kind==='life_event'?'✈️':'•'
     const details=[openLoopStatus(loop)]
-    const summary=clean(loop.summary,260)
-    if(summary&&summary.toLowerCase()!==clean(loop.title,260).toLowerCase())details.push(summary)
+    // 22 Nov live: older email-derived rows were saved with HTML entities ("company&#39;s"); decode on display.
+    const summary=clean(decodeHtmlEntities(String(loop.summary||'')),260)
+    const title=clean(decodeHtmlEntities(String(loop.title||'')),180)
+    if(summary&&summary.toLowerCase()!==title.toLowerCase())details.push(summary)
     const due=Date.parse(String(loop.due_at||''))
     if(Number.isFinite(due))details.push(`${due<Date.now()?'Past due; completion unconfirmed':'Due'}: ${new Date(due).toLocaleDateString('en-GB',{timeZone:'Asia/Kolkata'})}`)
     const observed=Date.parse(String(loop.last_seen_at||''))
     if(Number.isFinite(observed))details.push(`Source updated ${new Date(observed).toLocaleDateString('en-GB',{timeZone:'Asia/Kolkata'})}`)
-    return `${index+1}. ${badge} ${clean(loop.title,180)}\n   ${details.join(' · ')}`
+    return `${index+1}. ${badge} ${title}\n   ${details.join(' · ')}`
   })
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(params.actor.legacyTelegramId),
