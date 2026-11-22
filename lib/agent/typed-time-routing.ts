@@ -213,7 +213,7 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
       else{
       const {data,error}=await supabaseAdmin.from('reminders').update({remind_at:times.startIso}).eq('telegram_id',p.actor.legacyTelegramId).eq('id',reminder.id).eq('remind_at',reminder.remind_at).eq('sent',false).select('id,remind_at').maybeSingle()
       if(error||!data||Date.parse(data.remind_at)!==Date.parse(times.startIso))return response('The reminder changed or its update could not be verified. Nothing will be retried automatically.')
-      await recordDecisionLearning({actor:p.actor,text:original,domain:'reminders',handler:'reminder-update',decisionId:p.messageId||randomUUID(),outcome:'verified_success',verified:true,objectKind:'reminder',objectRef:object.id}).catch(()=>{})
+      await recordDecisionLearning({actor:p.actor,text:original,domain:'reminders',handler:'reminder-update',decisionId:p.messageId||randomUUID(),outcome:'verified_success',verified:true,objectKind:'reminder',objectRef:object.id,readEvidence:{verified:true,source:'canonical_reminders',kind:'canonical_state',objectKind:'reminder',objectRef:object.id}}).catch(()=>{})
       result=response(`Reminder updated: ${object.title}. New time: ${new Intl.DateTimeFormat('en-IN',{timeZone:timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(times.startIso))}.`,'completed','reminders')
       }
     }
