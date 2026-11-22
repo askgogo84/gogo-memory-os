@@ -5,7 +5,7 @@ import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 import { obscuraPilotEligible, type ObscuraRequest } from './obscura-public-read'
 import { tryObscuraPublicRead } from './obscura-pilot-runtime'
 import {ensurePersistentCommerceBrowser, COMMERCE_CDP_URL} from './persistent-commerce-browser'
-import { isLoginDestination, isLoginUrl, isBrowserLoginShell, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
+import { isLoginDestination, isLoginUrl, isBrowserLoginShell, isBrowserRegistrationBarrier, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
 import { blockedHostsLogLine } from './browser-blocked-hosts'
 import { completeAgentPlanPrompt, completeVisionPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
@@ -230,6 +230,29 @@ async function readyLoginFields(page, selector){
   }
   return await visibleFields(page,selector);
 }
+// Fail closed after navigation and after any login panel transition. A saved
+// Vault password is NEVER consent to sign up, even on a redirected form.
+async function isActiveRegistrationPage(page){
+  let path='';
+  try{path=new URL(page.url()).pathname}catch{}
+  if(/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i.test(path))return true;
+  const title=String(await page.title().catch(()=>'')||'').replace(/\s+/g,' ').trim();
+  const passwordVisible=(await visibleFields(page,'input[type="password"]')).length>0;
+  const titleRegistration=/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title);
+  if(!passwordVisible)return false;
+  const active=await page.evaluate(()=>{
+    const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+    const leading=clean(document.body?.innerText).slice(0,260);
+    const prompt=/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\s+(?:to|before|for)\b/i.test(leading.replace(/^(?:instagram|meta)\s+/i,''));
+    const registerSubmit=Array.from(document.querySelectorAll('button[type="submit"],input[type="submit"]'))
+      .some(el=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(clean(el.textContent||el.value||'')));
+    const registerAction=Array.from(document.forms).some(form=>{
+      try{return /(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i.test(new URL(form.action,location.href).pathname)}catch{return false}
+    });
+    return prompt||registerSubmit||registerAction;
+  }).catch(()=>true);
+  return titleRegistration||active;
+}
 async function model(page){
   return await page.evaluate(() => {
     const clean = s => String(s||'').replace(/\s+/g,' ').trim();
@@ -260,12 +283,18 @@ async function model(page){
   const page=context.pages()[0]||await context.newPage();
   let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false,openerLabel='',openerClicks=0;
   const ambiguous=[];
+  const refuseRegistration=async()=>{
+    const out=await model(page);
+    out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,registrationRefused:true};
+    console.log(JSON.stringify(out));
+  };
   try{
     for(let attempt=0;;attempt++){try{await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});break}catch(e){
       if(attempt>=3||!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET|ERR_TIMED_OUT/.test(String(e&&e.message||e)))throw e;
       await page.waitForTimeout([1500,4000,8000][attempt]);
     }}
     await page.waitForTimeout(800);
+    if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
     const USER_FIELDS='input[autocomplete~="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i], input[placeholder*="username" i], input[placeholder*="email" i]';
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
     if(!(await readyLoginFields(page,USER_FIELDS)).length){
@@ -289,6 +318,7 @@ async function model(page){
         }
       }
     }
+    if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
     const PASS_FIELDS='input[type="password"]';
     const userFields=await readyLoginFields(page,USER_FIELDS);
     if(userFields.length>1) ambiguous.push('username_fields');
@@ -301,7 +331,11 @@ async function model(page){
         'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
         'button:has-text("Log in")','button:has-text("Login")','a:has-text("Login")','button[type="submit"]','input[type="submit"]'
       ]);
-      if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
+      if(next){
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+        await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200);
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+      }
       passFields=await visibleFields(page,PASS_FIELDS);
     }
     let codeRequested=false;
@@ -338,11 +372,15 @@ async function model(page){
     if(passFields.length===1){
       const pass=passFields[0];
       await pass.fill(secret,{timeout:10000}); passwordFilled=true;
+      if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
       const submit=await firstVisible(page,[
         'button:has-text("Log in")','button:has-text("Sign in")','button:has-text("Login")',
         'button[type="submit"]','input[type="submit"]'
       ]);
-      if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
+      if(submit){
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+        await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800);
+      }
     }
     const out=await model(page);
     out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked,...(phoneCode?{phoneCode:true}:{})};
@@ -2521,7 +2559,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // A sign-up page also has a password field; never try a saved login while creating an account.
       // A saved login is also tried once on a signed-out page that only offers a header "Log in" link.
       // With a code in hand the saved number is never re-sent (that would text a new code and void this one).
-      let signedOutEntry=!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      const registrationBarrier=isBrowserRegistrationBarrier(page)
+      let signedOutEntry=!registrationBarrier&&!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
       // A human may just have completed sign-in in this same page. A stale session marker
@@ -2529,7 +2568,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 26 Oct live: a Swiggy menu read for a food comparison signed in with the saved login and stopped at a text code.
       // A comparison read is a public page: it never signs in (publicOnly); a real sign-in wall still pauses for the person.
       if(params.publicOnly)signedOutEntry=false
-      if(!params.publicOnly&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      if(!params.publicOnly&&!registrationBarrier&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
@@ -2540,7 +2579,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         }
       }
       if(signedOutEntry)vaultEntryChecked=true
-      if(!params.publicOnly && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
+      if(!params.publicOnly && !registrationBarrier && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
