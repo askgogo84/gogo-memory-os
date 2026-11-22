@@ -1,0 +1,2 @@
+# Exact signed-64-bit mail-alert rule read/write, no provider requests
+npx tsx scripts/verify-mail-alert-owner-exact-nov23.mts
