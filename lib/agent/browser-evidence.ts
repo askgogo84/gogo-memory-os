@@ -62,19 +62,22 @@ export function isBrowserLoginShell(page:{
   // The active access prompt must appear at the beginning of a short signed-out page.
   // Quoted sign-in instructions in public articles or FAQs are not current auth gates.
   const opening=leading.replace(/^(?:instagram|meta)\s+/i,'')
-  // Sites may use a combined login/signup call-to-action instead of a standalone login button.
-  const activeGate=/^(?:please\s+)?(?:log\s*in|sign\s*in)(?:\s+or\s+sign\s*up)?\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
-  if(body.length<900&&activeGate.test(opening))return true
-
-  // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
-  // A real post has raw unlabelled caption text; the observer does not supply "Caption:".
   let host=''
   try{host=new URL(page.url||'').hostname.toLowerCase()}catch{}
   const instagram=host==='instagram.com'||host==='www.instagram.com'
+  // The observer can see real post copy below a sign-in banner. Preserve the
+  // already-supported caption/engagement evidence before classifying a shell.
+  const visibleInstagramPost=instagram&&/\\b(?:\\d+\\s+likes?|\\d+\\s+comments?|view all comments)\\b|\\bcaption\\s*:/i.test(leading)
+  // Sites may use a combined login/signup call-to-action instead of a standalone login button.
+  const activeGate=/^(?:please\s+)?(?:log\s*in|sign\s*in)(?:\s+or\s+sign\s*up)?\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i
+  if(body.length<900&&activeGate.test(opening)&&!visibleInstagramPost)return true
+
+  // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
+  // A real post has raw unlabelled caption text; the observer does not supply "Caption:".
   if(!instagram||body.length>=1100||!/\b(?:log\s*in|sign\s*in)\b/i.test(leading)
      ||!/\bsign\s*up\b/i.test(leading)
      ||!/\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading))return false
-  if(/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments)\b|\bcaption\s*:/i.test(leading))return false
+  if(visibleInstagramPost)return false
   const remaining=leading
     .replace(/\b(?:forgot\s+(?:your\s+)?password|don'?t\s+have\s+an\s+account|already\s+have\s+an\s+account|get\s+the\s+app|download\s+the\s+app|also\s+from\s+meta|meta\s+verified|from\s+meta|log\s*in|sign\s*in|sign\s*up|instagram|threads|locations|privacy|terms|about|help|press|api|jobs|language|english|copyright|home|explore|reels|messages|search|profile|meta)\b/gi,' ')
     .replace(/(?:©|\b20\d{2}\b)/g,' ')
