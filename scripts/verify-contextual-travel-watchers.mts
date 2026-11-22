@@ -35,7 +35,7 @@ const cron=fs.readFileSync('app/api/cron/agent-watchers/route.ts','utf8')
 
 assert.match(compiler,/compileUpcomingTravelWatchers/)
 assert.match(compiler,/activeWebWatchersMax/)
-assert.match(compiler,/manualCount/)
+assert.match(compiler,/limit-\(activeWeb\?\.length\|\|0\)/,'all active web watches count toward the limit')
 assert.match(compiler,/userStoppedAt/)
 assert.match(compiler,/flight_status/)
 assert.match(compiler,/connection_ground/)

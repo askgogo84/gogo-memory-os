@@ -18,7 +18,14 @@ assert.match(source,/for\(const desired of desiredConditions\)\{\s*if\(!contextu
 assert.match(source,/if\(user\?\.gmail_connected&&contextualWatchStillLive\(expiresAt,now\)\)/,
   'expired Gmail travel context must not reactivate when consent is on')
 
-function harness(expiredTrip=false,gmailConnected=true){
+type CapacityFixture={
+  limit:number
+  activeKeys:string[]
+  desired:string[]
+  reactivated?:string[]
+  userStopped?:string[]
+}
+function harness(expiredTrip=false,gmailConnected=true,capacity?:CapacityFixture){
   const now=Date.now()
   const past=new Date(now-60_000).toISOString()
   const future=new Date(now+60_000).toISOString()
@@ -32,14 +39,14 @@ function harness(expiredTrip=false,gmailConnected=true){
     nearestRetainedTrip:(rows:any[])=>rows[0],rootFor:()=>root,
     tripExpiry:()=>expiredTrip?past:future,
     sourceRefs:()=>[{type:'travel_ticket',id:'synthetic-leg'}],
-    getCostBudget:async()=>({activeWebWatchersMax:6}),
+    getCostBudget:async()=>({activeWebWatchersMax:capacity?.limit??6}),
     declaredHomeCity:()=>'',routeLabel:()=> 'Bengaluru → Delhi',
-    desiredWebConditions:()=>[
+    desiredWebConditions:()=>capacity?capacity.desired.map(key=>({condition:{contextRoot:root,contextClass:key,contextKey:root+':'+key,expiresAt:future}})):[
       {condition:{contextRoot:root,contextClass:'flight_status',contextKey:root+':flight_status',expiresAt:past}},
       {condition:{contextRoot:root,contextClass:'destination_weather',contextKey:root+':destination_weather',expiresAt:future}},
       {condition:{contextRoot:root,contextClass:'airline_news',contextKey:root+':airline_news',expiresAt:'not-a-time'}},
     ],
-    upsertContextWatcher:async({type,condition}:any)=>{calls.push({type,condition});return {id:'created',created:true,stopped:false}},
+    upsertContextWatcher:async({type,condition}:any)=>{calls.push({type,condition});return {id:condition.contextKey,created:!capacity?.activeKeys.includes(condition.contextClass)&&!capacity?.reactivated?.includes(condition.contextClass),stopped:capacity?.userStopped?.includes(condition.contextClass)??false}},
     supabaseAdmin:{from(table:string){
       let operation='select',selectCols='',hasContextualFilter=false
       const q:any={
@@ -55,7 +62,10 @@ function harness(expiredTrip=false,gmailConnected=true){
           if(operation!=='select')result={error:null}
           else if(table==='agent_watchers'&&hasContextualFilter)result={data:[old],error:null}
           else if(table==='memories')result={data:[],error:null}
-          else if(table==='agent_watchers'&&selectCols==='id,condition_json')result={data:[],error:null}
+          else if(table==='agent_watchers'&&selectCols==='id,condition_json'){
+            const data=(capacity?.activeKeys||[]).map(key=>({id:key,condition_json:key==='manual'?{}:{contextRoot:root,contextKey:root+':'+key}}))
+            result={data,error:null}
+          }
           return Promise.resolve(result).then(resolve,reject)
         },
       };return q
@@ -95,3 +105,22 @@ await noMail.execute()
 assert.deepEqual(noMail.calls.map(x=>x.condition.contextClass),['destination_weather'],
   'without Gmail connection no email watcher is created')
 console.log('PASS: contextual watcher expiry is fail-closed, source-bounded and consent-aware; no provider or DB I/O')
+
+const mixed=harness(false,false,{
+  limit:3,activeKeys:['manual','flight_status'],desired:['flight_status','destination_weather','connection_ground'],
+  reactivated:['destination_weather'],
+})
+const mixedResult=await mixed.execute()
+assert.deepEqual(mixed.calls.map(c=>c.condition.contextClass),['flight_status','destination_weather'])
+assert.equal(mixedResult.reused,2)
+assert.equal(mixedResult.skipped,1,'reactivating costs a free slot just like inserting')
+const full=harness(false,false,{limit:1,activeKeys:['flight_status'],desired:['destination_weather','flight_status']})
+await full.execute()
+assert.deepEqual(full.calls.map(c=>c.condition.contextClass),['flight_status'],'a full budget still refreshes an active watch')
+const stoppedWatch=harness(false,false,{limit:1,activeKeys:[],desired:['destination_weather','flight_status'],userStopped:['destination_weather']})
+const stoppedResult=await stoppedWatch.execute()
+assert.equal(stoppedResult.created,1)
+assert.equal(stoppedResult.stopped,1)
+assert.equal(stoppedResult.skipped,0,'a user-stopped candidate consumes no capacity')
+assert.match(source,/\.eq\('condition_json->>contextKey',`\$\{rootFor\(group\)\}:flight_status`\)/,'tracking readback belongs to this exact trip')
+console.log('PASS: active and reactivated contextual watches respect per-pass capacity; readback is trip-bound.')
