@@ -179,8 +179,7 @@ assert.match(source,/const registrationBarrier=isBrowserRegistrationBarrier\(pag
   'the runtime must classify a separate registration barrier')
 assert.match(source,/if\(!params\.publicOnly && !registrationBarrier && !vaultAttempted && params\.accountCreation!==true/,
   'credential lookup must be unreachable from an active registration barrier')
-const vaultWorker=source.slice(source.indexOf('const VAULT_LOGIN_SCRIPT=String.raw'),source.indexOf("
-// 16 Oct: the person's sign-in code"))
+const vaultWorker=source.slice(source.indexOf('const VAULT_LOGIN_SCRIPT=String.raw'),source.indexOf("// 16 Oct: the person's sign-in code"))
 assert.match(vaultWorker,/if\(await isActiveRegistrationPage\(page\)\)\{await refuseRegistration\(\);return;\}[\s\S]*?const USER_FIELDS=/,
   'registration refusal must happen before username fields can be filled')
 assert.match(vaultWorker,/if\(await isActiveRegistrationPage\(page\)\)\{await refuseRegistration\(\);return;\}[\s\S]*?const submit=await firstVisible/,
