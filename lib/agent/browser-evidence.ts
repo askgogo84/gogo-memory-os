@@ -52,7 +52,7 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
  */
 export function isBrowserRegistrationBarrier(page:{
   url?:string;title?:string;text?:string;
-  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string}>;submitLabels?:string[];formText?:string}>
+  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string}>;submitLabels?:string[];formText?:string;synthetic?:boolean}>
   controls?:Array<{tag?:string;role?:string;type?:string;label?:string;text?:string;inForm?:boolean}>
 }):boolean {
   let path=''
@@ -106,7 +106,10 @@ export function isBrowserRegistrationBarrier(page:{
   const formSubmitRegistration=credentialForms.some(form=>{
     const formHasAccountField=(form.inputs||[]).some(input=>
       /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' ')))
-    return formHasAccountField&&(form.submitLabels||[]).some(label=>
+    const syntheticSignup=form.synthetic!==true||(!publicGuidePath
+      &&/(?:^|\/)(?:auth|sign-?up|register|registration|create-?account)(?:\/|$)/i.test(path)
+      &&signupCopy&&/\b(?:log\s*in|sign\s*in)\b/i.test(body))
+    return formHasAccountField&&syntheticSignup&&(form.submitLabels||[]).some(label=>
       /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))
   })
   if(formSubmitRegistration)return true
