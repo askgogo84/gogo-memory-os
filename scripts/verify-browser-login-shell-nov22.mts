@@ -11,7 +11,7 @@ const instagramLogin={
 assert.equal(isBrowserLoginShell(instagramLogin),true,'a redirected Instagram login must pause')
 assert.equal(isBrowserLoginShell({
   url:'https://www.instagram.com/p/example',title:'Instagram',
-  text:'Instagram\\nLog in\\nSign up\\nAbout\\nHelp\\nPress\\nAPI\\nJobs\\nPrivacy\\nTerms\\nLocations',
+  text:'Instagram\nLog in\nSign up\nAbout\nHelp\nPress\nAPI\nJobs\nPrivacy\nTerms\nLocations',
 }),true,'footer-only signed-out Instagram view cannot answer a post research task')
 assert.equal(isBrowserLoginShell({
   url:'https://www.instagram.com/reel/example',title:'Instagram',
@@ -40,10 +40,10 @@ assert.equal(isBrowserLoginShell({
 // Assert that the actual browser entry points use this pure gate, not just the test fixture.
 const source=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 const assessor=source.slice(source.indexOf('export async function assessReadOutcome('))
-assert.match(assessor.slice(0,650),/if\\(isBrowserLoginShell\\(page\\)\\|\\|detectHumanAuthGate\\(page\\)\\.required\\)/,
+assert.match(assessor.slice(0,650),/if\(isBrowserLoginShell\(page\)\|\|detectHumanAuthGate\(page\)\.required\)/,
   'read assessor must reject login shells before model or title-only completion')
-assert.match(source,/function pageLooksLikeLogin\\(page:any\\)\\{\\s*return isBrowserLoginShell\\(page\\)/,
+assert.match(source,/function pageLooksLikeLogin\(page:any\)\{\s*return isBrowserLoginShell\(page\)/,
   'the same-run auth handoff must recognize signed-out shells')
-assert.match(source,/if \\(isBrowserLoginShell\\(page\\) \\|\\| detectHumanAuthGate\\(page\\)\\.required \\|\\| detectProviderAccessBlock\\(page\\)/,
+assert.match(source,/if \(isBrowserLoginShell\(page\) \|\| detectHumanAuthGate\(page\)\.required \|\| detectProviderAccessBlock\(page\)/,
   'public Obscura observer must fall back instead of completing on login shell')
 console.log('PASS: login destinations, Instagram footer-only views and explicit auth gates cannot be marked completed; public sign-in navigation remains readable')
