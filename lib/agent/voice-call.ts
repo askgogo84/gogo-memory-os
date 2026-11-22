@@ -733,7 +733,10 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       const known = general.phone ? null : await knownCallVenue(String(tg), callee)
       if (known) { general.phone = known.phone; general.venue = known.venue }
       if (!general.phone) {
-        const prompt=`To call ${callee}, please reply with the correct Indian business phone number. I won't search the web for a number or place a call. After you send it, I'll show the full call plan and ask for a separate yes. Nothing was called.`
+        const showPicker=process.env.GOGO_GENERAL_CALL_PLACES_LOOKUP==='1' &&
+          (await import('./general-call-places-phone')).generalCallPickerEnabled(tg)
+        const pickerHint=showPicker?' You can check a business listing at https://app.askgogo.in/dashboard/call-number, then reply here with the number you confirm.':''
+        const prompt=`To call ${callee}, please reply with the correct Indian business phone number. I won't search the web for a number or place a call. After you send it, I'll show the full call plan and ask for a separate yes. Nothing was called.${pickerHint}`
         // A number-only reply is bound to this exact question, this owner and the original task.
         await fs.saveFollowupState(tg,CALL_NUMBER_STATE,{owner:String(tg),original:cmd.text,prompt})
         const stored=await fs.getLatestFollowupState(tg,CALL_NUMBER_STATE).catch(()=>null)

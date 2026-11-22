@@ -14,6 +14,15 @@
  * https://developers.google.com/maps/documentation/places/web-service/text-search
  * https://developers.google.com/maps/documentation/places/web-service/place-details
  */
+import { exactSessionOwnerId } from '../dashboard/owner-identity'
+
+/** The paid lookup is an explicit, single-owner pilot on a signed-in dashboard. */
+export function generalCallPickerEnabled(owner: string | number | null | undefined, env: Record<string,string|undefined> = process.env) {
+  const id = exactSessionOwnerId(owner)
+  return !!id && id === env.GOGO_GENERAL_CALL_PLACES_OWNER &&
+    env.GOGO_GENERAL_CALL_PLACES_LOOKUP === '1' && (env.GOOGLE_MAPS_API_KEY?.trim().length ?? 0) >= 8
+}
+
 export type GeneralCallPhoneCandidate = {
   placeId: string
   name: string
@@ -106,7 +115,7 @@ export type PhoneCandidateRequest = {
  * An owner-selected Places identity allows a single Details read without transmitting raw
  * business/locality/task/patient text. There is deliberately NO free-text Google search here:
  * the owner must select/share the exact Place ID in a trusted upstream UX. The feature is
- * off until owner-managed API enablement; no caller/route is wired to this pilot.
+ * off until owner-managed API enablement and exact owner selection for the dashboard pilot.
  *
  * A candidate is not provider-verified proof of the correct phone: verify the venue and
  * number with the person, then obtain a SECOND, separate action-level call-plan approval.
@@ -126,7 +135,7 @@ export async function proposeGeneralCallPhoneFromPlaces(request: PhoneCandidateR
   const fetcher = request.fetcher || fetch
   try {
     const detailsUrl = ORIGIN + '/v1/places/' + encodeURIComponent(placeId)
-    const response = await fetcher(detailsUrl,{ method:'GET',signal:AbortSignal.timeout(5_000),
+    const response = await fetcher(detailsUrl,{ method:'GET',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(5_000),
       headers:{'X-Goog-Api-Key':key,'X-Goog-FieldMask':DETAILS_MASK} })
     if (!response.ok) return null
     const detail:GooglePlace = await response.json()
