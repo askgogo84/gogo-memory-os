@@ -68,9 +68,15 @@ export function isBrowserRegistrationBarrier(page:{
   const password=inputs.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' ')))
   const registrationTitle=/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title)
   const formRegistration=(page.forms||[]).some(form=>{
-    try{return registerPath.test(new URL(String(form.action||''),page.url||'https://invalid.example').pathname)}catch{return false}
+    try {
+      const actionPath=new URL(String(form.action||''),page.url||'https://invalid.example').pathname
+      return registerPath.test(actionPath)
+        &&!/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(actionPath)
+    } catch { return false }
   })
   if(registrationTitle||formRegistration)return true // multi-step signups may show only email first
+  // A public guide with a newsletter email field is not an account-creation form.
+  if(publicGuidePath&&!password)return false
   const opening=body.replace(/^(?:instagram|meta)\s+/i,'').slice(0,260)
   const activeRegistration=/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\s+(?:to|before|for)\b/i.test(opening)
   let instagram=false
