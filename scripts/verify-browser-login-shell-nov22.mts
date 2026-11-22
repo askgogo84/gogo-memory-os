@@ -1,6 +1,7 @@
 // Synthetic-only browser auth evidence gate. Never opens a browser or uses a real account.
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
+import vm from 'node:vm'
 import {isBrowserLoginShell,isBrowserRegistrationBarrier} from '../lib/agent/browser-evidence'
 
 const instagramLogin={
@@ -194,6 +195,61 @@ assert.match(vaultWorker,/if\(await isActiveRegistrationPage\(page\)\)\{await re
   'a redirected registration form must be refused before its submit control is clicked')
 assert.match(source,/if \(isBrowserLoginShell\(page\) \|\| detectHumanAuthGate\(page\)\.required \|\| detectProviderAccessBlock\(page\)/,
   'public Obscura observer must fall back instead of completing on login shell')
+// Execute the actual Vault worker against inert Playwright mocks, never a
+// live browser, provider, account or credential.
+const tick=String.fromCharCode(96)
+const workerMarker='const VAULT_LOGIN_SCRIPT=String.raw'+tick
+const scriptStart=source.indexOf(workerMarker)+workerMarker.length
+const scriptEnd=source.indexOf('\n'+tick,scriptStart)
+assert.ok(scriptStart>40&&scriptEnd>scriptStart,'actual Vault script must be extractable')
+const script=source.slice(scriptStart,scriptEnd)
+async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[]}){
+  const actions:string[]=[]
+  const output:string[]=[]
+  const field=(kind:string)=>({isVisible:async()=>true,fill:async()=>{actions.push('fill:'+kind)}})
+  const submit={isVisible:async()=>true,click:async()=>{actions.push('click:submit')}}
+  const page={
+    goto:async()=>{},waitForTimeout:async()=>{},
+    locator:(selector:string)=>{
+      const user=selector.includes('input[autocomplete')
+      const pass=selector==='input[type="password"]'
+      const count=user||pass?1:0
+      return {count:async()=>count,nth:()=>field(user?'user':'password'),first:()=>submit}
+    },
+    getByText:()=>({first:()=>submit}),
+    evaluate:async()=>({...snapshot,forms:snapshot.forms||[]}),
+  }
+  const context={pages:()=>[page],close:async()=>{}}
+  await vm.runInNewContext(script,{
+    require:(name:string)=>{
+      assert.equal(name,'playwright')
+      return {chromium:{launchPersistentContext:async()=>context}}
+    },
+    process:{env:{GOGO_LOGIN_URL:snapshot.url,GOGO_VAULT_USERNAME:'fixture-user',GOGO_VAULT_SECRET:'fixture-password'},exit:()=>{throw Error('unexpected script exit')}},
+    console:{log:(line:string)=>output.push(line),error:(line:string)=>{throw Error(line)}},
+  })
+  assert.ok(output.every(line=>!line.includes('fixture-user')&&!line.includes('fixture-password')),
+    'credential values must not be reported')
+  return {actions,vaultLogin:JSON.parse(output.at(-1)!).vaultLogin}
+}
+for(const snapshot of [
+  {url:'https://example.com/register',title:'Register',text:'Create your account'},
+  {url:'https://example.com/auth',title:'Create account',text:'Welcome',forms:[{inputs:[{name:'email',type:'email'}]}]},
+  {url:'https://example.com/login',title:'Sign in',text:'Log in',forms:[{action:'https://example.com/register',inputs:[{name:'password',type:'password'}]}]},
+]){
+  const run=await syntheticVaultWorker(snapshot)
+  assert.deepEqual(run.actions,[],'registration must not fill or submit any credential')
+  assert.equal(run.vaultLogin.registrationRefused,true,'worker must report an inert registration handoff')
+  assert.equal(run.vaultLogin.submitted,false,'account creation was not submitted')
+}
+const existingLogin=await syntheticVaultWorker({
+  url:'https://example.com/login',title:'Sign in',text:'Log in. New here? Sign up.',
+  forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+})
+assert.equal(existingLogin.vaultLogin.registrationRefused,undefined,'ordinary login should not be misclassified')
+assert.deepEqual(existingLogin.actions.slice(0,2),['fill:user','fill:password'],
+  'existing-account login retains its normal field path')
+
 // Exercise the real assessor, not only helper calls or string matching. All pages are synthetic;
 // these exits must occur before the model or any provider can be contacted.
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
