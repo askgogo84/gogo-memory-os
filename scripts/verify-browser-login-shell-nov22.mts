@@ -216,7 +216,7 @@ const scriptStart=source.indexOf(workerMarker)+workerMarker.length
 const scriptEnd=source.indexOf('\n'+tick,scriptStart)
 assert.ok(scriptStart>40&&scriptEnd>scriptStart,'actual Vault script must be extractable')
 const script=source.slice(scriptStart,scriptEnd)
-async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[]}){
+async function syntheticVaultWorker(snapshot:{url:string;title:string;text:string;forms?:any[];signupSubmitVisible?:boolean}){
   const actions:string[]=[]
   const output:string[]=[]
   const field=(kind:string)=>({isVisible:async()=>true,fill:async()=>{actions.push('fill:'+kind)}})
@@ -230,7 +230,21 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
       return {count:async()=>count,nth:()=>field(user?'user':'password'),first:()=>submit}
     },
     getByText:()=>({first:()=>submit}),
-    evaluate:async()=>({...snapshot,forms:snapshot.forms||[]}),
+    evaluate:async(fn:unknown)=>{
+      const body=String(fn)
+      if(body.includes('button[type="submit"],input[type="submit"]')){
+        // Run the actual visibility filter against an inert signup button.
+        const button={
+          textContent:'Sign up',value:'',closest:()=>null,
+          getBoundingClientRect:()=>({width:snapshot.signupSubmitVisible?80:0,height:snapshot.signupSubmitVisible?25:0}),
+        }
+        return vm.runInNewContext('('+body+')()',{
+          document:{querySelectorAll:()=>[button]},
+          getComputedStyle:()=>({display:'block',visibility:'visible'}),
+        })
+      }
+      return {...snapshot,forms:snapshot.forms||[]}
+    },
   }
   const context={pages:()=>[page],close:async()=>{}}
   await vm.runInNewContext(script,{
@@ -262,6 +276,24 @@ const existingLogin=await syntheticVaultWorker({
 assert.equal(existingLogin.vaultLogin.registrationRefused,undefined,'ordinary login should not be misclassified')
 assert.deepEqual(existingLogin.actions.slice(0,2),['fill:user','fill:password'],
   'existing-account login retains its normal field path')
+const loginWithHiddenSignup=await syntheticVaultWorker({
+  url:'https://example.com/login',title:'Sign in',text:'Log in. New here? Sign up.',
+  forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+  signupSubmitVisible:false,
+})
+assert.equal(loginWithHiddenSignup.vaultLogin.registrationRefused,undefined,
+  'hidden signup submit in inactive modal must not block existing-account login')
+assert.deepEqual(loginWithHiddenSignup.actions.slice(0,2),['fill:user','fill:password'],
+  'visible login form still accepts saved login when inactive signup controls exist')
+const loginWithVisibleSignup=await syntheticVaultWorker({
+  url:'https://example.com/login',title:'Sign in',text:'Log in. New here? Sign up.',
+  forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+  signupSubmitVisible:true,
+})
+assert.equal(loginWithVisibleSignup.vaultLogin.registrationRefused,true,
+  'a visible signup submit is active registration and must stop Vault')
+assert.deepEqual(loginWithVisibleSignup.actions,[],
+  'an active visible registration submit cannot receive saved credentials')
 
 // Exercise the real assessor, not only helper calls or string matching. All pages are synthetic;
 // these exits must occur before the model or any provider can be contacted.
