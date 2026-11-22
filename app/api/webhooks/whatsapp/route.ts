@@ -1139,7 +1139,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       || (/^\s*(?:[a-z,!']+\s+){0,6}(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m => m.isCallRequestFor(String(resolvedUser.telegramId), text), () => false))
     // An owner-confirmed phone reply is not a dial instruction; it produces only an approval-bound call plan.
     // Forwards, friend flows and approval messages are never consumed as phone-number replies.
-    if(!forwardedMessage&&!preserveFriendFlow&&!approvalIntent(text)&&/^\\+?[\\d\\s().-]{9,24}$/.test(text)){
+    if(!forwardedMessage&&!preserveFriendFlow&&!approvalIntent(text)&&/^\+?[\d\s().-]{9,24}$/.test(text)){
       const numberMod:any=await import('@/lib/agent/voice-call').catch(()=>null)
       if(numberMod?.isGeneralCallNumberReply&&await numberMod.isGeneralCallNumberReply(String(resolvedUser.telegramId),text)){
         const plan=await numberMod.tryVoiceCall({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||from),name:resolvedUser.name||profileName||'Gogo'},text,surface:'whatsapp'}).catch(()=>null)
