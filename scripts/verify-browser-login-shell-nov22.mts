@@ -186,6 +186,19 @@ assert.match(source,/function pageLooksLikeLogin\(page:any\)\{\s*return isBrowse
 // generic Continue or generic submit (the second layer covers redirects).
 assert.match(source,/const registrationBarrier=isBrowserRegistrationBarrier\(page\)/,
   'the runtime must classify a separate registration barrier')
+assert.match(source,/if\(registrationBarrier&&params\.accountCreation!==true&&!publicInstagramEvidence\)\{/,
+  'unapproved registration must hand off before the planner or Vault')
+const registrationStop=source.slice(source.indexOf('if(registrationBarrier&&params.accountCreation!==true'),source.indexOf('let signedOutEntry='))
+assert.match(registrationStop,/blockReason:'human_auth_required',authReason:'registration_not_authorized'/,
+  'registration must preserve the original task through a human auth handoff')
+assert.match(source,/const publicInstagramEvidence=params\.mode==='read'&&!loginish/,
+  'a visible Instagram post can remain readable without permitting a saved login')
+const vaultRefusal=source.slice(source.indexOf('const vaultFill=page?.vaultLogin||{}'),source.indexOf('if(!vaultFill.usernameFilled)'))
+assert.match(vaultRefusal,/if\(vaultFill\.registrationRefused===true\)\{/,
+  'post-redirect worker refusal must stop before login success or session recording')
+assert.match(vaultRefusal,/blockReason:'human_auth_required',authReason:'registration_not_authorized'/,
+  'worker refusal must hand off to a human instead of reporting login success')
+
 assert.match(source,/if\(!params\.publicOnly && !registrationBarrier && !vaultAttempted && params\.accountCreation!==true/,
   'credential lookup must be unreachable from an active registration barrier')
 const vaultWorker=source.slice(source.indexOf('const VAULT_LOGIN_SCRIPT=String.raw'),source.indexOf("// 16 Oct: the person's sign-in code"))
