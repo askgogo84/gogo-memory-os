@@ -79,15 +79,22 @@ export function isBrowserRegistrationBarrier(page:{
   // A public guide with a newsletter email field is not an account-creation form.
   if(publicGuidePath&&!password)return false
   const hasAccountField=inputs.some(input=>/\b(?:email|phone|mobile|username)\b/i.test([input.name,input.type,input.label].join(' ')))
-  // The browser observer supplies *visible* controls. An email-first account
-  // creation screen may have a generic title and navigation before its heading:
-  // classify its actual submit action before retrieving ANY stored credentials.
+  // An email-first signup may use an ordinary Continue action, while navigation
+  // precedes the actual Create account heading. "Already have an account?"
+  // distinguishes its active signup content from a login page's Sign up link.
+  const activeSignupContext=hasAccountField
+    &&/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(body)
+    &&/\balready\s+have\s+an?\s+account\b/i.test(body)
+  if(activeSignupContext)return true
   const registrationAction=(page.controls||[]).some(control=>{
     const tag=String(control.tag||'').toLowerCase(),role=String(control.role||'').toLowerCase()
     const label=String(control.label||control.text||'').replace(/\s+/g,' ').trim()
     const clickTarget=tag==='button'||(tag==='input'&&control.type==='submit')||role==='button'
-    return clickTarget&&/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label)
-      &&(password||hasAccountField)
+    // An unrelated header Sign up navigation button must not disable real login.
+    // An explicit Create account / Register submit on an active account form
+    // remains a strict fail-closed signal even with a generic page title.
+    return clickTarget&&(password||hasAccountField)
+      &&/\b(?:register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label)
   })
   if(registrationAction)return true
   const opening=body.replace(/^(?:instagram|meta)\s+/i,'').slice(0,260)
