@@ -352,7 +352,7 @@ console.log('PASS: ordinary images keep existing note, association and document 
   const midnight=worker().parseSharedMeeting('Midnight Session\nMonday, 23 Nov · 12:05 – 12:45 am\nhttps://meet.google.com/ycz-gire-akz','Asia/Kolkata',new Date(clock))
   assert.ok(midnight)
   const midnightText=await offer('Midnight Session\nMonday, 23 Nov · 12:05 – 12:45 am\nhttps://meet.google.com/ycz-gire-akz')
-  // This fixture clock is 3:40 pm IST on Nov 22, after the midnight reminder's intended time; it must be consumed as too late.
-  assert.match(midnightText.text,/too soon|already passed|scheduled to end/i)
+  // The reminder is 23:55 on Nov 22; the meeting is 00:05 on Nov 23. Use each event's local day.
+  assert.match(midnightText.text,/Want a reminder today at 11:55 pm IST for Midnight Session\? It starts tomorrow at 12:05 am\./)
   assert.equal(store.reminders.length,before,'no implicit reminder from a late share')
 console.log('PASS: Google Calendar "⋅" and month-first dates are read')
