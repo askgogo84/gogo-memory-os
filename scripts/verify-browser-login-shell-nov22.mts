@@ -21,6 +21,15 @@ const combinedGenericGate={
 }
 assert.equal(isBrowserLoginShell(combinedGenericGate),true,
   'combined auth prompts also block other providers')
+assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public post',
+  text:'Instagram Log in or sign up to view this post. brandname New product launch today. 38 likes. About Help Press',
+}),false,'an auth banner above a genuinely observed post must not hide caption and likes')
+assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public caption',
+  text:'Instagram Log in or sign up to view this post. Caption: New product launch today. About Help Press',
+}),false,'an observed caption remains readable even below a combined sign-in prompt')
+
 
 assert.equal(isBrowserLoginShell({
   url:'https://www.instagram.com/p/example',title:'Instagram',
