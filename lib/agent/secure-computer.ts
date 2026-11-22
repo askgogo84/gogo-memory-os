@@ -254,20 +254,22 @@ async function isActiveRegistrationPage(page){
   }))return true;
   const leading=String(observed.text||'').replace(/\s+/g,' ').trim().replace(/^(?:instagram|meta)\s+/i,'').slice(0,260);
   const fullText=String(observed.text||'').replace(/\s+/g,' ').trim();
-  const articlePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|faq|tutorials?)(?:\/|$)/i.test(path);
   const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText);
   const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(fullText);
   const newsletterForm=form=>{
     const fields=form.inputs||[];
+    // Optional newsletter opt-ins within real signups cannot exempt a whole
+    // credential form. Article URLs alone are never newsletter evidence.
     if(fields.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))))return false;
     const fieldEvidence=[form.action||'',...fields.flatMap(input=>[input.name,input.label])].join(' ');
-    const formText=String(form.formText||'');
+    const formText=String(form.formText||'').replace(/\s+/g,' ').trim();
     const accountCue=/\b(?:create\s+(?:an?\s+|your\s+)?account|register(?:\s+an?\s+account)?|already\s+have\s+an?\s+account)\b/i.test(formText);
     if(accountCue)return false;
-    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence)
-      ||(articlePath&&/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(formText))
-      ||(articlePath&&!forms.some(f=>(f.inputs||[]).some(i=>/\bpassword\b/i.test([i.name,i.type,i.label].join(' '))))
-        &&!(signupCopy&&existingAccountCopy));
+    const newsletterEvidence=/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence+' '+formText);
+    if(!newsletterEvidence)return false;
+    const signupSubmit=(form.submitLabels||[]).some(label=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')));
+    const newsletterHeading=/^(?:newsletter\b|subscribe\b|subscription\b|sign\s*up\s+(?:now\s+)?(?:for|to)\s+(?:our\s+)?(?:newsletter\b|email\s+updates\b))/i.test(formText);
+    return !signupSubmit||newsletterHeading;
   };
   const credentialForms=forms.filter(form=>!newsletterForm(form));
   const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
@@ -299,9 +301,12 @@ async function isActiveRegistrationPage(page){
         explicit:result.explicit||explicit};
     },{associated:false,explicit:false});
   }).catch(()=>({associated:true,explicit:true}));
-  if(registrationSubmit.associated&&credentialForms.length>0)return true;
+  // A Sign up action must belong to the same non-newsletter credential
+  // form. An unrelated footer newsletter beside a login form is not a barrier.
+  if(credentialForms.some(form=>(form.submitLabels||[]).some(label=>
+    /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))))return true;
   if(publicGuidePath&&!passwordField)return false;
-  if(registrationSubmit.explicit)return true;
+  if(registrationSubmit.explicit&&credentialForms.length>0)return true;
   if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
   return false;
 }
