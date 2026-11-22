@@ -321,7 +321,7 @@ async function handleChatPost(req: NextRequest) {
       || (/^\s*(?:[a-z,!']+\s+){0,6}(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m=>m.isCallRequestFor(String(user.telegram_id),text),()=>false))
     // A business number typed after Gogo's own fresh request is handled before goal intake/the brain.
     // It can only create a call plan; placing a call still requires a separate yes to the exact plan.
-    if(/^\\+?[\\d\\s().-]{9,24}$/.test(text)){
+    if(/^\+?[\d\s().-]{9,24}$/.test(text)){
       const numberMod:any=await import('@/lib/agent/voice-call').catch(()=>null)
       if(numberMod?.isGeneralCallNumberReply&&await numberMod.isGeneralCallNumberReply(String(user.telegram_id),text)){
         const plan=await numberMod.tryVoiceCall({actor,text,surface:'web'}).catch(()=>null)
