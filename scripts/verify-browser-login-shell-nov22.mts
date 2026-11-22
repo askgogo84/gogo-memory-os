@@ -50,6 +50,18 @@ assert.equal(isBrowserLoginShell({
   text:'Instagram Sign up to see photos and videos from friends. brandname New product launch today. November 22 About Help Press Privacy Terms',
 }),false,'real unlabelled caption beneath a signup-only banner remains readable')
 assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public short caption',
+  text:'Instagram Sign up to see photos and videos from friends. brandname Coming soon. About Help Press Privacy Terms',
+}),false,'short unlabelled public caption is not hidden by a signup banner')
+assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Instagram',
+  text:'Instagram Sign up to see this post. Create your account to see more posts. Sign up. About Help Privacy Terms',
+}),true,'signup-only registration marketing is not a real short caption')
+assert.equal(isBrowserLoginShell({
+  url:'https://example.com/guides/signup',title:'Registration guide',
+  text:'Sign up to see photos and videos from friends: this is the notice displayed on Instagram. This public guide explains the signup process.',
+}),false,'public guide beginning with signup-only words is not an active gate')
+assert.equal(isBrowserLoginShell({
   url:'https://example.com/guides/signup',title:'How registration works',
   text:'Our article explains why sites ask visitors to sign up to see a post. It is a public guide, not an active login gate.',
   forms:[{inputs:[{type:'email',name:'newsletterEmail'}]}],
