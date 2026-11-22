@@ -388,9 +388,19 @@ console.log('✓ Hinglish self-checks are recognised; "are you ok?" gets a short
 {
   for (const t of ['Run a self-diagnostic and tell me if everything is okay.', 'Run a self-diagnostic and let me know whether everything is fine', 'Run a system check, then tell me if everything is working properly', 'Run a self-diagnostic']) assert.equal(d.isDiagnosticRewrite(t), true, t)
   for (const t of ['Remind me to run a system check and tell me if everything is ok', 'Check if everything is okay with Divya', 'Tell me if everything is okay', 'Run a health check on my car and tell me if everything is ok']) assert.equal(d.isDiagnosticRewrite(t), false, t)
+  // Review (PR #1569): the live rewrite must reach the real handler (the whole string does not match strictly).
+  const core = d.diagnosticRewriteCore('Run a self-diagnostic and tell me if everything is okay.')
+  assert.equal(core, 'Run a self-diagnostic')
+  const { db, writes } = fakeDb(healthy)
+  const live = await d.trySystemDiagnostic(actor, core, { db, now: NOW, env, ...probes })
+  assert.ok(live?.text && /^\*AskGogo self-diagnostic\*/.test(live.text) && live.readOnly === true); assert.deepEqual(writes, [])
+  assert.equal(d.diagnosticRewriteCore('Tell me if everything is okay'), null)
   const brain = readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8')
-  const iDiag = brain.indexOf('isDiagnosticRewrite(d.instruction)'), iPass = brain.indexOf("if (d.kind === 'handle' && d.rewritten) return { text: d.instruction }")
+  const iDiag = brain.indexOf('diagnosticRewriteCore(d.instruction)'), iPass = brain.indexOf("if (d.kind === 'handle' && d.rewritten) return { text: d.instruction }")
   assert.ok(iDiag > 0 && iDiag < iPass, 'a diagnostic rewrite gets the real report before the rewrite is handed on')
-  assert.match(brain.slice(iDiag, iPass), /trySystemDiagnostic\(/)
+  const block = brain.slice(iDiag - 120, iPass)
+  assert.match(block, /!p\.forwarded/); assert.match(block, /trySystemDiagnostic\(actor, diagCore\)/); assert.match(block, /try \{[\s\S]*\} catch/)
+  const wa = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+  assert.ok(wa.includes("surface: 'whatsapp' }), text)).catch(() => null)"), 'a failed actor lookup cannot throw out of the webhook')
 }
 console.log('✓ a brain rewrite that asks for a self-diagnostic gets the real read-only report, never a written one')
