@@ -288,4 +288,45 @@ await check('release-time providers (Naru) keep the existing release mission pat
   assert.match(r.text,/Reply APPROVE/)
 })
 
+const naruBooking='https://bookings.airmenus.in/eatnaru/order'
+const naruPolicy='https://www.narunoodlebar.com/menu'
+const naruRequest='Book Naru Noodle Bar for 2 on 2026-10-25 at 8:30 PM only.'
+const soldOut={status:'completed',url:naruBooking,pageText:'Sold out.'}
+const policyText='Book now. Our online bookings open every Monday at 8:oopm. Dinner at 6:30pm and 8:30pm.'
+
+await check('Naru uses the observed venue policy and Bengaluru release time for a travelling owner',async()=>{
+  const db=makeDb({users:[{id:actor.userId,telegram_id:123,timezone:'America/New_York'}]})
+  const h=loadReservation({db,search:()=>[],browser:async p=>p.url===naruBooking?soldOut:
+    {status:'completed',url:naruPolicy+'/',pageText:policyText}})
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:naruRequest})
+  assert.deepEqual(h.browserCalls.map(p=>[p.mode,p.url]),[['read',naruBooking],['read',naruPolicy]])
+  assert.deepEqual(h.searches,[])
+  assert.equal(result.status,'waiting_approval')
+  const event=h.db.tables.life_events[0]
+  assert.equal(event.metadata_json.releaseAt,'2026-10-19T14:30:00.000Z')
+  assert.equal(event.metadata_json.releaseEvidenceUrl,naruPolicy+'/')
+  assert.equal(h.db.tables.agent_approvals.length,1)
+})
+
+for(const [label,inspection] of Object.entries({
+  blocked:{status:'blocked',url:naruPolicy,pageText:policyText},
+  redirected:{status:'completed',url:'https://example.com/menu',pageText:policyText},
+  wrongPage:{status:'completed',url:'https://www.narunoodlebar.com/contact',pageText:policyText},
+  seatingHours:{status:'completed',url:naruPolicy,pageText:'Book now. Dinner 6:30pm and 8:30pm.'},
+  unavailable:null,
+})){
+  await check('Naru creates no approval from '+label+' policy evidence',async()=>{
+    const h=loadReservation({search:()=>[{url:naruPolicy,title:'Naru',snippet:policyText}],browser:async p=>{
+      if(p.url===naruBooking)return soldOut
+      if(!inspection)throw Error('fixture unavailable')
+      return inspection
+    }})
+    const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:naruRequest})
+    assert.equal(result.status,'paused')
+    assert.match(result.text,/could not verify an exact future booking-release time/)
+    assert.equal(h.db.tables.agent_approvals?.length||0,0)
+    assert.equal(h.db.tables.life_events?.length||0,0)
+  })
+}
+
 if(failures.length){console.error(failures.join('\n\n'));process.exitCode=1}else console.log('First-party reservation flow passed: widget ranking, slot replies, name approval, CAPTCHA hand-over, unreadable reply. Inert transports only.')
