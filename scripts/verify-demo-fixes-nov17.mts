@@ -33,7 +33,7 @@ eq(vc.stripCallBookingName(P + 'in the name of Divya for Saturday 8pm'), 'call T
 eq(vc.stripCallBookingName('Call District 6 near Orion mall and book a table for 2 Saturday 8pm under the name Goverdhan'), 'Call District 6 near Orion mall and book a table for 2 Saturday 8pm', 'documented example unchanged')
 eq(vc.stripCallBookingName(P + 'Saturday 8pm'), 'call Toit and book a table for 2 Saturday 8pm', 'nothing to strip')
 const src = readFileSync('lib/agent/voice-call.ts', 'utf8')
-eq(/const givenName = callBookingName\(params\.text\)/.test(src) && /const guestName = named\?\.\[1\] \|\| savedName/.test(src), true, 'the plan uses the given name before the saved or account name')
+eq(/const givenName = callBookingName\(numberFollowup \|\| params\.text\)/.test(src) && /const guestName = named\?\.\[1\] \|\| savedName/.test(src), true, 'the plan uses the original named request before saved or account name, including a phone-number follow-up')
 eq(src.indexOf('await rememberBookingName(tg, named[1])') > src.indexOf('const brief = await compileCallAsk('), true, 'a name is remembered only after a plan exists (review B4)')
 
 // 2. A room is not a table: never a call plan, and never saved as a stay.
