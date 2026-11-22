@@ -41,7 +41,7 @@ async function run(failId:string|null){
   assert.ok(errors.every(s=>!s.includes('synthetic-thread-')),'no Gmail thread IDs in logs')
  }else{
   const result=await read
-  assert.deepEqual(result.map((r:any)=>r.id),ids,'preserve requested thread order when responses finish out of order')
+  assert.deepEqual(Array.from(result,(r:any)=>r.id),ids,'preserve requested thread order when responses finish out of order')
   assert.equal(requests.length,ids.length)
   assert.equal(errors.length,0)
  }
