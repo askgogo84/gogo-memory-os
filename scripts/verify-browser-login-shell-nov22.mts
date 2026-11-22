@@ -101,6 +101,26 @@ assert.equal(isBrowserRegistrationBarrier({
   controls:[{tag:'button',label:'Sign up',inForm:true}],
 }),true,'email-first account signup with optional newsletter opt-in still blocks Vault')
 assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Sign up Email Log in',
+  forms:[{action:'https://example.com/auth',inputs:[
+    {name:'email',type:'email'},{name:'newsletter',type:'checkbox'}],
+    submitLabels:['Sign up'],formText:'Sign up Email Subscribe to newsletter'}],
+}),true,'optional newsletter checkbox cannot hide an account registration headed Sign up')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/guides/auth',title:'Welcome',
+  text:'Home Sign up Email Log in',
+  forms:[{action:'https://example.com/guides/auth',inputs:[{name:'email',type:'email'}],
+    submitLabels:['Sign up'],formText:'Sign up Email'}],
+}),true,'a guide URL without newsletter evidence cannot exempt a real account signup')
+assert.equal(isBrowserRegistrationBarrier({
+  url:'https://example.com/login',title:'Sign in',
+  text:'Sign in. Subscribe for updates.',
+  forms:[
+    {action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}],submitLabels:['Log in'],formText:'Log in'},
+    {action:'https://example.com/subscribe',inputs:[{name:'newsletterAddress',type:'email'}],submitLabels:['Sign up'],formText:'Newsletter Sign up'}],
+}),false,'footer newsletter signup cannot convert a separate existing-account login into registration')
+assert.equal(isBrowserRegistrationBarrier({
   url:'https://example.com/login',title:'Sign in',text:'Sign in to your account',
   forms:[{action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
   controls:[{tag:'a',label:'Sign up'},{tag:'button',label:'Log in'}],
@@ -351,7 +371,11 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
           getComputedStyle:()=>({display:'block',visibility:'visible'}),
         })
       }
-      return {...current,forms:current.forms||[]}
+      const observedForms=(current.forms||[]).map((f,i)=>{
+        const observedSubmit=i===0&&current.signupSubmitVisible===true&&current.signupSubmitInForm!==false
+        return {...f,submitLabels:[...(f.submitLabels||[]),...(observedSubmit?[current.signupButtonLabel||'Sign up']:[])]}
+      })
+      return {...current,forms:observedForms}
     },
   }
   const context={pages:()=>[page],close:async()=>{}}
@@ -467,6 +491,42 @@ assert.equal(signupWithNewsletterOptIn.vaultLogin.registrationRefused,true,
   'real account signup is not mistaken for newsletter when it offers optional updates')
 assert.deepEqual(signupWithNewsletterOptIn.actions,[],
   'real signup plus newsletter preference must never receive saved credentials')
+const signupOnlyWithOptionalNewsletter=await syntheticVaultWorker({
+  url:'https://example.com/auth',title:'Welcome',
+  text:'Home Sign up Email Log in',
+  forms:[{action:'https://example.com/auth',inputs:[{name:'email',type:'email'},{name:'newsletter',type:'checkbox'}],
+    submitLabels:['Sign up'],formText:'Sign up Email Subscribe to newsletter'}],
+  signupSubmitVisible:true,signupSubmitInForm:true,signupButtonLabel:'Sign up',
+})
+assert.equal(signupOnlyWithOptionalNewsletter.vaultLogin.registrationRefused,true,
+  'optional newsletter checkbox must not exempt email-first account signup from Vault refusal')
+assert.deepEqual(signupOnlyWithOptionalNewsletter.actions,[],
+  'signup with optional newsletter opt-in must never fill saved identity')
+const signupOnGuidesRoute=await syntheticVaultWorker({
+  url:'https://example.com/guides/auth',title:'Welcome',
+  text:'Home Sign up Email Log in',
+  forms:[{action:'https://example.com/guides/auth',inputs:[{name:'email',type:'email'}],
+    submitLabels:['Sign up'],formText:'Sign up Email'}],
+  signupSubmitVisible:true,signupSubmitInForm:true,signupButtonLabel:'Sign up',
+})
+assert.equal(signupOnGuidesRoute.vaultLogin.registrationRefused,true,
+  'guide route alone must not exempt an active account registration')
+assert.deepEqual(signupOnGuidesRoute.actions,[],
+  'account signup beneath guide URL may not autofill or submit credentials')
+const loginWithUnrelatedNewsletter=await syntheticVaultWorker({
+  url:'https://example.com/login',title:'Sign in',
+  text:'Sign in. Sign up for newsletter updates.',
+  forms:[
+    {action:'https://example.com/login',inputs:[{name:'email',type:'email'},{name:'password',type:'password'}],
+      submitLabels:['Log in'],formText:'Log in'},
+    {action:'https://example.com/subscribe',inputs:[{name:'newsletterAddress',type:'email'}],
+      submitLabels:['Sign up'],formText:'Newsletter Sign up'}],
+  signupSubmitVisible:false,
+})
+assert.equal(loginWithUnrelatedNewsletter.vaultLogin.registrationRefused,undefined,
+  'separate newsletter footer does not block valid account login')
+assert.deepEqual(loginWithUnrelatedNewsletter.actions.slice(0,2),['fill:user','fill:password'],
+  'saved login stays usable with independent newsletter footer')
 const signupWithGenericContinue=await syntheticVaultWorker({
   url:'https://example.com/auth',title:'Welcome',
   text:'Home Help Create account Email Continue Already have an account? Log in',
