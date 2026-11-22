@@ -108,7 +108,7 @@ async function resolveDashboardUser(telegramId: string) {
   // service-role users lookup. Fail closed on malformed/out-of-range session values.
   if (typeof telegramId !== 'string' || telegramId.length > 20 || !/^-?[1-9]\d*$/.test(telegramId)) return null
   const owner = BigInt(telegramId)
-  if (owner < -9223372036854775808n || owner > 9223372036854775807n) return null
+  if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) return null
   const { data, error } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id, name')
