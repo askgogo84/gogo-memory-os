@@ -83,7 +83,10 @@ export function isBrowserLoginShell(page:{
   // Some signed-out Instagram pages show only a sign-up gate, with no "Log in".
   // Strip this gate before applying the existing real-caption evidence heuristic.
   const signupGate=/^(?:please\s+)?sign\s*up\s+(?:to|before)\s+(?:see|view|watch|access|read)\s+(?:(?:photos?\s+and\s+videos?)|(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page))\b/i
-  const openingGate=body.length<900&&(activeGate.test(opening)||signupGate.test(opening))
+  const instagramSignupGate=instagram&&signupGate.test(opening)
+  // Signup-only marketing is an Instagram-specific observation, not a generic
+  // rule for public articles that quote the same introductory sentence.
+  const openingGate=body.length<900&&(activeGate.test(opening)||instagramSignupGate)
   if(openingGate&&!instagram)return true
 
   // Instagram's logged-out footer shell is short, sign-in-heavy and lacks post content.
@@ -99,7 +102,7 @@ export function isBrowserLoginShell(page:{
     ?opening.replace(activeGate,'').replace(signupGate,'')
       .replace(/^\s*(?:and\s+videos?(?:\s+from\s+(?:your\s+)?friends)?|from\s+(?:your\s+)?friends)\b/i,'')
       // Login walls also carry account-creation marketing. It is not post copy.
-      .replace(/\b(?:create\s+an?\s+account|join\s+instagram)(?:\s+to\s+(?:see|view|watch|explore|share)\s+(?:more\s+)?(?:photos?(?:\s+and\s+videos?)?|videos?|posts?|content))?\b/gi,'')
+      .replace(/\b(?:create\s+(?:(?:your|an?)\s+)?account|join\s+instagram)(?:\s+to\s+(?:see|view|watch|explore|share)\s+(?:more\s+)?(?:photos?(?:\s+and\s+videos?)?|videos?|posts?|content))?\b/gi,'')
     :leading
   const remaining=evidenceBody
     .replace(/\b(?:forgot\s+(?:your\s+)?password|don'?t\s+have\s+an\s+account|already\s+have\s+an\s+account|get\s+the\s+app|download\s+the\s+app|also\s+from\s+meta|meta\s+verified|from\s+meta|log\s*in|sign\s*in|sign\s*up|instagram|threads|locations|privacy|terms|about|help|press|api|jobs|language|english|copyright|home|explore|reels|messages|search|profile|meta)\b/gi,' ')
@@ -110,7 +113,11 @@ export function isBrowserLoginShell(page:{
   const meaningful=new Set(remaining.split(/\s+/).filter(token=>Array.from(token).length>=3))
   const nonLatinLetters=[...remaining.matchAll(/[^\x00-\x7F]/g)].length>=4
     &&[...remaining.matchAll(/\p{L}/gu)].length>=4
-  return meaningful.size<4&&!nonLatinLetters
+  // Very short real captions can follow a signup banner without a label or
+  // engagement count (for example "brandname Coming soon"). Only lower this
+  // threshold for the Instagram-specific gate after removing stock signup copy.
+  const minimumWords=instagramSignupGate?3:4
+  return meaningful.size<minimumWords&&!nonLatinLetters
 }
 
 /** Preserve only observed public Croma product slugs; never exempt account URLs. */
