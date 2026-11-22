@@ -19,7 +19,7 @@ function load(file: string, mocks: Record<string,any>, globals: Record<string,an
 }
 let seq = 0, searches = 0, browserAttempts = 0, sent = 0, rejectSend = false
 let browserDeadline:number|undefined
-const tables: Record<string,any[]> = {agent_runs:[],agent_steps:[],agent_activity:[],conversations:[],users:[{telegram_id:42,whatsapp_id:'+15555550101',name:'Fixture'}]}
+const tables: Record<string,any[]> = {agent_runs:[],agent_steps:[],agent_activity:[],conversations:[],users:[{telegram_id:'42',whatsapp_id:'+15555550101',name:'Fixture'}]}
 const notifications = new Map<string,string>()
 let failPublish = false
 const db = {
