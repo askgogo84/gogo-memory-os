@@ -2563,6 +2563,24 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // A saved login is also tried once on a signed-out page that only offers a header "Log in" link.
       // With a code in hand the saved number is never re-sent (that would text a new code and void this one).
       const registrationBarrier=isBrowserRegistrationBarrier(page)
+      // A public Instagram post may show a signup banner above its real caption.
+      // It can still be read, but must never be used as a reason to sign in.
+      const publicInstagramEvidence=params.mode==='read'&&!loginish&&(()=>{
+        try {
+          const url=new URL(String(page.url||''))
+          return ['instagram.com','www.instagram.com'].includes(url.hostname.toLowerCase())
+            &&/^\\/(?:p|reel)\\//i.test(url.pathname)
+            &&!(page.forms||[]).some((f:any)=>(f.inputs||[]).some((i:any)=>/password|email|phone|username/i.test([i.name,i.type,i.label].join(' '))))
+        } catch { return false }
+      })()
+      if(registrationBarrier&&params.accountCreation!==true&&!publicInstagramEvidence){
+        const handoffReservation=params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,
+          title:safeText(page.title,300),summary:'This page asks to create an account. Gogo stopped; sign in to an existing account in Take Control, then resume the same task.',
+          pageText:'Gogo paused at account registration. No Vault credentials were entered or account created.',
+          forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
+          blockReason:'human_auth_required',authReason:'registration_not_authorized'}
+      }
       let signedOutEntry=!registrationBarrier&&!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
@@ -2614,6 +2632,18 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
               managedEnv:first.managed?.env,
             })
             const vaultFill=page?.vaultLogin||{}
+            // The isolated browser worker may redirect to registration after
+            // the initial read. Never report an active session or resume a
+            // planner on a refused registration form.
+            if(vaultFill.registrationRefused===true){
+              actionLog.push({kind:'vault_login',detail:'Saved login refused an account-registration form; no account created.',status:'failed'})
+              const handoffReservation=params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+              return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,
+                title:safeText(page.title,300),summary:'This site redirected to account registration. Gogo stopped; sign in to an existing account in Take Control, then resume the original task.',
+                pageText:'Gogo stopped before account creation. The login attempt was not verified.',
+                forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
+                blockReason:'human_auth_required',authReason:'registration_not_authorized'}
+            }
             if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,openerLabel:vaultFill.openerLabel||null,openerClicks:vaultFill.openerClicks||0,headerCues:vaultFill.headerCues||null,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
             if(vaultFill.phoneCode&&vaultFill.codeRequested){vaultPhoneCodeRequested=true;if(credential.viaWhatsAppNumber)phoneLoginViaWhatsApp=true}
             const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||(vaultFill.phoneCode&&vaultFill.codeRequested)))
