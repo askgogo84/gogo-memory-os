@@ -5,7 +5,7 @@ import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 import { obscuraPilotEligible, type ObscuraRequest } from './obscura-public-read'
 import { tryObscuraPublicRead } from './obscura-pilot-runtime'
 import {ensurePersistentCommerceBrowser, COMMERCE_CDP_URL} from './persistent-commerce-browser'
-import { isLoginDestination, isLoginUrl, isBrowserLoginShell, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
+import { isLoginDestination, isLoginUrl, isBrowserLoginShell, isBrowserRegistrationBarrier, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
 import { blockedHostsLogLine } from './browser-blocked-hosts'
 import { completeAgentPlanPrompt, completeVisionPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
@@ -251,6 +251,28 @@ async function model(page){
   });
 }
 
+// Re-check the live DOM immediately before automatic credential fill or submit.
+// A login page can redirect to registration after the prior observed page.
+async function registrationPage(page){
+  const result=await page.evaluate(()=>{
+    const path=String(location.pathname||'')
+    const title=String(document.title||'').replace(/\s+/g,' ').trim()
+    const opening=String(document.body?.innerText||'').replace(/\s+/g,' ').trim()
+      .replace(/^(?:instagram|meta)\s+/i,'').slice(0,400)
+    return /(?:^|\/)(?:signup|sign-up|register|registration|create-account|emailsignup)(?:\/|$)/i.test(path)
+      || /^(?:sign\s*up|create\s+(?:an?\s+|your\s+)?account|register|registration)(?:\s*[-–—|•:].*)?$/i.test(title)
+      || /^(?:please\s+)?(?:sign\s*up|create\s+(?:an?\s+|your\s+)?account|register)\s+(?:to|before|for)\b/i.test(opening)
+  }).catch(()=>true)
+  return result===true
+}
+async function refuseRegistration(page){
+  if(!(await registrationPage(page)))return false
+  const out=await model(page)
+  out.vaultLogin={usernameFilled:false,passwordFilled:false,submitted:false,registrationRefused:true}
+  console.log(JSON.stringify(out))
+  return true
+}
+
 (async()=>{
   const __env=(process&&process.env)||{};
   const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
@@ -266,6 +288,7 @@ async function model(page){
       await page.waitForTimeout([1500,4000,8000][attempt]);
     }}
     await page.waitForTimeout(800);
+    if(await refuseRegistration(page))return;
     const USER_FIELDS='input[autocomplete~="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i], input[placeholder*="username" i], input[placeholder*="email" i]';
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
     if(!(await readyLoginFields(page,USER_FIELDS)).length){
@@ -289,6 +312,7 @@ async function model(page){
         }
       }
     }
+    if(await refuseRegistration(page))return;
     const PASS_FIELDS='input[type="password"]';
     const userFields=await readyLoginFields(page,USER_FIELDS);
     if(userFields.length>1) ambiguous.push('username_fields');
@@ -301,7 +325,10 @@ async function model(page){
         'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
         'button:has-text("Log in")','button:has-text("Login")','a:has-text("Login")','button[type="submit"]','input[type="submit"]'
       ]);
-      if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
+      if(next){
+        if(await refuseRegistration(page))return;
+        await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200);
+      }
       passFields=await visibleFields(page,PASS_FIELDS);
     }
     let codeRequested=false;
@@ -342,7 +369,10 @@ async function model(page){
         'button:has-text("Log in")','button:has-text("Sign in")','button:has-text("Login")',
         'button[type="submit"]','input[type="submit"]'
       ]);
-      if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
+      if(submit){
+        if(await refuseRegistration(page))return;
+        await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800);
+      }
     }
     const out=await model(page);
     out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked,...(phoneCode?{phoneCode:true}:{})};
@@ -2540,7 +2570,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         }
       }
       if(signedOutEntry)vaultEntryChecked=true
-      if(!params.publicOnly && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
+      if(!params.publicOnly && !vaultAttempted && params.accountCreation!==true && !isBrowserRegistrationBarrier(page)
+        && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
