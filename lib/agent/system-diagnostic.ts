@@ -341,7 +341,7 @@ export async function approvalsCheck(db: Db, owner: string, now: Date): Promise<
   // An old decision (e.g. 11 Nov) must not be attached to an *empty* live queue as if an approval were pending.
   // Keep the flow unverified without recent decision evidence; no new state and no invented success.
   if(n===0&&decided.ok)return { ...check('approvals',L,'unverified',`${waiting} No approval decision in the last 7 days confirms the approval flow.`),quiet:true }
-  return check('approvals',L,'unverified',`${waiting} ${decided.ok?'No approval decision in the last 7 days confirms the approval flow.':'I could not read your approval decision history.'}`,n?oldest:null)
+  return { ...check('approvals',L,'unverified',`${waiting} ${decided.ok?'No approval decision in the last 7 days confirms the approval flow.':'I could not read your approval decision history.'}`,n?oldest:null),quiet:false }
 }
 
 export async function voiceCheck(db: Db, owner: string, env: Record<string, string | undefined>, now: Date): Promise<DiagnosticCheck> {
