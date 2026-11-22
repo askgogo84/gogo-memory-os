@@ -469,6 +469,22 @@ assert.equal(zeroBoxWorker.vaultLogin.registrationRefused,true,
   'actual worker must reject a zero-box registration form after the model preserves its email')
 assert.deepEqual(zeroBoxWorker.actions,[],
   'zero-box registration must not fill or submit any saved credential')
+const formlessWorker=await syntheticVaultWorker({
+  ...observedFormless,
+  signupSubmitVisible:true,signupSubmitInForm:false,signupSubmitType:'button',signupButtonLabel:'Sign up',
+})
+assert.equal(formlessWorker.vaultLogin.registrationRefused,true,
+  'actual worker must refuse a formless JS signup even when its button lacks a form owner')
+assert.deepEqual(formlessWorker.actions,[],
+  'formless registration cannot autofill or submit saved Vault credentials')
+const modeSwitchWorker=await syntheticVaultWorker({
+  ...observedLoginSwitch,
+  signupSubmitVisible:true,signupSubmitInForm:true,signupSubmitType:'button',signupButtonLabel:'Sign up',
+})
+assert.equal(modeSwitchWorker.vaultLogin.registrationRefused,undefined,
+  'actual worker must preserve login when Sign up is a type=button mode switch')
+assert.deepEqual(modeSwitchWorker.actions.slice(0,2),['fill:user','fill:password'],
+  'existing-account login fields remain accessible next to a mode-switch button')
 for(const snapshot of [
   {url:'https://example.com/register',title:'Register',text:'Create your account'},
   {url:'https://example.com/auth',title:'Create account',text:'Welcome',forms:[{inputs:[{name:'email',type:'email'}]}]},
