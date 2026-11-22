@@ -83,7 +83,10 @@ export function isBrowserLoginShell(page:{
   // access prompt and stock "and videos from friends" copy before evaluating
   // whether an unlabelled public caption is actually present below it.
   const evidenceBody=openingGate
-    ?opening.replace(activeGate,'').replace(/^\s*(?:and\s+videos?(?:\s+from\s+(?:your\s+)?friends)?|from\s+(?:your\s+)?friends)\b/i,'')
+    ?opening.replace(activeGate,'')
+      .replace(/^\s*(?:and\s+videos?(?:\s+from\s+(?:your\s+)?friends)?|from\s+(?:your\s+)?friends)\b/i,'')
+      // Login walls also carry account-creation marketing. It is not post copy.
+      .replace(/\b(?:create\s+an?\s+account|join\s+instagram)(?:\s+to\s+(?:see|view|watch|explore|share)\s+(?:more\s+)?(?:photos?(?:\s+and\s+videos?)?|videos?|posts?|content))?\b/gi,'')
     :leading
   const remaining=evidenceBody
     .replace(/\b(?:forgot\s+(?:your\s+)?password|don'?t\s+have\s+an\s+account|already\s+have\s+an\s+account|get\s+the\s+app|download\s+the\s+app|also\s+from\s+meta|meta\s+verified|from\s+meta|log\s*in|sign\s*in|sign\s*up|instagram|threads|locations|privacy|terms|about|help|press|api|jobs|language|english|copyright|home|explore|reels|messages|search|profile|meta)\b/gi,' ')
