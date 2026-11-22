@@ -9,7 +9,7 @@
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
 import { isStopOneReminder } from '../bot/stop-reminder-phrase'
-import { classifyDiagnosticAsk, diagnosticRewriteCore } from './system-diagnostic'
+import { classifyDiagnosticAsk, diagnosticRewriteCore, type DiagnosticCheck } from './system-diagnostic'
 import { isConnectMailAsk } from '../email/connect-phrases'
 import { tripAsk } from '@/lib/agent/trip-plan'
 import { personAsk } from '@/lib/agent/people'
@@ -679,7 +679,7 @@ async function clearOwnLoopDraft(telegramId: number, since: number): Promise<voi
   if (st?.payload?.draft?.loopDraft === true && Number.isFinite(at) && at >= since - 1000) await fs.clearFollowupState(telegramId, 'gmail_reply_draft')
 }
 
-export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string } | null> {
+export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string; handledBy?: string; checks?: DiagnosticCheck[]; readOnly?: boolean; mutated?: boolean } | null> {
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
   // Saved-state answers the brain cannot see (connected apps) go to their handler, never a guess.
   if (await import('./autonomy-status').then(m => m.isConnectionCapabilityQuery(p.text), () => false)) return null
@@ -751,7 +751,7 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
       const m = await import('./system-diagnostic')
       const actor = await (await import('./actor')).resolveAgentActor({ telegramId: String(p.telegramId), whatsappId: p.whatsappId || undefined, surface: p.surface === 'web' ? 'web' : 'whatsapp' } as any)
       const diag = await m.trySystemDiagnostic(actor, diagCore)
-      if (diag?.text) return { reply: diag.text }
+      if (diag?.text) return { reply: diag.text, handledBy: diag.handledBy, checks: diag.checks, readOnly: diag.readOnly, mutated: diag.mutated }
     } catch (err: any) { console.error('BRAIN_DIAGNOSTIC_FAILED:', String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60)) }
   }
   if (d.kind === 'handle' && d.rewritten) return { text: d.instruction }

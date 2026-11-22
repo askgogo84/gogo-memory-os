@@ -403,4 +403,31 @@ console.log('✓ Hinglish self-checks are recognised; "are you ok?" gets a short
   const wa = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
   assert.ok(wa.includes("surface: 'whatsapp' }), text)).catch(() => null)"), 'a failed actor lookup cannot throw out of the webhook')
 }
+// No pending approvals: a decision 10 days ago must not appear as a timestamp for the live empty queue.
+{
+  const stale={...healthy,agent_approvals:[{telegram_id:OWNER,status:'approved',resolved_at:ago(240)}]}
+  const {db,writes}=fakeDb(stale)
+  const ap=await d.approvalsCheck(db,OWNER,NOW)
+  assert.equal(ap.status,'unverified')
+  assert.equal(ap.quiet,true)
+  assert.equal(ap.at,null,'no 11 Nov timestamp shown for an empty current queue')
+  assert.match(ap.evidence,/Nothing is waiting for your OK/)
+  const summary=d.formatDiagnosticSummary([ap],NOW)
+  assert.match(summary,/Nothing recent to test: Pending approvals/)
+  assert.doesNotMatch(summary,/11 Nov|❔ \\*Pending approvals\\*/i)
+  assert.deepEqual(writes,[])
+}
+{
+  // When the brain handles a rewrite, the dashboard must preserve the real diagnostic's structured fields.
+  const src=readFileSync(new URL('../lib/agent/brain.ts',import.meta.url),'utf8')
+  assert.match(src,/if \(diag\?\.text\) return \{ reply: diag\.text, handledBy: diag\.handledBy, checks: diag\.checks, readOnly: diag\.readOnly, mutated: diag\.mutated \}/)
+  const route=readFileSync(new URL('../app/api/dashboard/chat/route.ts',import.meta.url),'utf8')
+  assert.match(route,/isDiagnostic\?\{checks:brain\.checks\|\|\[\],readOnly:true,mutated:false\}:\{\}/)
+  const typed=await d.trySystemDiagnostic(actor,'Run a self-diagnostic',{...fakeDb(healthy),now:NOW,env,...probes})
+  assert.equal(typed.handledBy,'system-diagnostic')
+  assert.equal(typed.checks.length,8)
+  assert.equal(typed.readOnly,true)
+  assert.equal(typed.mutated,false)
+}
+console.log('✓ no stale date on empty approvals; brain diagnostic keeps typed evidence through the dashboard')
 console.log('✓ a brain rewrite that asks for a self-diagnostic gets the real read-only report, never a written one')
