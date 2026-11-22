@@ -28,6 +28,45 @@ const accountCreationShell={
 assert.equal(isBrowserLoginShell(accountCreationShell),true,
   'account-creation promotion after login does not establish readable post evidence')
 
+const signupOnlyInstagramShell={
+  url:'https://www.instagram.com/p/example', title:'Instagram',
+  text:'Instagram Sign up to see photos and videos from friends. Sign up. About Help Press Privacy Terms',
+}
+assert.equal(isBrowserLoginShell(signupOnlyInstagramShell),true,
+  'signup-only marketing copy must not be considered public Instagram post evidence')
+const signupRouteShell={
+  url:'https://www.instagram.com/accounts/emailsignup/',title:'Sign up • Instagram',text:'Instagram',
+}
+assert.equal(isBrowserLoginShell(signupRouteShell),true,
+  'Instagram registration destination is an auth boundary before controls render')
+const genericSignupForm={
+  url:'https://example.com/register',title:'Create an account',
+  text:'Sign up to continue',forms:[{inputs:[{name:'email',type:'email'},{name:'password',type:'password'}]}],
+}
+assert.equal(isBrowserLoginShell(genericSignupForm),true,
+  'credential-bearing registration form is an auth boundary without login copy')
+assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example', title:'Public brand post',
+  text:'Instagram Sign up to see photos and videos from friends. brandname New product launch today. November 22 About Help Press Privacy Terms',
+}),false,'real unlabelled caption beneath a signup-only banner remains readable')
+assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public short caption',
+  text:'Instagram Sign up to see photos and videos from friends. brandname Coming soon. About Help Press Privacy Terms',
+}),false,'short unlabelled public caption is not hidden by a signup banner')
+assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Instagram',
+  text:'Instagram Sign up to see this post. Create your account to see more posts. Sign up. About Help Privacy Terms',
+}),true,'signup-only registration marketing is not a real short caption')
+assert.equal(isBrowserLoginShell({
+  url:'https://example.com/guides/signup',title:'Registration guide',
+  text:'Sign up to see photos and videos from friends: this is the notice displayed on Instagram. This public guide explains the signup process.',
+}),false,'public guide beginning with signup-only words is not an active gate')
+assert.equal(isBrowserLoginShell({
+  url:'https://example.com/guides/signup',title:'How registration works',
+  text:'Our article explains why sites ask visitors to sign up to see a post. It is a public guide, not an active login gate.',
+  forms:[{inputs:[{type:'email',name:'newsletterEmail'}]}],
+}),false,'public signup guidance and newsletter fields without passwords remain readable')
+
 assert.equal(isBrowserLoginShell({
   url:'https://www.instagram.com/p/example',title:'Public post',
   text:'Instagram Log in or sign up to view this post. brandname New product launch today. 38 likes. About Help Press',
@@ -119,6 +158,7 @@ process.env.OPENAI_API_KEY ||= 'synthetic-api'
 process.env.ANTHROPIC_API_KEY ||= 'synthetic-api'
 const {assessReadOutcome}=await import('../lib/agent/secure-computer')
 for(const page of [instagramLogin, combinedInstagramGate, combinedGenericGate, accountCreationShell,
+  signupOnlyInstagramShell, signupRouteShell, genericSignupForm,
   {url:'https://www.instagram.com/p/example',title:'Instagram',text:'Instagram Log in Sign up About Help Press Privacy Terms'},
   {url:'https://example.com/login',title:'Sign in',text:'Username Password'},
 ]){
