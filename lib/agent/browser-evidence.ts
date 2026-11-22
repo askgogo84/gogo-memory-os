@@ -51,23 +51,23 @@ export function isBrowserLoginShell(page:{
   forms?:Array<{inputs?:Array<{name?:string;type?:string;label?:string}>}>
 }):boolean {
   if(isLoginFormPage(page))return true
-  const title=String(page.title||'').replace(/\\s+/g,' ').trim()
-  const body=String(page.text||'').replace(/\\s+/g,' ').trim()
+  const title=String(page.title||'').replace(/\s+/g,' ').trim()
+  const body=String(page.text||'').replace(/\s+/g,' ').trim()
   const leading=body.slice(0,1800)
   // Exact sign-in headers and explicit content access gates are not account navigation links.
-  const loginTitle=/^(?:log\\s*in|sign\\s*in|login)(?:\\s*[-–—|•:]\\s*[^\\n]{1,100})?$/i.test(title)
-  const loginControls=/\\b(?:log\\s*in|sign\\s*in|sign\\s*up|username|password)\\b/i.test(leading)
+  const loginTitle=/^(?:log\s*in|sign\s*in|login)(?:\s*[-–—|•:]\s*[^\n]{1,100})?$/i.test(title)
+  const loginControls=/\b(?:log\s*in|sign\s*in|sign\s*up|username|password)\b/i.test(leading)
   if(loginTitle&&loginControls)return true
-  if(/\\b(?:log\\s*in|sign\\s*in)\\s+(?:to|before)\\s+(?:(?:continue|access|see|view|read|watch|browse|open)\\s+(?:this\\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\\b/i.test(leading))return true
+  if(/\b(?:log\s*in|sign\s*in)\s+(?:to|before)\s+(?:(?:continue|access|see|view|read|watch|browse|open)\s+(?:this\s+)?(?:post|reel|story|stories|photos?|videos?|content|profile|page|instagram|account)|continue|instagram)\b/i.test(leading))return true
   // Instagram's logged-out redirect may show only login/signup controls and footer labels.
   // It is not evidence of the requested post even though the footer is readable.
   let host=''
   try{host=new URL(page.url||'').hostname.toLowerCase()}catch{}
   const instagram=host==='instagram.com'||host==='www.instagram.com'
   return instagram&&body.length<1100&&
-    /\\b(?:log\\s*in|sign\\s*in)\\b/i.test(leading)&&/\\bsign\\s*up\\b/i.test(leading)&&
-    /\\b(?:about|help|press|locations|threads|meta verified)\\b/i.test(leading)&&
-    !/\\b(?:\\d+\\s+likes?|\\d+\\s+comments?|view all comments|caption:)\\b/i.test(leading)
+    /\b(?:log\s*in|sign\s*in)\b/i.test(leading)&&/\bsign\s*up\b/i.test(leading)&&
+    /\b(?:about|help|press|locations|threads|meta verified)\b/i.test(leading)&&
+    !/\b(?:\d+\s+likes?|\d+\s+comments?|view all comments|caption:)\b/i.test(leading)
 }
 
 /** Preserve only observed public Croma product slugs; never exempt account URLs. */
