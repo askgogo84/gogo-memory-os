@@ -253,13 +253,22 @@ async function isActiveRegistrationPage(page){
     }catch{return false}
   }))return true;
   const leading=String(observed.text||'').replace(/\s+/g,' ').trim().replace(/^(?:instagram|meta)\s+/i,'').slice(0,260);
-  const hasAccountField=forms.some(form=>(form.inputs||[]).some(input=>
-    /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' '))));
-  const passwordField=forms.some(form=>(form.inputs||[]).some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))));
-  // Documentation/newsletter content is never an active signup just because
-  // its URL or first sentence describes how signup works.
-
   const fullText=String(observed.text||'').replace(/\s+/g,' ').trim();
+  const articlePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|faq|tutorials?)(?:\/|$)/i.test(path);
+  const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText);
+  const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(fullText);
+  const newsletterForm=form=>{
+    const evidence=[form.action||'',form.formText||'',...(form.inputs||[]).flatMap(input=>[input.name,input.label])].join(' ');
+    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(evidence)
+      ||(articlePath&&!forms.some(f=>(f.inputs||[]).some(i=>/\bpassword\b/i.test([i.name,i.type,i.label].join(' '))))
+        &&!(signupCopy&&existingAccountCopy));
+  };
+  const credentialForms=forms.filter(form=>!newsletterForm(form));
+  const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
+    /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' '))));
+  const passwordField=credentialForms.some(form=>(form.inputs||[]).some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))));
+  // A public article's newsletter form is not an account creation form.
+
   // Generic Continue on an email-first account creation form is consequential,
   // even when the signup heading follows page navigation and other prose.
   if(hasAccountField&&/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText)
@@ -284,7 +293,7 @@ async function isActiveRegistrationPage(page){
         explicit:result.explicit||explicit};
     },{associated:false,explicit:false});
   }).catch(()=>({associated:true,explicit:true}));
-  if(registrationSubmit.associated)return true;
+  if(registrationSubmit.associated&&credentialForms.length>0)return true;
   if(publicGuidePath&&!passwordField)return false;
   if(registrationSubmit.explicit)return true;
   if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
