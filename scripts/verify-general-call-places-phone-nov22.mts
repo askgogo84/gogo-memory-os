@@ -68,6 +68,10 @@ for(const [why,search,detail,expectedCalls] of [
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:'call Naturals Salon tomorrow for my health issue',locality,env:active,fetcher:forbidden}),null)
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'08012345678',env:active,fetcher:forbidden}),null)
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'---',env:active,fetcher:forbidden}),null)
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'Rajajinagar Bengaluru 98765 43210',env:active,fetcher:forbidden}),null)
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality:'Rajajinagar (080) 2345-6789',env:active,fetcher:forbidden}),null)
+assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:'Naturals Salon 98765-43210',locality,env:active,fetcher:forbidden}),null)
+
 assert.equal(forbiddenRequests,0,'private tasks, phone numbers, and meaningless localities never reach Google')
 assert.equal(await proposeGeneralCallPhoneFromPlaces({businessName:name,locality,env:active,fetcher:async()=>{throw Error('provider unavailable')}}),null)
 console.log('PASS: opt-in-only Google Places candidate; exact name/area; stable place ID; no ambiguous, foreign, closed or mismatched phones; NEVER dials, orders, or handles secrets')
