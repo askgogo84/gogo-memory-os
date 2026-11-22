@@ -336,7 +336,8 @@ body {
   color:#9a9a9a;
 }
 .dashboard-root.final-dark .final-dark-eyebrow {
-  color:#6a6a6a;
+  /* 22 Nov: #6a6a6a was 3.5:1 on the dark panels; #8f8f8f is about 5.9:1. Light mode keeps its own colour below. */
+  color:#8f8f8f;
   font-size:12px;
   font-weight:700;
   letter-spacing:.08em;

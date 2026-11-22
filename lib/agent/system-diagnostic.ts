@@ -141,12 +141,22 @@ export async function queuedForYou(db: Db, owner: string, now: Date): Promise<Qu
   const since = new Date(now.getTime() - 3 * DAY).toISOString()
   const [alerts, loops] = await Promise.all([
     rows(db.from('agent_activity').select('message,metadata_json,created_at').eq('telegram_id', owner).eq('event_type', 'watcher_triggered').gte('created_at', since).order('created_at', { ascending: false }).limit(12)),
-    rows(db.from('agent_open_loops').select('title,due_at').eq('telegram_id', owner).eq('status', 'active').in('kind', ['followup', 'waiting_on', 'commitment']).order('priority', { ascending: false }).limit(3)),
+    rows(db.from('agent_open_loops').select('title,due_at').eq('telegram_id', owner).eq('status', 'active').in('kind', ['followup', 'waiting_on', 'commitment']).order('priority', { ascending: false }).limit(12)),
   ])
+  // Review (PR #1563): watch housekeeping (merged, stopped, expired) shares the event type; it is not an alert.
+  // 22 Nov live: the same alert ("Mail alerts: 1 email(s) flagged.") and the same open item showed several times.
+  // Identical lines are merged (newest time kept, with how many times it happened).
+  const key = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim()
+  const alertMap = new Map<string, { at: string | null; text: string; n: number }>()
+  for (const a of (alerts.ok ? alerts.data : []).filter((a: any) => a?.message && !a?.metadata_json?.reason && !/^(?:Merged duplicate watch|Stopped watch whose date passed|Contextual watch expired)\b/.test(String(a.message)))) {
+    const k = key(String(a.message)), hit = alertMap.get(k)
+    if (hit) hit.n++; else alertMap.set(k, { at: a.created_at || null, text: String(a.message), n: 1 })
+  }
+  const seenOpen = new Set<string>()
+  const openItems = (loops.ok ? loops.data : []).filter((l: any) => { const k = key(String(l?.title || '')); if (!k || seenOpen.has(k)) return false; seenOpen.add(k); return true })
   return [
-    // Review (PR #1563): watch housekeeping (merged, stopped, expired) shares the event type; it is not an alert.
-    ...(alerts.ok ? alerts.data : []).filter((a: any) => a?.message && !a?.metadata_json?.reason && !/^(?:Merged duplicate watch|Stopped watch whose date passed|Contextual watch expired)\b/.test(String(a.message))).slice(0, 3).map((a: any) => ({ kind: 'alert' as const, at: a.created_at || null, text: String(a.message) })),
-    ...(loops.ok ? loops.data : []).filter((l: any) => l?.title).map((l: any) => ({ kind: 'open' as const, at: l.due_at || null, text: String(l.title) })),
+    ...[...alertMap.values()].slice(0, 3).map(a => ({ kind: 'alert' as const, at: a.at, text: a.n > 1 ? `${a.text} (${a.n} times)` : a.text })),
+    ...openItems.slice(0, 3).map((l: any) => ({ kind: 'open' as const, at: l.due_at || null, text: String(l.title) })),
   ]
 }
 
