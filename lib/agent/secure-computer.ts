@@ -258,8 +258,14 @@ async function isActiveRegistrationPage(page){
   const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText);
   const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(fullText);
   const newsletterForm=form=>{
-    const evidence=[form.action||'',form.formText||'',...(form.inputs||[]).flatMap(input=>[input.name,input.label])].join(' ');
-    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(evidence)
+    const fields=form.inputs||[];
+    if(fields.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))))return false;
+    const fieldEvidence=[form.action||'',...fields.flatMap(input=>[input.name,input.label])].join(' ');
+    const formText=String(form.formText||'');
+    const accountCue=/\b(?:create\s+(?:an?\s+|your\s+)?account|register(?:\s+an?\s+account)?|already\s+have\s+an?\s+account)\b/i.test(formText);
+    if(accountCue)return false;
+    return /(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence)
+      ||(articlePath&&/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(formText))
       ||(articlePath&&!forms.some(f=>(f.inputs||[]).some(i=>/\bpassword\b/i.test([i.name,i.type,i.label].join(' '))))
         &&!(signupCopy&&existingAccountCopy));
   };
