@@ -25,8 +25,15 @@ export type OpenLoopInput={
   observedAt?:string|null
 }
 
+// 22 Nov (review of #1566): rows were saved with HTML entities from email text. Decoding here fixes every write
+// and every reply in this file (list, close, snooze, guidance); the list also decodes rows saved before this.
+// Same rules as lib/security/email-redaction decodeHtmlEntities, kept local so this module gains no import.
+function decodeHtmlEntities(value:string){
+  return String(value||'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"')
+    .replace(/&#(?:39|x27);/gi,"'").replace(/&#(\d+);/g,(_m,n)=>{const cp=Number(n);return Number.isFinite(cp)&&cp>0&&cp<=0x10ffff?String.fromCodePoint(cp):''})
+}
 function clean(value:unknown,max=500){
-  return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)
+  return decodeHtmlEntities(String(value??'')).replace(/\s+/g,' ').trim().slice(0,max)
 }
 function normalize(value:unknown){
   return clean(value,500).toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
@@ -1094,13 +1101,15 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   const lines=loops.map((loop:any,index:number)=>{
     const badge=loop.kind==='approval'?'🛡️':loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='mission'?'🧠':loop.kind==='life_event'?'✈️':'•'
     const details=[openLoopStatus(loop)]
-    const summary=clean(loop.summary,260)
-    if(summary&&summary.toLowerCase()!==clean(loop.title,260).toLowerCase())details.push(summary)
+    // 22 Nov live: older email-derived rows were saved with HTML entities ("company&#39;s"); decode on display.
+    const summary=clean(decodeHtmlEntities(String(loop.summary||'')),260)
+    const title=clean(decodeHtmlEntities(String(loop.title||'')),180)
+    if(summary&&summary.toLowerCase()!==title.toLowerCase())details.push(summary)
     const due=Date.parse(String(loop.due_at||''))
     if(Number.isFinite(due))details.push(`${due<Date.now()?'Past due; completion unconfirmed':'Due'}: ${new Date(due).toLocaleDateString('en-GB',{timeZone:'Asia/Kolkata'})}`)
     const observed=Date.parse(String(loop.last_seen_at||''))
     if(Number.isFinite(observed))details.push(`Source updated ${new Date(observed).toLocaleDateString('en-GB',{timeZone:'Asia/Kolkata'})}`)
-    return `${index+1}. ${badge} ${clean(loop.title,180)}\n   ${details.join(' · ')}`
+    return `${index+1}. ${badge} ${title}\n   ${details.join(' · ')}`
   })
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(params.actor.legacyTelegramId),
