@@ -37,9 +37,17 @@ assert.equal(isBrowserLoginShell({
   text:'Caption: New product launch today. Log in Sign up About Help Press',
 }),false,'a public caption without likes is still visible research evidence')
 assert.equal(isBrowserLoginShell({
+  url:'https://www.instagram.com/p/example',title:'Public brand post',
+  text:'Log in Sign up brandname New product launch today. November 22 About Help Press Privacy Terms',
+}),false,'unlabelled Instagram caption is real readable page content')
+assert.equal(isBrowserLoginShell({
   url:'https://example.com/articles/authentication',title:'A guide to passkeys',
   text:'Our article discusses why many sites use a Sign in link, but this is public article text.',
 }),false,'incidental authentication references must not trigger a handoff')
+assert.equal(isBrowserLoginShell({
+  url:'https://example.com/guides/auth',title:'A guide to passkeys',
+  text:'For protected content, users must sign in to continue. This public guide explains the sign-in flow and available authentication options.',
+}),false,'a quoted instruction is not an active sign-in gate')
 
 // Assert that the actual browser entry points use this pure gate, not just the test fixture.
 const source=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
