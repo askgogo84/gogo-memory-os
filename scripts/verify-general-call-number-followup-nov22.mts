@@ -53,7 +53,7 @@ assert.equal(await v.confirmedGeneralCallNumberRequest(owner,'080 2345 6789',fak
 assert.equal(await v.confirmedGeneralCallNumberRequest(owner,'080 2345 6789',fakeDb([stateRow],[{role:'assistant',content:'new question'}]) as any),null)
 const source=readFileSync('lib/agent/voice-call.ts','utf8')
 assert.match(source,/if\(numberFollowup\) await fs\.clearFollowupState\(tg,CALL_NUMBER_STATE\)/)
-assert.match(source,/callBookingName\(languageRequest\?\.request \?\? numberFollowup \?\? params\.text\)/,'guest name is read from the original approved request, not just phone-number reply')
+assert.match(source,/callBookingName\(numberFollowup \|\| params\.text\)/,'guest name is read from the original approved request, not just phone-number reply')
 assert.match(source,/saveFollowupState\(tg,CALL_NUMBER_STATE/)
 assert.match(source,/CALL PLAN · NEEDS YOUR YES/)
 const dash=readFileSync('app/api/dashboard/chat/route.ts','utf8'),wa=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')

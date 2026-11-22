@@ -456,7 +456,7 @@ function nameSpan(text: string): { name: string; start: number; end: number } | 
   for (let m = u.exec(t); m; m = u.exec(t)) { const got = read(m.index, m.index + m[0].length, true); if (got) return got }
   return null
 }
-export function callBookingName(text: string): string | null { return nameSpan(text)?.name ?? null }
+export function callBookingName(text: string): string | null { return nameSpan(callLanguageRequest(text)?.request ?? text)?.name ?? null }
 /** Pure. Removes only the "under (the) name X" words, so the day, time and venue around them are still read. */
 export function stripCallBookingName(text: string): string {
   const s = nameSpan(text)
@@ -746,7 +746,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   }
   // "…under the name Goverdhan" wins; otherwise the account name.
   // A phone-only reply must preserve the explicit name in the original, owner-bound task.
-  const givenName = callBookingName(languageRequest?.request ?? numberFollowup ?? params.text)
+  const givenName = callBookingName(numberFollowup || params.text)
   const named = givenName ? [givenName, givenName] : null
   // 29 Oct live: both demo bookings were made "under Gogo" (the account name, which a restaurant hears as AskGogo).
   // A name the user gave once ("under the name Goverdhan") is remembered and used for later calls.
