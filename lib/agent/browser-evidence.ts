@@ -45,6 +45,38 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
 }
 
 /**
+ * A visible sign-up / registration page is an auth barrier, but NEVER a reason
+ * to submit a stored Vault login. Account creation requires its own approval.
+ * This classifier deliberately uses observed route/form/action, not prose from
+ * a public help article or an incidental "Sign up" navigation link.
+ */
+export function isBrowserRegistrationBarrier(page:{
+  url?:string;title?:string;text?:string;
+  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string}>}>
+}):boolean {
+  let path=''
+  try{path=new URL(page.url||'').pathname}catch{}
+  const registerPath=/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i
+  if(registerPath.test(path))return true
+  const title=String(page.title||'').replace(/\s+/g,' ').trim()
+  const body=String(page.text||'').replace(/\s+/g,' ').trim()
+  const inputs=(page.forms||[]).flatMap(form=>form.inputs||[])
+  const password=inputs.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' ')))
+  const registrationTitle=/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title)
+  const formRegistration=(page.forms||[]).some(form=>{
+    try{return registerPath.test(new URL(String(form.action||''),page.url||'https://invalid.example').pathname)}catch{return false}
+  })
+  if(password&&(registrationTitle||formRegistration))return true
+  const opening=body.replace(/^(?:instagram|meta)\s+/i,'').slice(0,260)
+  const activeRegistration=/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\s+(?:to|before|for)\b/i.test(opening)
+  let instagram=false
+  try{instagram=['instagram.com','www.instagram.com'].includes(new URL(page.url||'').hostname.toLowerCase())}catch{}
+  // Instagram sometimes exposes only a sign-up prompt, before any form loads.
+  if(instagram&&activeRegistration)return true
+  return password&&activeRegistration
+}
+
+/**
  * Detect a signed-out content shell, not an ordinary page that merely links to Sign in.
  * A login/footer shell must never be treated as source evidence for the original task.
  * Only visible copy, a URL path, field metadata and narrow, fail-closed cues are used.
