@@ -19,7 +19,7 @@ function load(file: string, mocks: Record<string,any>, globals: Record<string,an
 }
 let seq = 0, searches = 0, browserAttempts = 0, sent = 0, rejectSend = false
 let browserDeadline:number|undefined
-const tables: Record<string,any[]> = {agent_runs:[],agent_steps:[],agent_activity:[],conversations:[],users:[{telegram_id:'42',whatsapp_id:'+15555550101',name:'Fixture'}]}
+const tables: Record<string,any[]> = {agent_runs:[],agent_steps:[],agent_activity:[],conversations:[],users:[{telegram_id:42,whatsapp_id:'+15555550101',name:'Fixture'}]}
 const notifications = new Map<string,string>()
 let failPublish = false
 const db = {
@@ -43,7 +43,7 @@ const db = {
       })
       cached = {data,error:null};return cached
     }
-    const q:any = {select(){return q},eq(key:string,value:any){filters.push(row=>field(row,key)===value);return q},
+    const q:any = {select(){return q},eq(key:string,value:any){if(table==='users'&&key==='telegram_id')assert.equal(value,'42','dashboard user read must use exact owner text');filters.push(row=>table==='users'&&key==='telegram_id'?String(field(row,key))===value:field(row,key)===value);return q},
       in(key:string,values:any[]){filters.push(row=>values.includes(field(row,key)));return q},
       is(key:string,value:any){filters.push(row=>value===null ? field(row,key)==null||field(row,key)==='undefined' : field(row,key)===value);return q},
       gte(key:string,value:any){filters.push(row=>field(row,key)>=value);return q},
