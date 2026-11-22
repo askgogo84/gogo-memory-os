@@ -194,7 +194,7 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
     await rememberTypedObjects(p.actor.legacyTelegramId,domain,[object])
     if(read){
       const start=calendar?.start?.dateTime||calendar?.start?.date||reminder.remind_at
-      await recordDecisionLearning({actor:p.actor,text:original,domain,handler:calendar?'calendar-named-read':'reminder-query',decisionId:p.messageId||randomUUID(),outcome:'verified_success',verified:true,objectKind:calendar?'calendar_event':'reminder',objectRef:object.id}).catch(()=>{})
+      await recordDecisionLearning({actor:p.actor,text:original,domain,handler:calendar?'calendar-named-read':'reminder-query',decisionId:p.messageId||randomUUID(),outcome:'verified_success',verified:true,objectKind:calendar?'calendar_event':'reminder',objectRef:object.id,readEvidence:{verified:true,source:calendar?'google_calendar':'canonical_reminders',kind:'read',objectKind:calendar?'calendar_event':'reminder',objectRef:object.id}}).catch(()=>{})
       return response(`${object.title}: ${readableStart(start,normalizeTimezone(calendar?access?.timezone:reminder?.timezone),!!calendar?.recurrence||!!calendar?.recurringEventId)}`,'completed',domain)
     }
     const timezone=normalizeTimezone(calendar?access!.timezone:reminder.timezone)
