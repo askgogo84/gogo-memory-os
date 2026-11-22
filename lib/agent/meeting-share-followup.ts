@@ -11,7 +11,12 @@ type Meeting={title:string;url:string;startAt:string;endAt:string;remindAt:strin
 
 // 3 Oct live reproduction: a Google Meet invitation was filed as a generic link.
 // Parse the explicit invitation, not arbitrary web content or an inferred calendar event.
-export function parseSharedMeeting(text:string, timezone:string, now=new Date()):Meeting|null {
+export function parseSharedMeeting(raw:string, timezone:string, now=new Date()):Meeting|null {
+  // 22 Nov live: Google Calendar's "copy event details" separates date and time with "⋅" (U+22C5), and en-US
+  // phones write "Monday, November 23". Both were refused ("couldn't reliably read a single meeting").
+  const MONTH='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'
+  const text=raw.replace(/[⋅•∙]/g,' · ')
+    .replace(new RegExp(String.raw`\b((?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day,?\s+)(${MONTH})\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(20\d{2}))?`,'gi'),(_m,wd,mo,d,y)=>`${wd}${d} ${mo}${y?` ${y}`:''}`)
   const links=[...new Set(text.match(/https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b/gi)||[])]
   if(links.length!==1)return null
   const dateExpression=(/\b(?:(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+)?(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(20\d{2}))?\s*[·,]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)

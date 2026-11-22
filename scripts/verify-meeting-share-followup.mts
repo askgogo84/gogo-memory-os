@@ -315,3 +315,17 @@ for(const branch of imageBranches){
   assert.equal(contextCalls,branch.startsWith('const imageReply')?1:0)
 }
 console.log('PASS: ordinary images keep existing note, association and document paths')
+
+// 22 Nov live: a forwarded Google Calendar invite ("Monday, 23 Nov⋅5:00 – 6:00 pm") was refused; Instinct offered the reminder.
+{
+  const now=new Date('2026-11-22T10:10:00Z')
+  const live=(sep:string,sp:string,when='Monday, 23 Nov')=>`Askgogo<>Fund Raise\n${when}${sep}5:00${sp}–${sp}6:00${sp}pm\nGoogle Meet joining info\nVideo call link: https://meet.google.com/ycz-gire-akz`
+  for(const v of [live(' · ',' '),live('⋅',' '),live('⋅',' '),live(' • ',' '),live('⋅',' ','Monday, November 23'),live('⋅',' ','Monday, November 23, 2026')]){
+    const m=worker().parseSharedMeeting(v,'Asia/Kolkata',now)
+    assert.ok(m,v)
+    assert.equal(m.title,'Askgogo<>Fund Raise'); assert.equal(m.startAt,'2026-11-23T11:30:00.000Z'); assert.equal(m.endAt,'2026-11-23T12:30:00.000Z'); assert.equal(m.remindAt,'2026-11-23T11:20:00.000Z'); assert.equal(m.url,'https://meet.google.com/ycz-gire-akz')
+  }
+  assert.equal(worker().parseSharedMeeting(live('⋅',' ','Tuesday, 23 Nov'),'Asia/Kolkata',now),null,'a wrong weekday is still refused')
+  assert.equal(worker().parseSharedMeeting(live('⋅',' ')+'\nAlso: Tuesday, 24 Nov⋅5:00 – 6:00 pm','Asia/Kolkata',now),null,'two different times are still refused')
+}
+console.log('PASS: Google Calendar "⋅" and month-first dates are read')
