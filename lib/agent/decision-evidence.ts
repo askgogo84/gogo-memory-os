@@ -40,11 +40,13 @@ export function uniqueEvidence(inputRows:LearningEvidence[]){
     const key=`${row.domain}:${row.handler}:${row.decision_id}`,index=indexes.get(key)
     if(index===undefined){indexes.set(key,rows.length);rows.push(row);continue}
     const latest=rows[index]
-    // A generic router completion after provider verification carries no new
-    // provider state. Preserve that proof, but never override later negative,
-    // blocked, or unknown evidence with an older success.
-    if(latest.outcome==='success'&&row.outcome==='verified_success'&&row.verified===true)
-      rows[index]={...latest,verified:true,outcome:'verified_success',verification_source:row.verification_source}
+    // A generic completion cannot reverse a correction or reconciliation. Newest-first order
+    // makes the first substantive verdict authoritative for all later generic repeats.
+    if(latest.outcome==='success'&&row.outcome!=='success'&&row.outcome!=='replacement'){
+      const verified=row.outcome==='verified_success'&&row.verified===true
+      rows[index]={...latest,outcome:row.outcome,verified,verification_source:verified?row.verification_source:null,
+        correction:row.correction??latest.correction,first_route_correct:latest.first_route_correct??row.first_route_correct}
+    }
   }
   return rows
 }
@@ -90,7 +92,8 @@ export function rankEvidence(input:LearningEvidence[]){
 
 export function calibrationBuckets(rows:LearningEvidence[]){
   const ranges=[[0,.5],[.5,.7],[.7,.82],[.82,.9],[.9,1]]
-  return ranges.map(([min,max],index)=>({min,max,...summarizeEvidence(rows.filter(r=>{
+  const decisions=uniqueEvidence(rows)
+  return ranges.map(([min,max],index)=>({min,max,...summarizeEvidence(decisions.filter(r=>{
     const c=finiteConfidence(r.confidence)
     return c!==null&&c>=min&&(index===ranges.length-1?c<=max:c<max)
   }))}))
