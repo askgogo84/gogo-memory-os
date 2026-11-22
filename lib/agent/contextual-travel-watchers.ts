@@ -261,6 +261,16 @@ export function exactTravelOwnerId(input: unknown): string | null {
   return n >= BigInt('-9223372036854775808') && n <= BigInt('9223372036854775807') ? id : null
 }
 
+/** A contextual watcher is useful only while its own evidenced lifetime is open.
+ * The trip itself can remain retained for 72h after arrival, but individual
+ * flight-status watchers expire earlier. Never retire then re-create an already
+ * expired per-leg watcher during the same compiler pass.
+ */
+export function contextualWatchStillLive(expiresAt:unknown,now:number):boolean{
+  const expiry=Date.parse(String(expiresAt||''))
+  return Number.isFinite(now)&&Number.isFinite(expiry)&&expiry>now
+}
+
 async function compileForUser(telegramId:string,rows:TravelRow[]){
   const owner = exactTravelOwnerId(telegramId)
   if (!owner || rows.some(row => exactTravelOwnerId(row.telegram_id) !== owner)) {
@@ -328,6 +338,7 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     stopped+=omittedWeather.length
   }
   for(const desired of desiredConditions){
+    if(!contextualWatchStillLive(desired.condition.expiresAt,now))continue
     const key=String(desired.condition.contextKey)
     if(!existingContextKeys.has(key)&&slots<=0){skipped++;continue}
     const result=await upsertContextWatcher({telegramId,type:'web_search',condition:desired.condition})
@@ -335,7 +346,7 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     if(result.created){created++;slots--}else reused++
   }
 
-  if(user?.gmail_connected){
+  if(user?.gmail_connected&&contextualWatchStillLive(expiresAt,now)){
     const last=group[group.length-1]
     const matchTerms=Array.from(new Set([
       ...group.map(row=>clean(row.flight_no,30)),
