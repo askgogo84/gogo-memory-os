@@ -54,10 +54,17 @@ async function lastAssistantReply(telegramId: string) {
  * Exact owner (P0.1): the id is returned as its exact decimal string. A UUID-bound actor whose users row cannot be
  * read gets null (never the unverified legacy id); a rounded, fractional, zero or malformed id is also null. */
 function exactLegacyOwner(value: unknown): string | null {
+  // Owner IDs are identity, not display text: never trim, round or coerce a
+  // malformed persisted value into somebody else's canonical owner.
   if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
   if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'bigint') return null
-  const owner = String(value).trim()
-  return /^-?[1-9]\d{0,18}$/.test(owner) ? owner : null
+  const owner = String(value)
+  if (!/^-?[1-9]\d{0,18}$/.test(owner)) return null
+  // PostgreSQL telegram_id is a signed BIGINT. Digit-count alone allows
+  // 9223372036854775808 and 9999999999999999999 through this service-role path.
+  const exact = BigInt(owner)
+  if (exact < BigInt('-9223372036854775808') || exact > BigInt('9223372036854775807')) return null
+  return owner
 }
 async function ownerTelegramId(actor: Pick<AgentActor, 'legacyTelegramId'> & { userId?: string }): Promise<string | null> {
   if (actor.userId) {
