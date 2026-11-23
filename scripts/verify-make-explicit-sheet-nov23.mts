@@ -35,6 +35,12 @@ for (const ask of ['Create a budget sheet.', 'Create a sheet, not exactly two ro
   assert.equal(out?.doc.format, 'sheet', 'unspecified/negated count retains existing generation')
 }
 assert.match(sheetPrompt('Create a budget sheet.', ''), /For cost\/budget sheets only/)
+for (const ask of ['Create a sheet with exactly three rows including the header.', 'Create a sheet with exactly 3 rows, including the header row.']) {
+  const deps = {search: async () => [], model: async () => JSON.stringify(correct)}
+  const out = await generateDoc('sheet', ask, deps)
+  assert.equal(out?.doc.format === 'sheet' && out.doc.rows.length, 2, ask)
+  assert.equal(await generateDoc('sheet', ask, {...deps, model: async () => JSON.stringify({...correct,rows:[...correct.rows,['Extra','Wrong']]})}), null)
+}
 for (const ask of [
   'Create a sheet for teams Alpha, Beta and Gamma with exactly two rows per team.',
   'Create a sheet for teams Alpha, Beta and Gamma with exactly two rows, for each team.',

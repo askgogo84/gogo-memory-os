@@ -55,7 +55,11 @@ function explicitSheetRowCount(request: string): number | null {
     .filter(m => !/\b(?:not|never)\s+$/i.test(request.slice(0, m.index)))
     .filter(m => !/^\s*,?\s*(?:per|each|(?:for|in)\s+(?:each|every)|an?)\b/i.test(request.slice(m.index! + m[0].length)))
     .filter(m => !/\b(?:per|(?:for|in)\s+(?:each|every))\s+[^.!?;:\r\n]{1,80}$/i.test(request.slice(0, m.index)))
-    .map(m => /^\d+$/.test(m[1]) ? Number(m[1]) : words.indexOf(m[1].toLowerCase()) + 1)
+    .map(m => {
+      const count = /^\d+$/.test(m[1]) ? Number(m[1]) : words.indexOf(m[1].toLowerCase()) + 1
+      const suffix = request.slice(m.index! + m[0].length)
+      return /^\s*,?\s*(?:including|inclusive of)\s+(?:(?:the|a)\s+)?header(?:\s+row)?\b/i.test(suffix) ? count - 1 : count
+    })
   // Conflicting explicit counts cannot establish a successful result.
   return counts.length ? new Set(counts).size === 1 ? counts[0] : -1 : null
 }
