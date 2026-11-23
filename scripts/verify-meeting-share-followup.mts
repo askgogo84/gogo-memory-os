@@ -368,6 +368,8 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
   clock=Date.parse('2026-11-23T05:00:00Z')
   permission='ask'
   for(const link of ['https://meet.google.com/abc-defg-hij','https://calendar.app.google/punctuation123']){
+    const tracked=`Punctuation Review\n23 Nov · 4:30 – 5:45 pm\n${link}?authuser=0&utm_source=share#details`
+    assert.equal(worker().parseSharedMeeting(tracked,'Asia/Kolkata',new Date(clock))?.url,link,'account and tracking parameters must not change meeting identity')
     for(const suffix of ['.',')','),','”']){
       store.memories=[];store.conversations=[];store.reminders=[]
       const punctuated=`Punctuation Review\n23 Nov · 4:30 – 5:45 pm\n(${link}${suffix}`
@@ -383,6 +385,9 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
     }
   }
   permission='auto'
+  const longCard='Long Calendar Review\n23 Nov · 4:30 – 5:45 pm\nhttps://calendar.google.com/calendar/u/0/r/eventedit?authuser=0&eid=event123&utm_source=share#details'
+  assert.equal(worker().parseSharedMeeting(longCard,'Asia/Kolkata',new Date(clock))?.url,'https://calendar.google.com/calendar/event?eid=event123')
+  assert.equal(worker().parseSharedMeeting(longCard.replace('eid=event123','eid=event123&eid=other456'),'Asia/Kolkata',new Date(clock)),null,'conflicting event IDs must not silently select one')
   const share='Askgogo<>Fund Raise\n23 Nov · 4:30 – 5:45 pm\nView details and RSVP\nhttps://calendar.app.google/8KVz8h3xPM13FnJh9'
   const meeting=worker().parseSharedMeeting(share,'Asia/Kolkata',new Date(clock))
   assert.ok(meeting,'a dated Calendar event card must reach the meeting handler')
@@ -402,6 +407,9 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
   assert.equal(store.reminders.length,1,'rescheduling must not create another reminder')
   assert.equal(store.reminders[0].id,id,'rescheduling preserves the original reminder')
   assert.equal(store.reminders[0].remind_at,'2026-11-23T11:20:00.000Z')
+  const trackedUpdate=await worker().tryMeetingShareFollowup({actor,text:moved.replace(meeting.url,meeting.url+'?utm_source=forward#details'),surface:'web'})
+  assert.match(trackedUpdate.text,/now set/)
+  assert.equal(store.reminders.length,1,'tracking-only link differences cannot create another meeting reminder')
   const updates=updateAttempts
   await worker().tryMeetingShareFollowup({actor,text:moved,surface:'web'})
   assert.equal(updateAttempts,updates,'repeated Calendar share does not write or duplicate the same reminder')

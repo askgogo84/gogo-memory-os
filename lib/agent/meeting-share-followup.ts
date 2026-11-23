@@ -19,8 +19,15 @@ function meetingLinks(text:string):string[]{
       if(u.username||u.password||u.port)return false
       return (u.hostname==='meet.google.com'&&/^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(u.pathname))
         ||(u.hostname==='calendar.app.google'&&/^\/[A-Za-z0-9_-]{6,100}$/.test(u.pathname))
-        ||(u.hostname==='calendar.google.com'&&/^\/calendar\/(?:event|u\/\d+\/r\/eventedit)(?:\/|$)/.test(u.pathname)&&!!u.searchParams.get('eid'))
+        ||(u.hostname==='calendar.google.com'&&/^\/calendar\/(?:event|u\/\d+\/r\/eventedit)(?:\/|$)/.test(u.pathname)&&u.searchParams.getAll('eid').length===1&&!!u.searchParams.get('eid'))
     }catch{return false}
+  }).map(raw=>{
+    const u=new URL(raw)
+    // Account selectors, tracking and fragments do not change a room/event.
+    // Preserve only the explicit event ID on long Calendar invitation links.
+    return u.hostname==='calendar.google.com'
+      ?`https://calendar.google.com/calendar/event?eid=${encodeURIComponent(u.searchParams.get('eid')!)}`
+      :`${u.origin}${u.pathname}`
   }))]
 }
 
