@@ -92,6 +92,7 @@ const route=moduleAt('app/api/workspaces/[id]/ask/route.ts',name=>{
     isAgentSession:(value:any)=>!(value instanceof Response),
   }
   if(name==='@/lib/workspaces/ask')return actual
+  if(name==='@/lib/workspaces/access')return access
   if(name==='@/lib/workspaces/http')return {workspaceErrorResponse:(err:any)=>NextResponse.json({error:err.code||'workspace_unavailable'},{status:err.code==='workspace_forbidden'?403:500})}
   throw new Error('Unexpected route import '+name)
 })

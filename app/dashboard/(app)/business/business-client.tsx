@@ -132,11 +132,11 @@ export function BusinessWorkspace({ workspaces, detail }: { workspaces: MyWorksp
       {tab === 'people' && <People detail={detail} />}
     </section>
 
-    <WorkspaceAsk key={detail.id} workspaceId={detail.id} name={detail.name} />
+    <WorkspaceAsk key={detail.id} workspaceId={detail.id} detail={detail} />
   </>
 }
 
-function WorkspaceAsk({ workspaceId, name }: { workspaceId: string; name: string }) {
+function WorkspaceAsk({ workspaceId, detail }: { workspaceId: string; detail: Pick<WorkspaceDetail, 'name'> }) {
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState<WorkspaceAnswer | null>(null)
   const [busy, setBusy] = useState(false)
@@ -157,8 +157,8 @@ function WorkspaceAsk({ workspaceId, name }: { workspaceId: string; name: string
         setAnswer(data)
       } catch { setError('Couldn’t reach AskGogo. Check your connection.') } finally { setBusy(false) }
     }}>
-      <label className="sr-only" htmlFor="ws-ask">Ask about {name}</label>
-      <input id="ws-ask" className={field} maxLength={300} required disabled={busy} value={question} onChange={e => setQuestion(e.target.value)} placeholder={`Ask about ${name}…`} />
+      <label className="sr-only" htmlFor="ws-ask">Ask about {detail.name}</label>
+      <input id="ws-ask" className={field} maxLength={300} required disabled={busy} value={question} onChange={e => setQuestion(e.target.value)} placeholder={`Ask about ${detail.name}…`} />
       <button type="submit" disabled={busy || !question.trim()} className={`${btn} shrink-0 bg-[#2fb8a6] text-[#04201c] disabled:opacity-50`}>{busy ? 'Checking…' : 'Ask'}</button>
     </form>
     {error && <p role="alert" className="mt-3 text-[14px] text-[#d9a441]">{error}</p>}

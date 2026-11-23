@@ -80,7 +80,7 @@ assert.equal((src.match(/from\('workspace_members'\)\.(update|delete)\(/g) || []
 // Every route authenticates, uses the origin guard on mutations, and reaches data only through access.ts.
 function walk(dir: string, out: string[] = []) { for (const n of readdirSync(dir)) { const f = join(dir, n); statSync(f).isDirectory() ? walk(f, out) : out.push(f) } return out }
 const routes = walk('app/api/workspaces').filter(f => f.endsWith('route.ts'))
-assert.equal(routes.length, 8, 'eight workspace route files (5 pilot + 3 invitation)')
+assert.equal(routes.length, 9, 'nine workspace route files (5 pilot + 3 invitation + read-only questions)')
 for (const file of routes) {
   const r = readFileSync(file, 'utf8')
   assert.doesNotMatch(r, /supabaseAdmin|\.from\(/, `${file} never queries directly`)
