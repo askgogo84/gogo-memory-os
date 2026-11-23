@@ -239,6 +239,19 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:reply,handledBy:'human-auth-required'})
       }
     }
+    // Delivered meeting context precedes model/goal clarification on this surface.
+    if (/^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(?:tomorrow|tmrw|tmw)\s*(?:at\s+)?\d/i.test(text) &&
+        !detectFriendReminder(text) && !(isFriendReminderFollowupCandidate(text) && await getPendingFriend(actor.legacyTelegramId))) {
+      let reply: string | null = null
+      try {
+        const contextual = await import('@/lib/agent/contextual-meeting-reschedule')
+        if (contextual.isContextualMeetingMove(text)) reply = await contextual.tryContextualMeetingReschedule({telegramId:actor.legacyTelegramId,phone:String(user.whatsapp_id),text,surface:'web'})
+      } catch {reply = 'I couldn’t verify that meeting reminder change. Please check your reminders; I haven’t retried the write.'}
+      if (reply) {
+        await saveConversation(user.telegram_id,text,reply)
+        return NextResponse.json({text:reply,handledBy:'contextual-meeting-reschedule'})
+      }
+    }
     // Round 6 (#34, #31, #49, #48): "Hi", "help", "What can you do?" and "What's pending?" get the same approved
     // replies as WhatsApp, instantly, before any slow matcher (the dashboard Hi took 25 s and used the old intro).
     // Inlined matchers (same as lib/bot/handlers/whatsapp-direct-premium.ts and lib/bot/pending-summary.ts) and lazy

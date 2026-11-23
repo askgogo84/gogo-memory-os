@@ -5,6 +5,9 @@ import { deckPrompt, editPrompt, firstJson, scrubInventedNumbers, sheetPrompt, v
 
 // The person's own data never leaves the primary model.
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|salary|income|bank|account|expenses?|bills?|card)\b/i
+// Explicit user source restrictions must stop web search before any import/call.
+// Clause boundaries avoid treating "do not use only this text" as an opt-out.
+const SOURCE_ONLY = /(?:^|[.!?;,\r\n]\s*)(?:please\s+)?(?:use\s+only\s+(?:this\s+text|(?:the\s+)?(?:provided|supplied)\s+(?:text|data|content))|(?:do not|don't|never)\s+(?:use|search|consult|browse|read)\s+(?:(?:the\s+)?(?:web|internet)|(?:any\s+)?(?:external|outside)\s+(?:sources|information|data)))\b/i
 
 type Model = (prompt: string, scanText: string, opts?: { strong?: boolean }) => Promise<string>
 export type { Model }
@@ -31,7 +34,7 @@ function unwrap(raw: any): any {
 }
 
 async function publicFacts(request: string, search?: (q: string) => Promise<any[]>) {
-  if (PERSONAL.test(request)) return { facts: '', sources: [] as string[] }
+  if (PERSONAL.test(request) || SOURCE_ONLY.test(request)) return { facts: '', sources: [] as string[] }
   try {
     const run = search || (async (q: string) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: 6000 }))
     // Search the subject, not "pitch deck": "Make a 6 slide pitch deck for AskGogo, a …" → "AskGogo, a …".
@@ -46,15 +49,31 @@ async function publicFacts(request: string, search?: (q: string) => Promise<any[
   } catch { return { facts: '', sources: [] as string[] } }
 }
 
+function explicitSheetRowCount(request: string): number | null {
+  const words = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+  const counts = [...request.matchAll(/\bexactly\s+(\d{1,6}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+(?:data\s+)?rows?\b/gi)]
+    .filter(m => !/\b(?:not|never)\s+$/i.test(request.slice(0, m.index)))
+    .filter(m => !/^\s*,?\s*(?:per|each|(?:for|in)\s+(?:each|every)|an?)\b/i.test(request.slice(m.index! + m[0].length)))
+    .filter(m => !/\b(?:per|(?:for|in)\s+(?:each|every))\s+[^.!?;:\r\n]{1,80}$/i.test(request.slice(0, m.index)))
+    .map(m => {
+      const count = /^\d+$/.test(m[1]) ? Number(m[1]) : words.indexOf(m[1].toLowerCase()) + 1
+      const suffix = request.slice(m.index! + m[0].length)
+      return /^\s*,?\s*(?:including|inclusive of)\s+(?:(?:the|a)\s+)?header(?:\s+row)?\b/i.test(suffix) ? count - 1 : count
+    })
+  // Conflicting explicit counts cannot establish a successful result.
+  return counts.length ? new Set(counts).size === 1 ? counts[0] : -1 : null
+}
+
 export async function generateDoc(format: 'deck' | 'sheet', request: string, deps: { model?: Model; search?: (q: string) => Promise<any[]> } = {}) {
   const model = deps.model || defaultModel
   const { facts, sources } = await publicFacts(request, deps.search)
   const prompt = format === 'deck' ? deckPrompt(request, facts) : sheetPrompt(request, facts)
+  const expectedRows = format === 'sheet' ? explicitSheetRowCount(request) : null
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = unwrap(firstJson(await model(prompt, request, { strong: attempt > 0 }).catch(() => '')))
     const valid = format === 'deck' ? validDeck(raw) : validSheet(raw)
     const doc = valid && valid.format === 'deck' ? scrubInventedNumbers(valid, facts, request) : valid
-    if (doc) return { doc, sources }
+    if (doc && !(doc.format === 'sheet' && expectedRows !== null && doc.rows.length !== expectedRows)) return { doc, sources }
   }
   return null
 }
