@@ -195,20 +195,36 @@ async function readReminderQuery(actor: AgentActor, text: string) {
 }
 
 
-function parseReminderMutation(text: string): { target: string | null; timeText: string; unresolved?: boolean; meetingStart?: string; zone?: string; meetingZone?: string; hasSubject?: boolean } | null {
+function parseReminderMutation(text: string): { target: string | null; timeText: string; dateKey?: string; unresolved?: boolean; meetingStart?: string; zone?: string; meetingZone?: string; hasSubject?: boolean } | null {
   const raw = String(text || '').trim().replace(/\s+/g, ' ')
   if (!/\breminder\b/i.test(raw)) return null // Generic verbs cannot establish a reminder identity.
   if (!/^(?:please\s+)?(?:move|reschedule|change|update)\b/i.test(raw) && !/^(?:please\s+)?make\s+(?:my|the|existing|it|that|this)\b/i.test(raw)) return null
-  const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
-    || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
+  const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s|\d)/i)
+    || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s|\d)/i)
   let target = named?.[1] || null
   // Subject modifiers were consumed outside the capture. They may be literal
   // title words inside quotes ("My passport" must not select "passport").
   if (target) target = cleanListItem(target).replace(/^["“]|["”]$/g, '').trim()
-  const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i.exec(raw)
+  const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s|\d)/i.exec(raw)
   if (generic) target = null
   const head=generic || named
   const tail=head?raw.slice(head[0].length):''
+  // Understand-first may resolve a short reply into a full named calendar date.
+  // Parse that exact reminder-only instruction without interpreting its title,
+  // changing Calendar, or dropping an invalid/conflicting date into clock-only logic.
+  const absolute=tail.match(/^\s*(?:on\s+)?(?:([A-Za-z]+),?\s+)?(?:(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\s+([A-Za-z]+)\s+(\d{4}))\s+(?:at\s+)?(\d{1,2}(?:[.:]\d{2})?\s*(?:am|pm))\b/i)
+  if(absolute){
+    const months=['january','february','march','april','may','june','july','august','september','october','november','december']
+    const weekdays=['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+    const year=Number(absolute[2]||absolute[7]), month=absolute[3]?Number(absolute[3]):months.findIndex(n=>n===absolute[6]?.toLowerCase()||n.slice(0,3)===absolute[6]?.toLowerCase())+1, day=Number(absolute[4]||absolute[5])
+    const date=new Date(Date.UTC(year,month-1,day))
+    const weekday=absolute[1]?.toLowerCase()
+    const validDate=year>=1000&&month>=1&&month<=12&&day>=1&&date.getUTCFullYear()===year&&date.getUTCMonth()===month-1&&date.getUTCDate()===day
+      &&(!weekday||weekdays[date.getUTCDay()]===weekday||weekdays[date.getUTCDay()].slice(0,3)===weekday)
+    const suffix=tail.slice(absolute[0].length).match(/^\s*(?:\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|[A-Z]{2,5})\)|([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|[A-Z]{2,5}))?\s*(?:\.\s*Keep the existing reminder text and everything else unchanged)?[.!]?\s*$/i)
+    return {target,timeText:absolute[8].replace('.',':'),dateKey:validDate?`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`:undefined,
+      zone:suffix?.[1]||suffix?.[2],hasSubject:!!head,unresolved:!validDate||!suffix||!!named?.[2]||!!generic?.[1]}
+  }
   // The new clock belongs after this reminder subject, never inside its title.
   const time=tail.match(/^\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b(?:\s+(today|tomorrow))?/i)
   if(!time)return {target,timeText:'',unresolved:true,hasSubject:!!head}
@@ -300,7 +316,7 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
   }
   const base=new Date(row.remind_at)
   if (!Number.isFinite(base.getTime())) return fail('I couldn’t verify the saved reminder time. Nothing was changed.')
-  let dateKey=localDateKey(/\b(?:today|tomorrow)\b/i.test(mutation.timeText)?new Date():base,timezone)
+  let dateKey=mutation.dateKey||localDateKey(/\b(?:today|tomorrow)\b/i.test(mutation.timeText)?new Date():base,timezone)
   if (/\btomorrow\b/i.test(mutation.timeText)) { const next=new Date(`${dateKey}T12:00:00Z`);next.setUTCDate(next.getUTCDate()+1);dateKey=next.toISOString().slice(0,10) }
   const [year,month,day]=dateKey.split('-').map(Number)
   const clock=(text:string)=>{

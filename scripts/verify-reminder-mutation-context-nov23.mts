@@ -82,6 +82,14 @@ for(const date of ['Monday 24 Nov 2026','24 Nonsense 2026','31 Feb 2027','2026-0
 for(const text of [handsetExpanded.replace('Asia/Kolkata','UTC'),handsetExpanded.replace('unchanged.','unchanged. Also delete Drink water.'),handsetExpanded.replace('Tuesday 24 Nov 2026','Tuesday 24 Nov 2026 or 25 Nov 2026')]){
   reset();assert.equal((await run(text)).status,'failed',text);assert.equal(writes.length,0)
 }
+for(const text of [handsetExpanded.replace('4:30 pm','13:30 pm'),handsetExpanded.replace('4:30 pm','4:99 pm'),handsetExpanded.replace('reminder to','reminder today to')]){
+  reset();assert.equal((await run(text)).status,'failed',text);assert.equal(writes.length,0)
+}
+reset();rows.push({...fund,id:'absolute-duplicate'});assert.equal((await run(handsetExpanded)).status,'failed');assert.equal(applied,0)
+reset();rows=rows.filter(r=>r.id!=='fund');assert.match((await run(handsetExpanded)).text,/could not find/);assert.equal(writes.length,0)
+reset();scenario='race-edit';assert.equal((await run(handsetExpanded)).status,'failed');assert.equal(applied,0);assert.equal(writes.length,1)
+reset();rows[0].timezone='America/New_York'
+assert.equal((await run('Move Askgogo<>Fund Raise reminder to Sunday 7 November 2027 at 1:30 am (America/New_York)')).status,'failed');assert.equal(writes.length,0,'ambiguous absolute-date DST clock must remain blocked')
 reset()
 const result=await run()
 assert.equal(result.status,'completed');assert.match(result.text,/Reminder updated/)
@@ -179,6 +187,12 @@ for(const surface of ['web','whatsapp']){
   resetFeature();const reply=await feature.routeFeatureIntent('test-owner',command,{telegramId:-42,surface})
   assert.match(reply,/Reminder updated/);assert.equal(rows[0].remind_at,'2026-11-23T10:50:00.000Z');assert.match(rows[0].message,/4:30 pm/)
   assert.equal(applied,1);assert.equal(rows.length,4);assert.equal(legacyCalls,0);assert.equal(calendarCalls,0);assert.deepEqual(featureSurfaces,[surface])
+}
+for(const surface of ['web','whatsapp']){
+  resetFeature();const reply=await feature.routeFeatureIntent('test-owner',handsetExpanded,{telegramId:-42,surface})
+  assert.match(reply,/Reminder updated/);assert.equal(rows[0].remind_at,'2026-11-24T11:00:00.000Z')
+  assert.equal(rows[0].message,fund.message);assert.equal(applied,1);assert.equal(rows.length,4)
+  assert.equal(legacyCalls,0);assert.equal(calendarCalls,0);assert.deepEqual(featureSurfaces,[surface])
 }
 resetFeature();off=true;assert.match(await feature.routeFeatureIntent('test-owner',command,{telegramId:-42,surface:'web'}),/Reminders are currently off/);assert.equal(reads.length,0);assert.equal(legacyCalls,0)
 for(const owner of [0,NaN,9007199254740992]){
