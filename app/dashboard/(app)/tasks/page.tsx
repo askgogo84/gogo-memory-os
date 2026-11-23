@@ -19,18 +19,18 @@ export const dynamic = 'force-dynamic'
 export default async function TasksPage({ searchParams }: { searchParams?: Promise<{ tab?: string }> } = {}) {
   const session = await getSession()
   const tg = session?.telegramId || ''
-  const tgNum = parseInt(tg, 10)
   const raw = String((await searchParams)?.tab || '')
   // Addendum 5 (Goal-to-Done): an Overview tab, first and the default, for owners it is switched on for.
   const overview = Boolean(session) && goalBoardEnabledFor(String(tg))
   const tabs = overview ? ['overview', 'need', 'radar', 'recent', 'todos'] : ['need', 'radar', 'recent', 'todos']
   const tab = tabs.includes(raw) ? raw : tabs[0]
   const [{ data: user }, todos, feed, notices] = await Promise.all([
-    Number.isFinite(tgNum) ? supabaseAdmin.from('users').select('timezone').eq('telegram_id', tgNum).maybeSingle() : Promise.resolve({ data: null as any }),
+    tg ? supabaseAdmin.from('users').select('timezone').eq('telegram_id', tg).maybeSingle() : Promise.resolve({ data: null as any }),
     session ? getDashboardTasks(session.telegramId) : Promise.resolve({ ok: true as const, open: [], completed: [] }),
     session ? getTaskFeed(tg) : Promise.resolve(EMPTY_FEED),
     session ? getServiceNoticesForPage(tg) : Promise.resolve(EMPTY_SERVICE_NOTICES),
   ])
+  const unavailable = tab === 'need' || tab === 'radar' ? feed.missing?.[tab] : undefined
   const tz = user?.timezone || 'Asia/Kolkata'
   const needCount = feed.need.length + notices.total
   const todoCount = todos.ok ? todos.open.length : 0
@@ -46,13 +46,14 @@ export default async function TasksPage({ searchParams }: { searchParams?: Promi
         <p className="mt-1.5 text-[15px] text-[#a8a8a4]">{overview ? 'What Gogo has done, what it is doing, what needs your yes, and what only you can do.' : 'Everything Gogo is doing, waiting on, or has done for you.'}</p>
       </header>
       <div className="flex flex-col gap-3">
-        <FeedTabs base="/dashboard/tasks" tab={tab} feed={feed} needCount={needCount} extra={{ key: 'todos', label: 'To-dos', count: todoCount }} lead={overview ? { key: 'overview', label: 'Overview' } : undefined}/>
+        <FeedTabs base="/dashboard/tasks" tab={tab} feed={feed} needCount={notices.unavailable ? '—' : needCount} extra={{ key: 'todos', label: 'To-dos', count: todoCount }} lead={overview ? { key: 'overview', label: 'Overview' } : undefined}/>
+        {Boolean(unavailable?.length) && <p role="status" className="text-[14px] text-[#d9a441]">Couldn’t check {unavailable?.join(', ')}. Refresh to check again.</p>}
         {tab === 'overview' && <GoalBoardView board={board} suggested={suggestions.length ? <SuggestionCards items={suggestions}/> : null} notices={(notices.total > 0 || notices.unavailable) ? <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div> : null}/>}
         {tab === 'need' && <div className="flex flex-col gap-2">
-          <FeedItems items={feed.need} size={72} empty={notices.total || notices.unavailable ? '' : 'Nothing is waiting for you.'}/>
+          <FeedItems items={feed.need} size={72} empty={unavailable?.length || notices.total || notices.unavailable ? '' : 'Nothing is waiting for you.'}/>
           {(notices.total > 0 || notices.unavailable) && <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div>}
         </div>}
-        {tab === 'radar' && <FeedItems items={feed.radar} size={72} empty="Nothing is running in the background. Ask Gogo to watch a price, a fare or a seat."/>}
+        {tab === 'radar' && <FeedItems items={feed.radar} size={72} empty={unavailable?.length ? '' : 'Nothing is running in the background. Ask Gogo to watch a price, a fare or a seat.'}/>}
         {tab === 'recent' && (feed.recentUnavailable
           ? <p className="py-5 text-[15px] text-[#b7b7b7]">Recent updates could not be loaded. Try again shortly.</p>
           : <FeedItems items={feed.recent} size={72} empty="No finished tasks yet."/>)}

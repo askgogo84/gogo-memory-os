@@ -29,11 +29,18 @@ export async function buildPendingSummary(telegramId: string, tz = 'Asia/Kolkata
   }
   // 5 Nov live: finished runs ("Gogo thinks it's done") filled "Needs your yes" as if they were decisions. Only real
   // decisions sit there; finished runs become one line pointing to where they are checked off.
-  const decisions = feed.need.filter(i => i.state !== 'done')
+  const decisions = feed.need.filter(i => i.state === 'approval')
+  const followups = feed.need.filter(i => i.state !== 'approval' && i.state !== 'done')
   const finished = feed.need.filter(i => i.state === 'done')
   section('Needs your yes', decisions.slice(0, 5).map(i => `${i.title}${i.tag ? ` — ${i.tag.toLowerCase()}` : ''}`), decisions.length - 5)
-  const working = feed.radar.filter(i => i.tag === 'Working now')
-  const watches = feed.radar.filter(i => i.tag !== 'Working now')
+  section('Needs your attention', followups.slice(0, 5).map(i => {
+    const detail = i.id.startsWith('ho-') ? ` · https://app.askgogo.in${i.href}` : ''
+    return `${i.title} — ${i.tag.toLowerCase()}${detail}`
+  }), followups.length - 5)
+  const unknown = feed.recent.filter(i => i.tag === 'Not sure it happened')
+  section('Verify before trying again', unknown.slice(0, 3).map(i => i.title), unknown.length - 3)
+  const working = feed.radar.filter(i => i.id.startsWith('run-'))
+  const watches = feed.radar.filter(i => i.id.startsWith('w-'))
   section('Gogo is working on', working.slice(0, 4).map(i => i.title), working.length - 4)
   const dueToday = (today as any).ok ? (today as any).reminders.filter((r: any) => !r.sent && r.status !== 'cancelled' && r.delivery_state !== 'cancelled' && Date.parse(r.remind_at) >= now.getTime()) : []
   section('Reminders still due today', dueToday.slice(0, 5).map((r: any) => `${clock(r.remind_at, tz)} · ${r.message || 'Reminder'}`), dueToday.length - 5)
@@ -41,7 +48,12 @@ export async function buildPendingSummary(telegramId: string, tz = 'Asia/Kolkata
   section('Open to-dos', open.slice(0, 5).map((t: any) => t.label), open.length - 5)
   if (finished.length) lines.push(`✔️ ${finished.length} finished task${finished.length === 1 ? '' : 's'} to check off on the dashboard${finished[0] ? ` (e.g. ${finished[0].title})` : ''}.`, '')
   const watchTotal = Math.max(0, (feed.radarCount ?? feed.radar.length) - working.length)
-  if (watchTotal) lines.push(`👀 ${watchTotal} background watch${watchTotal === 1 ? '' : 'es'} running${watches[0] ? ` (e.g. ${watches[0].title})` : ''}.`, '')
+  if (watchTotal) lines.push(`👀 ${feed.missing?.radar?.length ? 'At least ' : ''}${watchTotal} background watch${watchTotal === 1 ? '' : 'es'} running${watches[0] ? ` (e.g. ${watches[0].title})` : ''}.`, '')
+
+  const missing = [...(feed.missing?.need ?? []), ...(feed.missing?.radar ?? []), ...(feed.missing?.recent ?? [])]
+  if (!today.ok) missing.push("today’s reminders")
+  if (!todos.ok) missing.push('to-dos')
+  if (missing.length) lines.push(`I couldn’t check ${missing.join(', ')}. Ask again to refresh.`, '')
 
   if (!lines.length) return '✅ Nothing is pending right now — no decisions waiting, no reminders left today and no open to-dos.'
   return ['📋 *Here’s what’s pending*', '', ...lines, 'Open the dashboard for details: app.askgogo.in/dashboard/tasks'].join('\n').replace(/\n{3,}/g, '\n\n').trim()
