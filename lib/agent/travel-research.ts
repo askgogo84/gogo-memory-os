@@ -233,17 +233,17 @@ export function flightSearchPreferences(text: string) {
   const adultText = text.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b/i)?.[1]?.toLowerCase()
   const adults = adultText ? words[adultText] ?? Number(adultText) : 1
   const departureCutoff = departureCutoffFrom(text)
-  const timeOfDay = departureCutoff ? undefined : timeOfDayFrom(text)
+  const timeOfDay = timeOfDayFrom(text, !departureCutoff)
   const dates = text.match(/\bround trip\b.*?\bdeparting (\d{4}-\d{2}-\d{2}) returning (\d{4}-\d{2}-\d{2})\b/i)
   return {cabin, adults, nonStop: /\b(?:non[- ]?stop|direct flights?)\b/i.test(text), ...(timeOfDay ? { timeOfDay } : {}),
     ...(departureCutoff ? { departureCutoff } : {}),
     ...(dates ? { roundTrip: true, startDate: dates[1], returnDate: dates[2] } : {})}
 }
 
-export function timeOfDayFrom(text: string): TimeOfDay | undefined {
+export function timeOfDayFrom(text: string, inferLateCutoff = true): TimeOfDay | undefined {
   const t = String(text || '')
   if (/\btonight\b/i.test(t)) return 'night'
-  if (/\b(?:red[\s-]?eye|late\s+night|after\s+(?:9|10|11)\s*pm)\b/i.test(t)) return 'night'
+  if (/\b(?:red[\s-]?eye|late\s+night)\b/i.test(t) || (inferLateCutoff && /\bafter\s+(?:9|10|11)\s*pm\b/i.test(t))) return 'night'
   const m = t.match(/\b(morning|afternoon|evening|night)\b/i)
   return m ? (m[1].toLowerCase() as TimeOfDay) : undefined
 }
@@ -263,7 +263,7 @@ function departureCutoffFrom(text: string): DeparturePreference | undefined {
   const tail = suffix.slice(clock[0].length).trimStart()
   const zone = tail.match(/^(IST|local(?: departure)? time)\b/i)
   const following = zone ? tail.slice(zone[0].length).trimStart() : tail
-  if (!/^(?:$|[.,;!?]|(?:and|on|with|for|please)\b)/i.test(following) || /\b(?:before|after)\s+\d{1,2}(?::\d{2}|\s*[ap]\.?m\b)/i.test(following)) return 'invalid'
+  if (!/^(?:$|[.,;!?]|(?:and|on|with|for|please)\b)/i.test(following) || /\b(?:before|after)\s+\d/i.test(following)) return 'invalid'
   return {direction:request[1].toLowerCase() as DepartureCutoff['direction'],minutes,ist:zone?.[1].toUpperCase() === 'IST'}
 }
 
@@ -320,11 +320,11 @@ export function filterFlightDepartureTimes<T>(rows: T[], departure: (row: T) => 
     const clock = iso || value.match(/^(\d{1,2}):(\d{2})(?:\s*([ap])m)?$/i)
     if (!clock) return false
     const minutes = clockMinutes(clock[1], clock[2], clock[3])
-    if (minutes === null) return false
+    if (minutes === null || (context.timeOfDay && !inTimeOfDay(Math.floor(minutes / 60), context.timeOfDay))) return false
     return cutoff.direction === 'after' ? minutes > cutoff.minutes : minutes < cutoff.minutes
   })
-  const window = `${cutoffLabel(cutoff)}${cutoff.ist ? '' : ' (departure airport time)'}`
-  return {rows:matching, note:matching.length ? `Showing departures ${window}.\n\n` : `I found no verified departures ${window} in the results I could read.`}
+  const window = `${context.timeOfDay ? `${context.timeOfDay} ` : ''}departures ${cutoffLabel(cutoff)}${cutoff.ist ? '' : ' (departure airport time)'}`
+  return {rows:matching, note:matching.length ? `Showing ${window}.\n\n` : `I found no verified ${window} in the results I could read.`}
 }
 
 // A search the person can open to see live prices themselves. No login is needed and nothing is booked.
@@ -566,7 +566,7 @@ export function parseFlightBriefText(raw: string, now = new Date(), timezone = '
   if (/\b(?:non[\s-]*stop|direct\s+flights?)\b/i.test(text)) brief.nonStop = true
   const cutoff = departureCutoffFrom(text)
   if (cutoff) brief.departureCutoff = cutoff
-  const tod = cutoff ? undefined : timeOfDayFrom(text)
+  const tod = timeOfDayFrom(text, !cutoff)
   if (tod) brief.timeOfDay = tod
   else if (/\b(?:any\s*time|anytime|whenever|no\s+preference\s+(?:on|for)\s+(?:the\s+)?time)\b/i.test(text)) brief.timeOfDay = 'any'
   return fixReturnOrder(brief)
@@ -588,8 +588,7 @@ function fixReturnOrder(brief: FlightBrief): FlightBrief {
 export function mergeFlightBrief(previous: FlightBrief | null | undefined, next: FlightBrief): FlightBrief {
   const merged: FlightBrief = { ...(previous || {}) }
   for (const [key, value] of Object.entries(next)) if (value !== undefined) (merged as any)[key] = value
-  if (next.departureCutoff) delete merged.timeOfDay
-  else if (next.timeOfDay) delete merged.departureCutoff
+  if (!next.departureCutoff && (next.timeOfDay === 'any' || (next.timeOfDay && merged.departureCutoff === 'invalid'))) delete merged.departureCutoff
   if (merged.returnDate) delete merged.returnSuggestion
   return fixReturnOrder(merged)
 }
@@ -689,9 +688,9 @@ export type FlightLeg = { from: string; to: string; date: string; text: string; 
 export function flightLegs(brief: FlightBrief): FlightLeg[] {
   const b = withFlightDefaults(brief)
   const adults = b.adults!
-  const timing = b.departureCutoff && b.departureCutoff !== 'invalid'
-    ? `, departing ${cutoffLabel(b.departureCutoff)}`
-    : b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''
+  const partOfDay = b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''
+  const cutoff = b.departureCutoff && b.departureCutoff !== 'invalid' ? `, departing ${cutoffLabel(b.departureCutoff)}` : ''
+  const timing = partOfDay + cutoff
   const make = (from: string, to: string, date: string): FlightLeg => ({
     from, to, date, label: `${from} to ${to}, ${dayLabel(date)}`,
     text: `Compare ${b.nonStop ? 'non-stop ' : ''}flights from ${from} to ${to} on ${date} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${timing}. Research only; do not book or pay.`,
@@ -710,9 +709,10 @@ export function flightSearchStartedText(brief: FlightBrief): string {
   const when = round ? `${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate!)}` : dayLabel(b.departDate!)
   const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
   // 11 Nov (owner): "concise like Instinct". One short message; how to book is said with the results.
-  const timing = b.departureCutoff && b.departureCutoff !== 'invalid'
+  const cutoff = b.departureCutoff && b.departureCutoff !== 'invalid'
     ? `${round ? 'outbound ' : ''}departing ${cutoffLabel(b.departureCutoff)}, `
-    : b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''
+    : ''
+  const timing = (b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : '') + cutoff
   return `Looking for ${cityOf(b, 'origin')} → ${cityOf(b, 'destination')} flights, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${timing}${round ? 'round trip' : 'one-way'}.\n\n` +
     `Best ${round ? 'round-trip ' : ''}fares for exactly these dates coming shortly.${b.watchAsked ? ' I can\'t watch fares on my own yet, so this is today\'s price.' : ''}${perAdult}${round ? '' : ' For a return, add “back <date>”.'}`
 }
