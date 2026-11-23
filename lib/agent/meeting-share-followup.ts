@@ -128,7 +128,9 @@ async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarg
   const title=(s:string)=>s.replace(/\s+/g,' ').trim().toLowerCase()
   const day=(at:string)=>{const p=getLocalParts(new Date(at),m.timezone);return `${p.year}-${p.month}-${p.day}`}
   const matches=(data||[]).filter(r=>{
-    if(r.is_recurring||r.recurring_pattern||!Number.isFinite(Date.parse(r.remind_at))||Date.parse(r.remind_at)<=Date.now())return false
+    // Delivery workers claim due rows. Keep overdue identities in this lookup
+    // so a claimed or uncertain send cannot be mistaken for a new meeting.
+    if(r.is_recurring||r.recurring_pattern||!Number.isFinite(Date.parse(r.remind_at)))return false
     const lines=String(r.message||'').split('\n')
     const name=lines[0].split(' — starts ')[0]
     if(title(name)!==title(m.title))return false

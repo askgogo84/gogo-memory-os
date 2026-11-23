@@ -456,6 +456,32 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
   const blocked=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'whatsapp'})
   assert.match(blocked.text,/reconciliation/)
   assert.equal(store.reminders.length,1,'uncertain delivery cannot become another reminder')
+  const beforeDueClock=clock
+  clock=Date.parse(meeting.remindAt)+60000
+  const dueSnapshot=structuredClone(store.reminders[0])
+  const dueWrites=writeAttempts,dueUpdates=updateAttempts
+  for(const state of [
+    {delivery_state:'outcome_unknown',claim_token:null,send_started_at:new Date(clock-30000).toISOString()},
+    {delivery_state:'claimed',claim_token:'in-flight-claim',send_started_at:null},
+    {delivery_state:'pending',claim_token:'in-flight-claim',send_started_at:null},
+  ]){
+    store.memories=[];store.conversations=[]
+    store.reminders=[{...dueSnapshot,...state}]
+    const dueBlocked=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'whatsapp'})
+    assert.match(dueBlocked.text,/reconciliation/,'due delivery must remain visible to the safety guard')
+    await history(dueBlocked.text)
+    await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'whatsapp'})
+    assert.equal(store.reminders.length,1,'confirmation cannot duplicate a due or uncertain reminder')
+    assert.equal(writeAttempts,dueWrites)
+    assert.equal(updateAttempts,dueUpdates)
+  }
+  store.reminders=[{...dueSnapshot,delivery_state:'pending',claim_token:null,send_started_at:null}]
+  const dueMoved=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'web'})
+  assert.match(dueMoved.text,/now set/,'an unclaimed pending reminder can move atomically after its old due time')
+  assert.equal(store.reminders.length,1)
+  assert.equal(store.reminders[0].id,dueSnapshot.id)
+  assert.equal(store.reminders[0].remind_at,'2026-11-23T11:20:00.000Z')
+  clock=beforeDueClock
   assert.equal(worker().parseSharedMeeting(share+'\nJoin https://meet.google.com/abc-defg-hij','Asia/Kolkata',new Date(clock)).url,meeting.url)
   store.memories=[];store.conversations=[];store.reminders=[]
   const early='Midnight Review\n24 Nov · 12:05 – 12:45 am\nhttps://calendar.app.google/midnight123'
