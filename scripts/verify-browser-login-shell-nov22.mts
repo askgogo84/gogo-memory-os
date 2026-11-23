@@ -497,6 +497,27 @@ assert.equal(modeSwitchWorker.vaultLogin.registrationRefused,undefined,
   'actual worker must preserve login when Sign up is a type=button mode switch')
 assert.deepEqual(modeSwitchWorker.actions.slice(0,2),['fill:user','fill:password'],
   'existing-account login fields remain accessible next to a mode-switch button')
+
+// A header's unbound navigation button is not the submit of a JS login panel.
+const headerSignup={...formlessButton,closest:(selector:string)=>selector.includes('header')?{querySelectorAll:()=>[]}:null}
+const unboundLoginButton={...formlessButton,innerText:'Log in',textContent:'Log in'}
+const unboundPassword={...formlessEmail,id:'existingPassword',getAttribute:(key:string)=>key==='name'?'password':key==='type'?'password':null}
+const unboundLoginBody={innerText:'Home Sign in Email Password Log in Sign up',querySelectorAll:()=>[formlessEmail,unboundPassword]}
+const observedUnboundLogin=await observedModel({
+  evaluate:async(callback:unknown)=>vm.runInNewContext('('+String(callback)+')()',{
+    URL,CSS:{escape:(x:string)=>x},location:{href:'https://example.com/session'},
+    document:{title:'Welcome',body:unboundLoginBody,forms:[],querySelector:()=>null,
+      querySelectorAll:(selector:string)=>selector.includes('button')?[headerSignup,unboundLoginButton]:[formlessEmail,unboundPassword]},
+    getComputedStyle:()=>({display:'block',visibility:'visible'}),
+  }),
+})
+assert.deepEqual(Array.from(observedUnboundLogin.forms[0].submitLabels),['Log in'],
+  'header navigation must not become an unbound login submit')
+assert.equal(isBrowserRegistrationBarrier(observedUnboundLogin),false,
+  'JS login with separate header signup stays usable')
+const unboundLoginWorker=await syntheticVaultWorker(observedUnboundLogin)
+assert.equal(unboundLoginWorker.vaultLogin.registrationRefused,undefined)
+assert.deepEqual(unboundLoginWorker.actions.slice(0,2),['fill:user','fill:password'])
 for(const snapshot of [
   {url:'https://example.com/register',title:'Register',text:'Create your account'},
   {url:'https://example.com/auth',title:'Create account',text:'Welcome',forms:[{inputs:[{name:'email',type:'email'}]}]},

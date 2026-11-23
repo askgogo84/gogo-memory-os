@@ -335,7 +335,11 @@ async function model(page){
           const actualSubmit=tag==='button'?(type!=='button'&&type!=='reset'):tag==='input'&&type==='submit';
           // Do not treat a login mode-switch button as an account submit.
           // The synthetic body form must still see its own unbound signup CTA.
-          return f===document.body?(!el.form&&!el.closest('form')):el.form===f&&actualSubmit;
+          if(f!==document.body)return el.form===f&&actualSubmit;
+          if(el.form||el.closest('form'))return false;
+          const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
+          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>!input.form&&visible(input)
+            &&/\b(?:email|phone|mobile|username|password)\b/i.test([input.getAttribute('name'),input.getAttribute('type'),input.getAttribute('autocomplete')].join(' ')));
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>visible(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
@@ -901,7 +905,11 @@ async function model(page){
           const actualSubmit=tag==='button'?(type!=='button'&&type!=='reset'):tag==='input'&&type==='submit';
           // Do not treat a login mode-switch button as an account submit.
           // The synthetic body form must still see its own unbound signup CTA.
-          return f===document.body?(!el.form&&!el.closest('form')):el.form===f&&actualSubmit;
+          if(f!==document.body)return el.form===f&&actualSubmit;
+          if(el.form||el.closest('form'))return false;
+          const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
+          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>!input.form&&actionable(input)
+            &&/\b(?:email|phone|mobile|username|password)\b/i.test([input.getAttribute('name'),input.getAttribute('type'),input.getAttribute('autocomplete')].join(' ')));
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>actionable(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
