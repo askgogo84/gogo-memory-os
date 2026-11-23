@@ -1011,7 +1011,17 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       let reply: string | null = null
       try {
         const contextual = await import('@/lib/agent/contextual-meeting-reschedule')
-        if (contextual.isContextualMeetingMove(text)) reply = await contextual.tryContextualMeetingReschedule({telegramId:resolvedUser.telegramId,phone:from,text,surface:'whatsapp'})
+        if (contextual.isContextualMeetingMove(text)) {
+          const replyToSid = String(formData.get('OriginalRepliedMessageSid') || '')
+          if (!replyToSid || signatureAudit.verdict.outcome === 'valid') {
+            reply = await contextual.tryContextualMeetingReschedule({
+              telegramId: resolvedUser.telegramId, phone: from, text, surface: 'whatsapp', replyToSid,
+            })
+          }
+          reply ??= replyToSid
+            ? 'I couldn’t match that reply to a delivered meeting reminder. Which meeting do you mean? Nothing was changed.'
+            : 'Which meeting or reminder do you mean? You can reply directly to the meeting reminder to use its calendar time and keep your existing alert lead time. Nothing was changed.'
+        }
       } catch {reply = 'I couldn’t verify that meeting reminder change. Please check your reminders; I haven’t retried the write.'}
       if (reply) {
         await saveConversation(resolvedUser.telegramId,'user',text)
