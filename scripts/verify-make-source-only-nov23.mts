@@ -4,7 +4,10 @@ import {generateDoc} from '../lib/make/generate'
 // Real Make generator, inert model/search dependencies; no connected-app reads.
 const exact = 'Create a private sheet titled Demo Acceptance Scratch 23 Nov with columns Check and Status, and exactly two rows: Reminder delivery, Verified; Cross-channel memory, Pending. Use only this text; do not read connected apps, share it or send anything. Save it in Make and give me its link.'
 const sheet = {title: 'Demo Acceptance Scratch 23 Nov', columns: ['Check', 'Status'], rows: [['Reminder delivery', 'Verified'], ['Cross-channel memory', 'Pending']], totalColumn: null}
-for (const request of [exact,
+const dinner = 'Make a private sheet titled Dinner for Six — Muse Rehearsal. Use three columns named Section, Item and Details. Plan one egg-free vegetarian dinner for six with a simple menu, ordered steps within 45 minutes, and a shopping list with quantities. Rice, salt and cooking oil are already in the pantry. Place those pantry items in a Pantry row and omit them from Shopping rows. Use only the information in this request. Save the sheet in Make.'
+for (const request of [exact, dinner,
+  'Create a sheet. Use only details from this prompt.',
+  'Create a sheet. Use only the facts in this message.',
   'Create a sheet. Use only the provided data.',
   'Create a sheet; please use only supplied text.',
   'Create a sheet. Do not use external sources.',
@@ -29,7 +32,7 @@ for (const request of [exact,
   assert.deepEqual(out?.doc, {...sheet, format: 'sheet', rows: sheet.rows, estimateRows: [], notes: ''})
 }
 // A normal research request still has public evidence; negation is not a source-only instruction.
-for (const request of ['Create a sheet of public park names.', 'Create a sheet. Do not use only this text; research public park names.', 'Create a sheet, do not use only this text; research public park names.']) {
+for (const request of ['Create a sheet of public park names.', 'Create a sheet. Do not use only the information in this request. Research public park names.', 'Create a sheet. Do not use only this text; research public park names.', 'Create a sheet, do not use only this text; research public park names.']) {
   let searches = 0
   const out = await generateDoc('sheet', request, {
     search: async () => { searches++; return [{title: 'Park authority', snippet: 'Known public park', url: 'https://example.com/parks'}] },
