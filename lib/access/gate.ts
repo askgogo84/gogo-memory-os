@@ -169,7 +169,7 @@ export async function isTelegramIdBlocked(telegramId: string | number): Promise<
   if (!owner) return true
   try {
     const { data, error } = await supabaseAdmin.from('users')
-      .select('telegram_id, access_status').eq('telegram_id', owner).maybeSingle()
+      .select('telegram_id::text, access_status').eq('telegram_id', owner).maybeSingle()
     if (error || (data && !matchesBlockStatusOwner((data as any).telegram_id, owner))) return true
     return (data as any)?.access_status === 'blocked'
   } catch { return true }

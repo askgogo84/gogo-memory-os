@@ -15,6 +15,7 @@ assert.doesNotMatch(snippet, /\.eq\('telegram_id',\s*Number\(/, 'never round blo
 const queries: { table: string; selected: string; owner: unknown }[] = []
 let mode: 'normal' | 'error' | 'throw' = 'normal'
 let row: any = null
+let simulateStoredBigint = false
 const supabaseAdmin = {
   from(table: string) {
     const call = { table, selected: '', owner: undefined as unknown }
@@ -32,7 +33,15 @@ const supabaseAdmin = {
       },
       async maybeSingle() {
         if (mode === 'throw') throw new Error('synthetic database failure')
-        return { data: row, error: mode === 'error' ? { code: 'TEST' } : null }
+        // PostgREST serializes an uncast BIGINT as a bare JSON number.
+        // Model that wire representation before the client parses the response.
+        let data = row
+        if (simulateStoredBigint) {
+          const ownerToken = call.selected.split(',').map(s => s.trim()).includes('telegram_id::text')
+            ? JSON.stringify(row.telegram_id) : row.telegram_id
+          data = JSON.parse('{"telegram_id":' + ownerToken + ',"access_status":' + JSON.stringify(row.access_status) + '}')
+        }
+        return { data, error: mode === 'error' ? { code: 'TEST' } : null }
       },
     }
     return q
@@ -57,6 +66,7 @@ const exactOwners: Array<string | number> = [
 assert.equal(Number('9007199254740992'), Number('9007199254740993'),
   'test must exercise an actual floating-point collision')
 
+simulateStoredBigint = true
 for (const id of exactOwners) {
   const exact = String(id)
   for (const status of ['blocked', 'active']) {
@@ -70,6 +80,7 @@ for (const id of exactOwners) {
     assert.match(queries[0].selected, /access_status/, 'selected block flag is checked')
   }
 }
+simulateStoredBigint = false
 queries.length = 0
 row = { telegram_id: 42, access_status: 'active' }
 assert.equal(await isBlocked('42'), false, 'safe legacy DB numeric owner remains valid')
