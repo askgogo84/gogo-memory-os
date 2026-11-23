@@ -76,7 +76,7 @@ export async function runEmailJudgeShadow(telegramId: string, deps: Deps = {}) {
   const ownerId = exactSignedOwner(telegramId)
   if (!ownerId) return { logged: false, reason: 'owner_invalid' }
   const now = (deps.now || Date.now)()
-  const user = deps.user ? await deps.user(telegramId) : (await supabaseAdmin.from('users').select('telegram_id,whatsapp_id,timezone').eq('telegram_id', ownerKey(telegramId)).maybeSingle()).data
+  const user = deps.user ? await deps.user(telegramId) : (await supabaseAdmin.from('users').select('telegram_id::text,whatsapp_id,timezone').eq('telegram_id', ownerKey(telegramId)).maybeSingle()).data
   if (!user || exactSignedOwner(user.telegram_id) !== ownerId) return { logged: false, reason: 'user_unavailable' }
   if (!user.whatsapp_id) return { logged: false, reason: 'no_whatsapp' }
   const tz = String(user.timezone || 'Asia/Kolkata')
