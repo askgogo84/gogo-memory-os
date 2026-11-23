@@ -52,7 +52,7 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
  */
 export function isBrowserRegistrationBarrier(page:{
   url?:string;title?:string;text?:string;
-  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string}>;submitLabels?:string[];formText?:string;synthetic?:boolean}>
+  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string;autocomplete?:string}>;submitLabels?:string[];formText?:string;synthetic?:boolean}>
   controls?:Array<{tag?:string;role?:string;type?:string;label?:string;text?:string;inForm?:boolean}>
 }):boolean {
   let path=''
@@ -95,7 +95,7 @@ export function isBrowserRegistrationBarrier(page:{
   }
   const credentialForms=(page.forms||[]).filter(form=>!newsletterForm(form))
   const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
-    /\b(?:email|phone|mobile|username)\b/i.test([input.name,input.type,input.label].join(' '))))
+    /email|phone|mobile|user|login|\btel\b/i.test([input.name,input.type,input.label,input.autocomplete].join(' '))))
   // An email-first signup may use an ordinary Continue action, while navigation
   // precedes the actual Create account heading. "Already have an account?"
   // distinguishes its active signup content from a login page's Sign up link.
@@ -105,7 +105,7 @@ export function isBrowserRegistrationBarrier(page:{
   // A newsletter signup CTA on a public guide is not account registration.
   const formSubmitRegistration=credentialForms.some(form=>{
     const formHasAccountField=(form.inputs||[]).some(input=>
-      /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' ')))
+      /password|email|phone|mobile|user|login|\btel\b/i.test([input.name,input.type,input.label,input.autocomplete].join(' ')))
     // JavaScript account panels can live at any URL. Newsletter exemptions
     // above require observed newsletter evidence, never a public-guide path.
     return formHasAccountField&&(form.submitLabels||[]).some(label=>

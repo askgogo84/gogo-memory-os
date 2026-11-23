@@ -271,7 +271,7 @@ async function isActiveRegistrationPage(page){
   };
   const credentialForms=forms.filter(form=>!newsletterForm(form));
   const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
-    /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' '))));
+    /password|email|phone|mobile|user|login|\btel\b/i.test([input.name,input.type,input.label,input.autocomplete].join(' '))));
   const passwordField=credentialForms.some(form=>(form.inputs||[]).some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))));
   // A public article's newsletter form is not an account creation form.
 
@@ -321,7 +321,7 @@ async function model(page){
       const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
       let selector='';
       if(id) selector='#'+CSS.escape(id); else if(name) selector=el.tagName.toLowerCase()+'[name="'+CSS.escape(name)+'"]'; else selector=el.tagName.toLowerCase();
-      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
+      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||''),autocomplete:clean(el.getAttribute('autocomplete')||'')};
     };
     return {
       url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
@@ -340,7 +340,7 @@ async function model(page){
           const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
           return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
             const field=inputs(input);
-            return !input.form&&visible(input)&&/\b(?:email|phone|mobile|username|password)\b/i.test([field.name,field.type,field.label].join(' '));
+            return !input.form&&visible(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' '));
           });
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>visible(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
@@ -851,7 +851,7 @@ async function model(page){
       const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
       let selector='';
       selector=selectorFor(el);
-      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
+      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||''),autocomplete:clean(el.getAttribute('autocomplete')||'')};
     };
     const flightEvidence=/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)&&!activeDialog ? {
       searchControls:allControls.filter(c=>/^where (?:from|to)\?|^change (?:ticket type|seating class)\.|^\d+ passengers?\b/i.test(c.label))
@@ -912,7 +912,7 @@ async function model(page){
           const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
           return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
             const field=inputs(input);
-            return !input.form&&actionable(input)&&/\b(?:email|phone|mobile|username|password)\b/i.test([field.name,field.type,field.label].join(' '));
+            return !input.form&&actionable(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' '));
           });
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>actionable(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)

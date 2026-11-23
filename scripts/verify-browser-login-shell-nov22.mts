@@ -518,8 +518,8 @@ assert.equal(isBrowserRegistrationBarrier(observedUnboundLogin),false,
 const unboundLoginWorker=await syntheticVaultWorker(observedUnboundLogin)
 assert.equal(unboundLoginWorker.vaultLogin.registrationRefused,undefined)
 assert.deepEqual(unboundLoginWorker.actions.slice(0,2),['fill:user','fill:password'])
-for(const attribute of ['placeholder','aria-label']){
-  const headerEmail={...formlessEmail,getAttribute:(key:string)=>key==='type'?'text':key===attribute?'Email':null}
+for(const attribute of ['placeholder','aria-label','autocomplete','name']){
+  const headerEmail={...formlessEmail,getAttribute:(key:string)=>key==='type'?'text':key===attribute?(attribute==='autocomplete'?'username':attribute==='name'?'userEmail':'Email'):null}
   const signupRegion={querySelectorAll:()=>[headerEmail]}
   const activeHeaderSignup={...formlessButton,closest:(selector:string)=>selector.includes('header')?signupRegion:null}
   const body={innerText:'Home Products Sign up Email Log in',querySelectorAll:()=>[headerEmail]}
