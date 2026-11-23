@@ -327,14 +327,16 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     let next: StoreRow | undefined
     const checkedLanes = new Set<string>()
     for (const row of candidates) {
-      const key = 'commerce-browser:' + owner + (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) ? ':' + row.provider : '')
-      if (checkedLanes.has(key)) continue
-      checkedLanes.add(key)
-      const lane = await acquireBrainUserLease(key, 600)
+      const {provider} = row
+      const parallel = PARALLEL_COMPARISON_PROVIDERS.has(provider)
+      const laneKey = 'commerce-browser:' + owner + (parallel ? ':' + provider : '')
+      if (checkedLanes.has(laneKey)) continue
+      checkedLanes.add(laneKey)
+      const lane = await acquireBrainUserLease(laneKey, 600)
       if (!lane) continue
       // Reserve the browser before creating a child. A busy lane leaves the store pending
       // and a later worker can claim it without waiting for an orphaned child to expire.
-      releaseLane = () => releaseBrainUserLease(key, lane.ownerToken)
+      releaseLane = () => releaseBrainUserLease(laneKey, lane.ownerToken)
       next = row
       break
     }
