@@ -317,7 +317,7 @@ function subjectOf(text: string) {
     .replace(/[?.!]+$/g, '').split(/[.!?]\s/)[0]
     // 16 Oct live: "compare price of iPhone 16 on Flipkart and Croma" kept "price of" in the product name,
     // so no product page title matched and both stores failed.
-    .replace(/^\s*(?:the\s+)?(?:live\s+|current\s+)?(?:prices?|pricing|costs?|rates?)\s+(?:of|for)\s+(?:the\s+|an?\s+)?/i, '')
+    .replace(/^\s*(?:the\s+)?(?:live\s+|current\s+|listed\s+)?(?:prices?|pricing|costs?|rates?)\s+(?:of|for)\s+(?:the\s+|an?\s+)?/i, '')
     // "xm5 price on amazon": the word "price" asks for a price, it is not part of the product name.
     .replace(/\s+(?:prices?|pricing|cost|rates?)\s*$/i, '')
     // "… for 560086": the pincode is where to deliver, not part of the item.

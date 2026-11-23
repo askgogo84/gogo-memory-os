@@ -1,0 +1,1 @@
+npx tsx scripts/verify-comparison-request-constraints-nov23.mts
