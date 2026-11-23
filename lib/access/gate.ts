@@ -140,11 +140,37 @@ async function markNotified(id: string) {
   await supabaseAdmin.from('waitlist').update({ last_notified_at: new Date().toISOString() }).eq('id', id)
 }
 
-/** True when this dashboard account (by telegram_id) is blocked. Fails open. */
-export async function isTelegramIdBlocked(telegramId: string | number): Promise<boolean> {
+// The access check must never round a signed BIGINT account identifier. Invalid
+// identities cannot be trusted as evidence that this account is unblocked.
+function exactBlockStatusOwner(telegramId: string | number): string | null {
+  const owner = typeof telegramId === 'number'
+    ? (Number.isSafeInteger(telegramId) ? String(telegramId) : '')
+    : telegramId
+  if (!/^-?[1-9][0-9]*$/.test(owner)) return null
   try {
-    const { data, error } = await supabaseAdmin.from('users').select('access_status').eq('telegram_id', Number(telegramId)).maybeSingle()
-    if (error) return false
+    const value = BigInt(owner)
+    return value >= BigInt('-9223372036854775808') && value <= BigInt('9223372036854775807')
+      ? owner : null
+  } catch { return null }
+}
+
+function matchesBlockStatusOwner(rowId: unknown, owner: string): boolean {
+  if (typeof rowId === 'number') return Number.isSafeInteger(rowId) && String(rowId) === owner
+  if (typeof rowId === 'bigint') return rowId.toString() === owner
+  return typeof rowId === 'string' && rowId === owner && exactBlockStatusOwner(rowId) !== null
+}
+
+/** True when a verified dashboard owner is blocked. Unknown/mismatched reads fail closed.
+ * A missing user row is not itself a "blocked" flag; WhatsApp admission still uses
+ * checkWhatsAppAccess, which separately requires user/waitlist approval.
+ */
+export async function isTelegramIdBlocked(telegramId: string | number): Promise<boolean> {
+  const owner = exactBlockStatusOwner(telegramId)
+  if (!owner) return true
+  try {
+    const { data, error } = await supabaseAdmin.from('users')
+      .select('telegram_id, access_status').eq('telegram_id', owner).maybeSingle()
+    if (error || (data && !matchesBlockStatusOwner((data as any).telegram_id, owner))) return true
     return (data as any)?.access_status === 'blocked'
-  } catch { return false }
+  } catch { return true }
 }
