@@ -280,9 +280,10 @@ const nasaSource = 'https://www.nasa.gov/image-article/nasas-lro-observes-chandr
 const isroSource = 'https://www.isro.gov.in/ISRO_EN/Release_of_Chandrayaan-3_science_data_to_the_Scientific_Community.html'
 const restrictedMission = `Create a private research report titled Lunar evidence. Use only these official sources: ${nasaSource} and ${isroSource} . Name the observation date if visible.`
 const sourceQueries: string[] = []
+const isroPageTerms = 'Release of Chandrayaan 3 science data to the Scientific Community'
 mocks['@/lib/web-search']={searchWebResults:async (query:string,options:any)=>{
   assert.equal(options.pageTextOnly,true)
-  assert.equal(options.includeDomains[0],new URL(query).hostname)
+  assert.deepEqual(Array.from(options.includeDomains),[query === isroPageTerms ? 'isro.gov.in' : new URL(query).hostname])
   sourceQueries.push(query)
   return query.includes('nasa.gov') ? [
     {url:'https://www.nasa.gov/unrelated',title:'Unrelated search result',snippet:'Wrong observation date'},
@@ -293,12 +294,27 @@ mocks['./planner-provider'].completeAgentPlanPrompt=async()=>{assert.fail('A nam
 const restrictedPlan = await numericPlanner.planGeneralAgentRequest(restrictedMission)
 assert.deepEqual(Array.from(restrictedPlan.steps,(s:any)=>s.tool),['web_search','artifact'])
 const restrictedReport = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:restrictedMission,prepared:{...prepared,plan:restrictedPlan}})
-assert.deepEqual(sourceQueries,[mocks['./make-request'].researchSourceUrl(nasaSource),mocks['./make-request'].researchSourceUrl(isroSource)])
+assert.deepEqual(sourceQueries,[mocks['./make-request'].researchSourceUrl(nasaSource),mocks['./make-request'].researchSourceUrl(isroSource),isroPageTerms])
 assert.match(restrictedReport.text,/1 of 2 named sources/)
 assert.match(restrictedReport.text,/four days after the Aug. 23 landing/)
 assert.ok(restrictedReport.text.includes(nasaSource))
 assert.doesNotMatch(restrictedReport.text,/Wrong observation date|Wrong source|Unrelated search result/)
 assert.match(rows.agent_artifacts.at(-1).content_json.sections[0].result.text,/1 of 2/)
+const recoveredMission = restrictedMission.replace('Lunar evidence','Recovered lunar evidence')
+mocks['@/lib/web-search']={searchWebResults:async (query:string,options:any)=>{
+  if (query.includes('nasa.gov')) return [{url:nasaSource,title:'NASA image archive',snippet:'NASA photographed the site.'}]
+  assert.deepEqual(Array.from(options.includeDomains),['isro.gov.in'])
+  assert.equal(options.pageTextOnly,true)
+  const unrelated = {url:'https://www.isro.gov.in/other',title:'Unrelated source',snippet:'Wrong source'}
+  if (query !== isroPageTerms) return [unrelated]
+  return [unrelated,{url:isroSource,title:'ISRO science data',snippet:'The lander and rover collected data on the lunar surface.'}]
+}}
+const recoveredPlan = await numericPlanner.planGeneralAgentRequest(recoveredMission)
+const recoveredReport = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:recoveredMission,prepared:{...prepared,plan:recoveredPlan}})
+assert.match(recoveredReport.text,/2 of 2 named sources/)
+assert.ok(recoveredReport.text.includes(nasaSource))
+assert.ok(recoveredReport.text.includes(isroSource))
+assert.doesNotMatch(recoveredReport.text,/Wrong source|Unrelated source/)
 const previousReportCount = rows.agent_artifacts.length
 for (const source of ['https://www.nasa.gov/moon','https://www.nasa.gov/mars']) {
   const untitledMission = `Create a private research report. Use only these official sources: ${source}`
