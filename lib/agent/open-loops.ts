@@ -562,10 +562,17 @@ async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string
 // id above 2^53 as its exact decimal string, never through Number. A returned row must belong to this owner.
 /** The owner's own connected Gmail (consent and owner checked), or why not. Read access only. */
 export async function gmailAccessForOwner(telegramId:string|number):Promise<{reason:'disabled'|'disconnected'}|{accessToken:string;ownEmail:string}>{
-  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_gmail_owner_invalid')
-  const owner=String(telegramId??'').trim(),legacy=Number(owner)
-  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))throw new Error('open_loop_gmail_owner_invalid')
+  // Privileged Gmail and consent reads must use a canonical signed BIGINT identity, never a rounded alias.
+  if(typeof telegramId!=='string'&&typeof telegramId!=='number')throw new Error('open_loop_gmail_owner_invalid')
+  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))throw new Error('open_loop_gmail_owner_invalid')
+  const owner=String(telegramId)
+  if(!/^-?[1-9]\d{0,18}$/.test(owner))throw new Error('open_loop_gmail_owner_invalid')
+  const exact=BigInt(owner)
+  if(exact<BigInt('-9223372036854775808')||exact>BigInt('9223372036854775807'))throw new Error('open_loop_gmail_owner_invalid')
+  const legacy=Number(owner)
   const key:string|number=Number.isSafeInteger(legacy)&&String(legacy)===owner?legacy:owner
+  const sameOwner=(value:unknown)=>typeof value==='string'?value===owner:
+    typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===owner
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
       .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token,telegram_id')
@@ -575,9 +582,9 @@ export async function gmailAccessForOwner(telegramId:string|number):Promise<{rea
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
-  if(consent&&consent.telegram_id!=null&&String(consent.telegram_id)!==owner)return {reason:'disabled' as const}
+  if(consent&&!sameOwner(consent.telegram_id))return {reason:'disabled' as const}
   if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
-  if(user&&user.telegram_id!=null&&String(user.telegram_id)!==owner)return {reason:'disconnected' as const}
+  if(user&&!sameOwner(user.telegram_id))return {reason:'disconnected' as const}
   if(!user?.gmail_connected)return {reason:'disconnected' as const}
   if(consent?.gmail_enabled!==true)return {reason:'disabled' as const} // 4 Nov: affirmative yes only
 
