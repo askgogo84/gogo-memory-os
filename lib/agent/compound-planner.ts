@@ -211,7 +211,7 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
   const afterTime=raw.slice((time.index || 0)+time[0].length)
   const unresolved = (!target && !generic) || (!!beforeDay && !!time[2] && beforeDay.toLowerCase() !== time[2].toLowerCase()) || (!!generic && /^\s+(?:for|about|called|named)\b/i.test(afterTime))
   const meetingStart = raw.match(/\b(?:the\s+)?meeting\s+starts?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)?.[1]
-  const zone = raw.slice((time.index || 0) + time[0].length).match(/^\s+([A-Z]{2,5}|[A-Za-z_]+\/[A-Za-z_]+)\b/)?.[1]
+  const zone = raw.slice((time.index || 0) + time[0].length).match(/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/)?.[1]
   return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone }
 }
 
@@ -267,7 +267,7 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
   const timezone=String(row.timezone || await actorTimezone(params.actor))
   if (!isValidTimezone(timezone)) return fail('I couldn’t verify the reminder timezone. Nothing was changed.')
   if (mutation.zone) {
-    const requested=mutation.zone==='IST'?'Asia/Kolkata':/^(?:UTC|GMT)$/.test(mutation.zone)?'UTC':mutation.zone
+    const requested=mutation.zone.toUpperCase()==='IST'?'Asia/Kolkata':/^(?:UTC|GMT)$/i.test(mutation.zone)?'UTC':mutation.zone
     const canonical=(zone:string)=>new Intl.DateTimeFormat('en',{timeZone:zone}).resolvedOptions().timeZone
     if(!isValidTimezone(requested)||canonical(requested)!==canonical(timezone))return fail('The requested timezone differs from the saved reminder timezone or is unclear. Please confirm the intended timezone. Nothing was changed.')
   }

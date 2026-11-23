@@ -94,6 +94,13 @@ assert.equal(rows[0].remind_at,'2026-11-25T10:50:00.000Z','tomorrow is next loca
 reset();rows[0].timezone='America/New_York'
 assert.equal((await run('Move Askgogo<>Fund Raise reminder today to 4:20 pm')).status,'completed')
 assert.equal(rows[0].remind_at,'2026-11-23T21:20:00.000Z','stored non-India timezone must not be treated as UTC')
+for(const zone of ['America/Indiana/Indianapolis','America/Argentina/Buenos_Aires']){
+  reset();rows[0].timezone=zone
+  assert.equal((await run(`Move Askgogo<>Fund Raise reminder today to 4:20 pm ${zone}`)).status,'completed','complete three-component IANA timezone is retained')
+}
+for(const zone of ['America/New_York/Invalid','UTC+05:30']){
+  reset();rows[0].timezone='UTC';assert.equal((await run(`Move Askgogo<>Fund Raise reminder today to 4:20 pm ${zone}`)).status,'failed');assert.equal(writes.length,0,'never validate just a truncated timezone prefix')
+}
 for(const [date,clock] of [['2026-11-01T06:00:00Z','1:30 am'],['2026-03-08T06:00:00Z','2:30 am']]){
   reset();now=Date.parse(date)-86400000;rows[0].timezone='America/New_York';rows[0].remind_at=date
   assert.equal((await run(`Move Askgogo<>Fund Raise reminder to ${clock}`)).status,'failed');assert.equal(writes.length,0,'ambiguous/nonexistent local clocks never write')
