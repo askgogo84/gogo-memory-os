@@ -254,8 +254,6 @@ async function isActiveRegistrationPage(page){
   }))return true;
   const leading=String(observed.text||'').replace(/\s+/g,' ').trim().replace(/^(?:instagram|meta)\s+/i,'').slice(0,260);
   const fullText=String(observed.text||'').replace(/\s+/g,' ').trim();
-  const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText);
-  const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(fullText);
   const newsletterForm=form=>{
     const fields=form.inputs||[];
     // Optional newsletter opt-ins within real signups cannot exempt a whole
@@ -304,10 +302,9 @@ async function isActiveRegistrationPage(page){
   // A Sign up action must belong to the same non-newsletter credential
   // form. An unrelated footer newsletter beside a login form is not a barrier.
   if(credentialForms.some(form=>{
-    const syntheticSignup=form.synthetic!==true||(!publicGuidePath
-      &&/(?:^|\/)(?:auth|sign-?up|register|registration|create-?account)(?:\/|$)/i.test(path)
-      &&signupCopy&&/\b(?:log\s*in|sign\s*in)\b/i.test(fullText));
-    return syntheticSignup&&(form.submitLabels||[]).some(label=>
+    // A form-less account panel is still registration on /session or a guide
+    // URL. Only observed newsletter evidence may exempt its Sign up action.
+    return (form.submitLabels||[]).some(label=>
       /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')));
   }))return true;
   if(publicGuidePath&&!passwordField)return false;

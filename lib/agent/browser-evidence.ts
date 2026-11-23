@@ -106,10 +106,9 @@ export function isBrowserRegistrationBarrier(page:{
   const formSubmitRegistration=credentialForms.some(form=>{
     const formHasAccountField=(form.inputs||[]).some(input=>
       /\b(?:email|phone|mobile|username|password)\b/i.test([input.name,input.type,input.label].join(' ')))
-    const syntheticSignup=form.synthetic!==true||(!publicGuidePath
-      &&/(?:^|\/)(?:auth|sign-?up|register|registration|create-?account)(?:\/|$)/i.test(path)
-      &&signupCopy&&/\b(?:log\s*in|sign\s*in)\b/i.test(body))
-    return formHasAccountField&&syntheticSignup&&(form.submitLabels||[]).some(label=>
+    // JavaScript account panels can live at any URL. Newsletter exemptions
+    // above require observed newsletter evidence, never a public-guide path.
+    return formHasAccountField&&(form.submitLabels||[]).some(label=>
       /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))
   })
   if(formSubmitRegistration)return true

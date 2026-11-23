@@ -253,7 +253,7 @@ assert.equal(isBrowserLoginShell({
 }),false,'a quoted instruction is not an active sign-in gate')
 
 // Assert that the actual browser entry points use this pure gate, not just the test fixture.
-const source=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
+const source=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8').replace(/\r\n/g,'\n')
 const assessor=source.slice(source.indexOf('export async function assessReadOutcome('))
 assert.match(assessor.slice(0,650),/if\(isBrowserLoginShell\(page\)\|\|/,
   'read assessor must reject login shells before model or title-only completion')
@@ -432,7 +432,7 @@ async function syntheticVaultWorker(snapshot:{url:string;title:string;text:strin
     getByText:()=>({first:()=>submit}),
     evaluate:async(fn:unknown)=>{
       const body=String(fn)
-      if(body.includes('button,input[type="submit"],[role="button"]')){
+      if(body.includes('const buttons=Array.from')){
         // Run the actual visibility filter against an inert signup button.
         const button={
           textContent:current.signupButtonLabel||'Sign up',value:'',getAttribute:()=>'',closest:(selector:string)=>selector==='form'&&current.signupSubmitInForm!==false?{}:null,
@@ -477,6 +477,18 @@ assert.equal(formlessWorker.vaultLogin.registrationRefused,true,
   'actual worker must refuse a formless JS signup even when its button lacks a form owner')
 assert.deepEqual(formlessWorker.actions,[],
   'formless registration cannot autofill or submit saved Vault credentials')
+for(const path of ['/session','/guides/auth']){
+  const snapshot={...observedFormless,url:'https://example.com'+path,
+    forms:observedFormless.forms.map((form:any)=>({...form,action:'https://example.com'+path}))}
+  assert.equal(isBrowserRegistrationBarrier(snapshot),true,
+    'active formless signup must block backend Vault lookup on '+path)
+  const worker=await syntheticVaultWorker({...snapshot,
+    signupSubmitVisible:true,signupSubmitInForm:false,signupSubmitType:'button',signupButtonLabel:'Sign up'})
+  assert.equal(worker.vaultLogin.registrationRefused,true,
+    'worker must refuse active formless signup on '+path)
+  assert.deepEqual(worker.actions,[],
+    'saved credentials must never be entered into active formless signup on '+path)
+}
 const modeSwitchWorker=await syntheticVaultWorker({
   ...observedLoginSwitch,
   signupSubmitVisible:true,signupSubmitInForm:true,signupSubmitType:'button',signupButtonLabel:'Sign up',
