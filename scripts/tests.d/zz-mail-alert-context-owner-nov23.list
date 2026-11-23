@@ -1,0 +1,2 @@
+# Exact signed-64-bit watcher mail-alert rules/travel reads, provider-free
+npx tsx scripts/verify-mail-alert-context-owner-nov23.mts
