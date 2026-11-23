@@ -432,5 +432,13 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
   assert.match(recurring.text,/Want a reminder/)
   assert.equal(store.reminders[0].remind_at,unchanged,'a shared event cannot silently change a recurring series')
   assert.equal(worker().parseSharedMeeting(share.replace('calendar.app.google/','calendar.app.google.evil.invalid/'),'Asia/Kolkata',new Date(clock)),null)
+  const legacyMeet=worker().parseSharedMeeting(share.replace('4:30 – 5:45','5:00 – 6:15').replace(meeting.url,'https://meet.google.com/abc-defg-hij'),'Asia/Kolkata',new Date(clock))
+  store.reminders=[{id:'legacy-meet',telegram_id:101,message:`${legacyMeet.title} — starts ${timezone.formatInTimezone(legacyMeet.startAt,legacyMeet.timezone)}\n${legacyMeet.url}`,remind_at:legacyMeet.remindAt,timezone:legacyMeet.timezone,sent:false}]
+  const crossFormat=await worker().tryMeetingShareFollowup({actor,text:share,surface:'whatsapp'})
+  assert.match(crossFormat.text,/4:20/,'Calendar card uses the prior exact-title Meet context')
+  assert.equal(store.reminders.length,1)
+  assert.equal(store.reminders[0].id,'legacy-meet')
+  assert.equal(store.reminders[0].remind_at,meeting.remindAt)
+  assert.equal(worker().parseSharedMeeting(share+'\nJoin https://meet.google.com/abc-defg-hij','Asia/Kolkata',new Date(clock)).url,meeting.url)
 }
 console.log('PASS: Calendar event share reconciles its existing reminder with owner, permission, ambiguity, duplicate and failed-update protections')

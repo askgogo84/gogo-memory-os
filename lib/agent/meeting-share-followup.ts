@@ -47,7 +47,11 @@ export function parseSharedMeeting(raw:string, timezone:string, now=new Date()):
   // America/New_York") must not be read as the owner's local time. Refused here; the caller asks for the details.
   if(foreignZoneLabel(raw,timezone))return null
   const links=meetingLinks(text)
-  if(links.length!==1)return null
+  const calendarLinks=links.filter(link=>new URL(link).hostname!=='meet.google.com')
+  // One Calendar event and its joining link can describe the same invitation.
+  // Multiple event cards or multiple meeting rooms still require clarification.
+  if(links.length!==1&&!(links.length===2&&calendarLinks.length===1))return null
+  const eventUrl=calendarLinks[0]||links[0]
   const dateExpression=(/\b(?:(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+)?(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(20\d{2}))?\s*[·,]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
   const date=text.match(dateExpression)
   if(!date)return null
@@ -76,7 +80,7 @@ export function parseSharedMeeting(raw:string, timezone:string, now=new Date()):
   const startAt=parseLocalDateTime({date:key,time:start,timezone:zone}).dueAtUtcISO
   const endAt=parseLocalDateTime({date:key,time:end,timezone:zone}).dueAtUtcISO
   if(Date.parse(endAt)<=Date.parse(startAt))return null
-  return {title,url:links[0],startAt,endAt,remindAt:new Date(Date.parse(startAt)-600000).toISOString(),timezone:zone}
+  return {title,url:eventUrl,startAt,endAt,remindAt:new Date(Date.parse(startAt)-600000).toISOString(),timezone:zone}
 }
 
 function meetingTimeStatus(meeting:Meeting,now=Date.now()){
@@ -131,7 +135,13 @@ async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarg
     const links=meetingLinks(r.message)
     // A recorded event link is authoritative. Title-only reminders additionally
     // need the same local day; repeated meetings cannot silently move dates.
-    return links.length?links.length===1&&links[0]===m.url:true
+    if(!links.length)return true
+    if(links.length!==1)return false
+    if(links[0]===m.url)return true
+    // A revised Calendar card can replace a prior Meet invitation. A unique
+    // exact title on the same local day supplies that cross-format context.
+    // Distinct Calendar event IDs (or distinct Meet rooms) stay distinct.
+    return (new URL(links[0]).hostname==='meet.google.com')!==(new URL(m.url).hostname==='meet.google.com')
   })
   return matches.length>1?'ambiguous':matches[0]||null
 }
