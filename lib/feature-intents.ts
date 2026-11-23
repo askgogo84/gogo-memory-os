@@ -372,7 +372,7 @@ export async function routeFeatureIntent(
 
   // A delivered reminder is concrete context for "move this tmrw 4.30pm".
   // Read the current Calendar state before a model can invent an action directive.
-  if(extra?.telegramId!==undefined && /^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)\b/i.test(text)) {
+  if(extra?.telegramId!==undefined && /^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(?:tomorrow|tmrw|tmw)\s*(?:at\s+)?\d/i.test(text)) {
     try {
       const contextual=await import('@/lib/agent/contextual-meeting-reschedule')
       if(contextual.isContextualMeetingMove(text)) {

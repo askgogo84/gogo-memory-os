@@ -240,7 +240,7 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     // Delivered meeting context precedes model/goal clarification on this surface.
-    if (/^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)\b/i.test(text) &&
+    if (/^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(?:tomorrow|tmrw|tmw)\s*(?:at\s+)?\d/i.test(text) &&
         !detectFriendReminder(text) && !(isFriendReminderFollowupCandidate(text) && await getPendingFriend(actor.legacyTelegramId))) {
       let reply: string | null = null
       try {

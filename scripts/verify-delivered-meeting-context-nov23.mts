@@ -129,5 +129,6 @@ for (const surface of ['web','whatsapp']) {
   reset();saved=[];sent=[];failure='readback';assert.notEqual(await api.run(command),'fallback');assert.equal(writes.length,1)
   reset();saved=[];sent=[];preserve=true;assert.equal(await api.run(command),'fallback');assert.equal(reads.length,0)
   reset();preserve=false;importFailure=true;const failed=await api.run(command);assert.notEqual(failed,'fallback');assert.equal(writes.length,0)
+  reset();assert.equal(await api.run('Move it to 5 pm'),'fallback','unrelated clock-only commands never import this handler');assert.equal(reads.length,0)
 }
 console.log('verify-delivered-meeting-context-nov23: actual handler/router context, Calendar truth, stable successor, CAS and fail-closed controls PASS (offline)')
