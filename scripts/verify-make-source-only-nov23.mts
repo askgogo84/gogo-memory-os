@@ -10,6 +10,9 @@ for (const request of [exact,
   'Create a sheet. Do not use external sources.',
   "Create a sheet. Don't search the web.",
   'Create a sheet. Never consult outside information.',
+  'Create a sheet, use only this text: Check, Status; Delivery, Verified.',
+  'Create a sheet\nDo not search the web.',
+  'Create a sheet\r\nPlease use only the supplied content.',
   'Create a sheet from my bank account statements.',
 ]) {
   let searches = 0
@@ -26,7 +29,7 @@ for (const request of [exact,
   assert.deepEqual(out?.doc, {...sheet, format: 'sheet', rows: sheet.rows, estimateRows: [], notes: ''})
 }
 // A normal research request still has public evidence; negation is not a source-only instruction.
-for (const request of ['Create a sheet of public park names.', 'Create a sheet. Do not use only this text; research public park names.']) {
+for (const request of ['Create a sheet of public park names.', 'Create a sheet. Do not use only this text; research public park names.', 'Create a sheet, do not use only this text; research public park names.']) {
   let searches = 0
   const out = await generateDoc('sheet', request, {
     search: async () => { searches++; return [{title: 'Park authority', snippet: 'Known public park', url: 'https://example.com/parks'}] },
