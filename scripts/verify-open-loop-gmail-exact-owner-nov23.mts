@@ -34,9 +34,17 @@ async function exercise(s: Scenario) {
     from(table: string) {
       assert.ok(table === 'users' || table === 'user_consent_settings', 'only owner and consent tables')
       let key: unknown
+      let projectAsText = false
+      function returnedOwner(override: unknown) {
+        if (override !== undefined) return override
+        // PostgREST emits a quoted BIGINT only when the projection casts to text.
+        const exact = String(s.owner)
+        return JSON.parse(projectAsText ? JSON.stringify(exact) : exact)
+      }
       return {
         select(cols: string) {
           assert.match(cols, /telegram_id/)
+          projectAsText = cols.split(',').map(col => col.trim()).includes('telegram_id::text')
           return this
         },
         eq(column: string, value: unknown) {
@@ -48,7 +56,7 @@ async function exercise(s: Scenario) {
         async maybeSingle() {
           if (table === 'users') return {
             data: s.userExists === false ? null : {
-              telegram_id: s.userOwner === undefined ? s.owner : s.userOwner,
+              telegram_id: returnedOwner(s.userOwner),
               gmail_connected: true,
               gmail_email: 'Owner@Example.Test',
               gmail_refresh_token: null,
@@ -58,7 +66,7 @@ async function exercise(s: Scenario) {
           }
           return {
             data: s.consentExists === false ? null : {
-              telegram_id: s.consentOwner === undefined ? s.owner : s.consentOwner,
+              telegram_id: returnedOwner(s.consentOwner),
               gmail_enabled: s.consentEnabled !== false,
             },
             error: s.consentError ? { message: s.consentError } : null,

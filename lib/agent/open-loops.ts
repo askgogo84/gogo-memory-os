@@ -575,10 +575,10 @@ export async function gmailAccessForOwner(telegramId:string|number):Promise<{rea
     typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===owner
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
-      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token,telegram_id')
+      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token,telegram_id::text')
       .eq('telegram_id',key).maybeSingle(),
     supabaseAdmin.from('user_consent_settings')
-      .select('gmail_enabled,telegram_id').eq('telegram_id',key).maybeSingle(),
+      .select('gmail_enabled,telegram_id::text').eq('telegram_id',key).maybeSingle(),
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
