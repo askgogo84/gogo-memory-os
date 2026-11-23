@@ -644,6 +644,11 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
 function parseReminderBase(text: string): ParsedReminder {
   const recurring=parseDailyRecurring(text)||parseEveryNRecurring(text)||parseWeekdayRecurring(text)||parseHourlyWindowRecurring(text)
   if(recurring)return recurring
+  // An explicit short countdown before the task owns WHEN; dates inside that
+  // task are context. Start at this clause so an earlier quoted duration cannot
+  // override it. Keep absolute-date instructions and day/time overrides intact.
+  const countdown=text.match(/\bremind(?:er)?\s+(?:me\s+)?in\s+\d+\s+(?:minutes?|mins?|hours?)\b(?:\s+(?:on|via)\s+WhatsApp)?\s+(?:to|about)\b/i)
+  if(countdown)return parseRelativeReminder(text.slice(countdown.index))
   // A named date or "today" owns its interpretation even when invalid/past.
   // Never fall through to the next weekday, tomorrow, or next year.
   // 24 Oct live: "Saw Divya's wedding invite for 12 Dec … remind me about this tomorrow at 10am" was set for 12 Dec.
