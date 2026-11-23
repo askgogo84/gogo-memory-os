@@ -1,0 +1,35 @@
+name: Job resume and preferences owner isolation (TEST ONLY - mandatory privacy RED)
+on:
+  pull_request:
+    paths:
+      - scripts/verify-job-resume-owner-model-testonly.mjs
+      - .github/workflows/job-resume-owner-model-testonly.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sealed-job-resume-owner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout literal PR head (never synthetic merge)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal checkout SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies without provider scripts
+        run: npm ci --ignore-scripts
+      - name: Execute unchanged job private readers against fictional accounts
+        run: node scripts/verify-job-resume-owner-model-testonly.mjs
