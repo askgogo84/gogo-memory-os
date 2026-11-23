@@ -18,6 +18,18 @@ export const dynamic = 'force-dynamic'
 const PREMIUM_LOADING_GIF =
   'https://media.giphy.com/media/xTkcEQACH24SMPxIQg/giphy.gif'
 
+// Reject ambiguous Telegram chat owners before any inbound claim, lookup or send.
+// Telegram JSON ids are numeric, while canonical decimal strings remain accepted
+// for existing compatible callers. Never round a chat id into another owner.
+function exactTelegramChatId(raw: unknown): number | null {
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null
+  if (typeof raw === 'string' && !/^-?[1-9][0-9]*$/.test(raw)) return null
+  const id = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isSafeInteger(id) || id === 0) return null
+  if (typeof raw === 'string' && String(id) !== raw) return null
+  return id
+}
+
 function getTelegramUserName(message: any): string {
   return (
     message?.from?.first_name ||
@@ -57,11 +69,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const message = body?.message || body?.edited_message
 
-    if (!message?.chat?.id) {
+    if (message?.chat?.id === undefined) {
       return NextResponse.json({ ok: true, skipped: 'no message' })
     }
 
-    chatId = Number(message.chat.id)
+    const acceptedChatId = exactTelegramChatId(message.chat.id)
+    if (acceptedChatId === null) {
+      return NextResponse.json({ ok: false, error: 'invalid_telegram_chat_id' }, { status: 400 })
+    }
+    chatId = acceptedChatId
     const userName = getTelegramUserName(message)
     const updateId = body?.update_id
     const eventKey = updateId != null
