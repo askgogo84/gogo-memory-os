@@ -184,9 +184,10 @@ async function bindInstamartPick(owner: string, pick: 1 | 2 | 3): Promise<Instam
     if (saved.metadata_json.state === 'cart_contents_verified') {
       const url = commerceHandoffUrl('swiggy', CHECKOUT_URL)
       const review = verifiedCheckoutReviewLink(owner, saved)
+      const merchant = 'Review and pay in the Swiggy app' + (url ? ': ' + url : '.')
       const next = review
-        ? 'Review this basket and set a spending limit: ' + review + '\nCheckout requires your separate approval.'
-        : 'Review and pay in the Swiggy app' + (url ? ': ' + url : '.') + '\nYou pay in the Swiggy app; Gogo does not place orders.'
+        ? 'Review this basket and set a spending limit: ' + review + '\nCheckout requires your separate approval.\n\n' + merchant
+        : merchant + '\nYou pay in the Swiggy app; Gogo does not place orders.'
       return result(withSwiggyAttribution(saved.summary + '\n\n' + next, 'instamart'), 'completed', saved.id, true)
     }
     return result(withSwiggyAttribution('I asked Instamart to add it but could not confirm your cart afterwards. I will not try again automatically. Check the cart here (reading only): ' + commerceTaskLink(saved.id) + '\nNo order was placed.', 'instamart'), 'outcome_unknown', saved.id, true)

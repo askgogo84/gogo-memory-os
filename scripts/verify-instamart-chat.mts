@@ -281,6 +281,7 @@ assert.equal(reply.status,'completed')
 assert.match(reply.text, /Review this basket and set a spending limit:/)
 assert.ok(reply.text.includes('/dashboard/commerce/checkout?run=' + reply.runId))
 assert.match(reply.text,/Checkout requires your separate approval/)
+assert.match(reply.text,/Review and pay in the Swiggy app: https:\/\/www\.swiggy\.com\/instamart/)
 assert.equal(writes.length,3)
 assert.equal(calls.at(-1),'get_cart')
 delete process.env.COMMERCE_PURCHASES_ENABLED
