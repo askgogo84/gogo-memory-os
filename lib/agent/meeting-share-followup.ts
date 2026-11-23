@@ -117,9 +117,9 @@ function reminderId(tg:number,m:Meeting){
 type ReminderTarget={id:string;message:string;remind_at:string;timezone:string;sent:boolean}
 const meetingMessage=(m:Meeting)=>`${m.title} — starts ${formatInTimezone(m.startAt,m.timezone)}\n${m.url}`
 
-async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarget|'ambiguous'|null>{
+async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarget|'ambiguous'|'busy'|null>{
   const {data,error}=await supabaseAdmin.from('reminders')
-    .select('id,message,remind_at,timezone,sent,is_recurring,recurring_pattern')
+    .select('id,message,remind_at,timezone,sent,is_recurring,recurring_pattern,delivery_state,claim_token,send_started_at')
     .eq('telegram_id',tg).eq('sent',false).order('remind_at',{ascending:true}).limit(101)
   if(error)throw new Error('meeting_reminder_context_read_failed')
   // A truncated inventory cannot establish a unique target.
@@ -143,7 +143,10 @@ async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarg
     // Distinct Calendar event IDs (or distinct Meet rooms) stay distinct.
     return (new URL(links[0]).hostname==='meet.google.com')!==(new URL(m.url).hostname==='meet.google.com')
   })
-  return matches.length>1?'ambiguous':matches[0]||null
+  if(matches.length>1)return 'ambiguous'
+  const match=matches[0]
+  if(match&&(match.delivery_state!=='pending'||match.claim_token||match.send_started_at))return 'busy'
+  return match||null
 }
 
 async function moveMeetingReminder(tg:number,m:Meeting,target:ReminderTarget){
@@ -153,6 +156,7 @@ async function moveMeetingReminder(tg:number,m:Meeting,target:ReminderTarget){
     // concurrent editor or delivery worker owns any changed record.
     const {data,error}=await supabaseAdmin.from('reminders').update({message,remind_at:m.remindAt,timezone:m.timezone})
       .eq('id',target.id).eq('telegram_id',tg).eq('sent',false)
+      .eq('delivery_state','pending').is('claim_token',null).is('send_started_at',null)
       .eq('message',target.message).eq('remind_at',target.remind_at).select('id').maybeSingle()
     if(error||!data)return reply('I couldn’t verify the reminder update. Please check your reminders; I haven’t retried the change.')
   }
@@ -213,6 +217,7 @@ async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
     // OCR invitations use a generic title; they cannot identify an existing event.
     const target=image?null:await matchingMeetingReminder(tg,meeting)
     if(target==='ambiguous')return reply(`I found more than one possible reminder for ${meeting.title}. Which reminder should move? I haven’t changed any of them.`)
+    if(target==='busy')return reply('That meeting reminder has a delivery in progress or awaiting reconciliation. Please check its status before changing it; I haven’t created another reminder.')
     if(target){
       const level=await capabilityPermissionLevel(tg,'reminders')
       if(!['ask','auto'].includes(level))return reply('Your reminder permission does not allow updating this reminder. The meeting details and link remain saved.')

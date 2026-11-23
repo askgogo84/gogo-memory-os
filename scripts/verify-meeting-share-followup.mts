@@ -18,7 +18,7 @@ const db={from(table:string){
   const filters:Array<(r:any)=>boolean>=[]
   let changes:any,insert:any,single=false,limit=Infinity
   const sorts:Array<{key:string;ascending:boolean}>=[]
-  const b:any={select(){return b},in(k:string,values:any[]){filters.push(r=>values.includes(r[k]));return b},eq(k:string,v:any){filters.push(r=>String(r[k])===String(v));return b},order(key:string,options:any){sorts.push({key,ascending:options.ascending});return b},limit(n:number){limit=n;return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},maybeSingle(){single=true;return b},single(){single=true;return b},then(resolve:any,reject:any){return Promise.resolve().then(()=>{
+  const b:any={select(){return b},is(k:string,v:any){filters.push(r=>r[k]===v);return b},in(k:string,values:any[]){filters.push(r=>values.includes(r[k]));return b},eq(k:string,v:any){filters.push(r=>String(r[k])===String(v));return b},order(key:string,options:any){sorts.push({key,ascending:options.ascending});return b},limit(n:number){limit=n;return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},maybeSingle(){single=true;return b},single(){single=true;return b},then(resolve:any,reject:any){return Promise.resolve().then(()=>{
     let rows=store[table].filter(r=>filters.every(f=>f(r)))
     if(sorts.length)rows=rows.slice().sort((a,b)=>{for(const {key,ascending} of sorts){const delta=a[key]<b[key]?-1:a[key]>b[key]?1:0;if(delta)return ascending?delta:-delta}return 0})
     rows=rows.slice(0,limit)
@@ -29,7 +29,7 @@ const db={from(table:string){
         if(failInsert)return {data:null,error:{message:'injected write failure'}}
         if(store[table].some(r=>r.id===insert.id))return {data:null,error:{code:'23505'}}
       }
-      const values=(Array.isArray(insert)?insert:[insert]).map(value=>({_seq:++seq,id:`fixture-${seq}`,created_at:new Date(clock).toISOString(),...structuredClone(value)}))
+      const values=(Array.isArray(insert)?insert:[insert]).map(value=>({_seq:++seq,id:`fixture-${seq}`,created_at:new Date(clock).toISOString(),...(table==='reminders'?{delivery_state:'pending',claim_token:null,send_started_at:null}:{}),...structuredClone(value)}))
       store[table].push(...values);return {data:single?values[0]:values,error:null}
     }
     if(changes){
@@ -433,12 +433,16 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
   assert.equal(store.reminders[0].remind_at,unchanged,'a shared event cannot silently change a recurring series')
   assert.equal(worker().parseSharedMeeting(share.replace('calendar.app.google/','calendar.app.google.evil.invalid/'),'Asia/Kolkata',new Date(clock)),null)
   const legacyMeet=worker().parseSharedMeeting(share.replace('4:30 – 5:45','5:00 – 6:15').replace(meeting.url,'https://meet.google.com/abc-defg-hij'),'Asia/Kolkata',new Date(clock))
-  store.reminders=[{id:'legacy-meet',telegram_id:101,message:`${legacyMeet.title} — starts ${timezone.formatInTimezone(legacyMeet.startAt,legacyMeet.timezone)}\n${legacyMeet.url}`,remind_at:legacyMeet.remindAt,timezone:legacyMeet.timezone,sent:false}]
+  store.reminders=[{id:'legacy-meet',telegram_id:101,message:`${legacyMeet.title} — starts ${timezone.formatInTimezone(legacyMeet.startAt,legacyMeet.timezone)}\n${legacyMeet.url}`,remind_at:legacyMeet.remindAt,timezone:legacyMeet.timezone,sent:false,delivery_state:'pending',claim_token:null,send_started_at:null}]
   const crossFormat=await worker().tryMeetingShareFollowup({actor,text:share,surface:'whatsapp'})
   assert.match(crossFormat.text,/4:20/,'Calendar card uses the prior exact-title Meet context')
   assert.equal(store.reminders.length,1)
   assert.equal(store.reminders[0].id,'legacy-meet')
   assert.equal(store.reminders[0].remind_at,meeting.remindAt)
+  store.reminders[0].delivery_state='outcome_unknown'
+  const blocked=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'whatsapp'})
+  assert.match(blocked.text,/reconciliation/)
+  assert.equal(store.reminders.length,1,'uncertain delivery cannot become another reminder')
   assert.equal(worker().parseSharedMeeting(share+'\nJoin https://meet.google.com/abc-defg-hij','Asia/Kolkata',new Date(clock)).url,meeting.url)
 }
 console.log('PASS: Calendar event share reconciles its existing reminder with owner, permission, ambiguity, duplicate and failed-update protections')
