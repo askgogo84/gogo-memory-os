@@ -35,4 +35,16 @@ for (const ask of ['Create a budget sheet.', 'Create a sheet, not exactly two ro
   assert.equal(out?.doc.format, 'sheet', 'unspecified/negated count retains existing generation')
 }
 assert.match(sheetPrompt('Create a budget sheet.', ''), /For cost\/budget sheets only/)
+for (const ask of [
+  'Create a sheet for teams Alpha, Beta and Gamma with exactly two rows per team.',
+  'Create a sheet for teams Alpha, Beta and Gamma with exactly two rows, for each team.',
+  'Create a sheet for each team, exactly two rows.',
+  'Create a sheet per team with exactly two rows.',
+]) {
+  let calls = 0
+  const rows = ['Alpha', 'Beta', 'Gamma'].flatMap(team => [[team, 'One'], [team, 'Two']])
+  const out = await generateDoc('sheet', ask, {search: async () => [], model: async () => {calls++; return JSON.stringify({...correct, rows})}})
+  assert.equal(out?.doc.format === 'sheet' && out.doc.rows.length, 6, ask)
+  assert.equal(calls, 1, 'group count is not a whole-sheet count')
+}
 console.log('verify-make-explicit-sheet-nov23: real generator rejects wrong count, retries primary and respects explicit shape prompt PASS (offline)')

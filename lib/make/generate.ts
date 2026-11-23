@@ -53,6 +53,8 @@ function explicitSheetRowCount(request: string): number | null {
   const words = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
   const counts = [...request.matchAll(/\bexactly\s+(\d{1,6}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+(?:data\s+)?rows?\b/gi)]
     .filter(m => !/\b(?:not|never)\s+$/i.test(request.slice(0, m.index)))
+    .filter(m => !/^\s*,?\s*(?:per|each|(?:for|in)\s+(?:each|every)|an?)\b/i.test(request.slice(m.index! + m[0].length)))
+    .filter(m => !/\b(?:per|(?:for|in)\s+(?:each|every))\s+\w+\s*,?\s*(?:with\s+)?$/i.test(request.slice(0, m.index)))
     .map(m => /^\d+$/.test(m[1]) ? Number(m[1]) : words.indexOf(m[1].toLowerCase()) + 1)
   // Conflicting explicit counts cannot establish a successful result.
   return counts.length ? new Set(counts).size === 1 ? counts[0] : -1 : null
