@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import type { MyInvite, MyWorkspace, WorkspaceDetail, WorkspaceMember } from '@/lib/workspaces/access'
+import type { WorkspaceAnswer } from '@/lib/workspaces/ask'
 import { canRole, INVITABLE_ROLES, ROLE_LABEL, WORKSPACE_ROLES, type WorkspaceRole } from '@/lib/workspaces/rules'
 
 const ERRORS: Record<string, string> = {
@@ -131,13 +132,42 @@ export function BusinessWorkspace({ workspaces, detail }: { workspaces: MyWorksp
       {tab === 'people' && <People detail={detail} />}
     </section>
 
-    <form className="mt-6 flex gap-2" onSubmit={e => e.preventDefault()}>
-      <label className="sr-only" htmlFor="ws-ask">Ask about {detail.name}</label>
-      <input id="ws-ask" disabled className={`${field} disabled:opacity-70`} placeholder={`Ask about ${detail.name}…`} />
-      <button type="submit" disabled className={`${btn} shrink-0 bg-[#2fb8a6] text-[#04201c] disabled:opacity-50`}>Ask</button>
-    </form>
-    <p className="mt-2 text-[13px] text-[#8a8a86]">Asking about the workspace arrives when workspace sources are connected.</p>
+    <WorkspaceAsk key={detail.id} workspaceId={detail.id} detail={detail} />
   </>
+}
+
+function WorkspaceAsk({ workspaceId, detail }: { workspaceId: string; detail: Pick<WorkspaceDetail, 'name'> }) {
+  const [question, setQuestion] = useState('')
+  const [answer, setAnswer] = useState<WorkspaceAnswer | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  return <section className="mt-6">
+    <p className="mb-2 text-[13px] text-[#9a9a96]">Read-only hospitality pilot. Answers use recorded workspace data, not a verified live POS or banking connection.</p>
+    <div className="mb-3 flex flex-wrap gap-2">
+      {['Summarise recorded orders', 'Count recorded cancellations', 'Show recorded stock availability'].map(q => <button key={q} type="button" disabled={busy} onClick={() => setQuestion(q)} className="min-h-11 rounded-full border border-[#262626] px-3 text-[13px] text-[#a8a8a4] disabled:opacity-50">{q}</button>)}
+    </div>
+    <form className="flex flex-col gap-2 sm:flex-row" onSubmit={async e => {
+      e.preventDefault(); if (busy || !question.trim()) return
+      setBusy(true); setError(null); setAnswer(null)
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/ask`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) })
+        const data = await res.json().catch(() => null)
+        if (!res.ok) { setError(ERRORS[data?.error] || 'Couldn’t verify the workspace data. Try again shortly.'); return }
+        if (typeof data?.answer !== 'string' || typeof data?.source?.label !== 'string') { setError('Couldn’t verify the workspace answer.'); return }
+        setAnswer(data)
+      } catch { setError('Couldn’t reach AskGogo. Check your connection.') } finally { setBusy(false) }
+    }}>
+      <label className="sr-only" htmlFor="ws-ask">Ask about {detail.name}</label>
+      <input id="ws-ask" className={field} maxLength={300} required disabled={busy} value={question} onChange={e => setQuestion(e.target.value)} placeholder={`Ask about ${detail.name}…`} />
+      <button type="submit" disabled={busy || !question.trim()} className={`${btn} shrink-0 bg-[#2fb8a6] text-[#04201c] disabled:opacity-50`}>{busy ? 'Checking…' : 'Ask'}</button>
+    </form>
+    {error && <p role="alert" className="mt-3 text-[14px] text-[#d9a441]">{error}</p>}
+    {answer && <div role="status" className="mt-4 rounded-[16px] border border-[#262626] bg-[#121212] p-5">
+      <p className="whitespace-pre-line text-[15px] leading-relaxed text-[#f2efea]">{answer.answer}</p>
+      <p className="mt-3 text-[12px] text-[#9a9a96]">{answer.source.label}</p>
+      <p className="mt-1 text-[12px] text-[#9a9a96]">Checked {new Date(answer.source.checkedAt).toLocaleString('en-IN')}{answer.source.firstRecordAt && answer.source.lastRecordAt ? ` · Recorded history: ${new Date(answer.source.firstRecordAt).toLocaleDateString('en-IN')} – ${new Date(answer.source.lastRecordAt).toLocaleDateString('en-IN')}` : ''}</p>
+    </div>}
+  </section>
 }
 
 function Placeholder({ text, note }: { text: string; note?: string }) {
