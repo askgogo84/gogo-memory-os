@@ -8,6 +8,16 @@ function safe(value: unknown, max = 500) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
+type ScheduleReply = {
+  text: string
+  calendarEvents: Array<{id?: string; title: string; start: string; end?: string; label?: string}>
+  reminders: Array<{id: string | number; message: string; remind_at: string; sent: boolean}>
+  timeZone: string
+  tomorrowKey: string
+  window?: ReturnType<typeof calendarReadWindow>
+  calendarReadVerified: boolean
+}
+
 function localDateKey(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -42,6 +52,9 @@ function localClock(value: string, timeZone: string) {
 export function detectReadOnlyScheduleRequest(raw: string) {
   const text = safe(raw, 2000).toLowerCase().replace(/[’]/g, "'")
   if (!text) return null
+  if (/^(?:please )?(?:(?:show(?: me)?|give me|prepare|run) )?(?:my |a )?weekly life[- ]admin review(?: for the next (?:14 days|two weeks))?[.!?]*$/.test(text)) {
+    return {horizon:'weekly' as const,scope:'weekly' as const}
+  }
   const held=calendarReadHoldReply(text)
   if(held){
     if(/^(?:please\s+)?(?:do not|don't|dont|never)\b/.test(text))return null
@@ -73,7 +86,59 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   return null
 }
 
-export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 'calendar' | 'agenda'; text?: string }) {
+async function readWeeklyLifeAdmin(actor: AgentActor, now: Date, timeZone: string) {
+  const today = localDateKey(now, timeZone)
+  const last = new Date(`${today}T00:00:00Z`)
+  last.setUTCDate(last.getUTCDate() + 13)
+  const lastDay = last.toISOString().slice(0, 10)
+  last.setUTCDate(last.getUTCDate() + 1)
+  const horizonEnd = parseLocalDateTime({date:last.toISOString().slice(0,10),time:'00:00',timezone:timeZone}).dueAtUtc
+  const owner = actor.legacyTelegramId
+  const {capabilityIsOff} = await import('./adaptive-autonomy')
+  const instruction = `Show my calendar from ${today} to ${lastDay} in ${timeZone}.`
+  const [calendar, remindersResult, followUpsResult] = await Promise.allSettled([
+    (async () => await capabilityIsOff(owner,'calendar') ? null : await executeReadOnlyCalendarStep({actor,instruction,missionText:instruction}))(),
+    (async () => {
+      if (await capabilityIsOff(owner,'reminders')) return null
+      const {data,error} = await supabaseAdmin.from('reminders').select('id,message,remind_at,sent')
+        .eq('telegram_id',owner).eq('sent',false).gte('remind_at',now.toISOString()).lt('remind_at',horizonEnd.toISOString())
+        .order('remind_at',{ascending:true}).limit(7)
+      if (error || !Array.isArray(data)) throw new Error('weekly_reminders_unavailable')
+      return data
+    })(),
+    (async () => {
+      const {data,error} = await supabaseAdmin.from('agent_open_loops').select('title')
+        .eq('telegram_id',String(owner)).eq('status','active').order('priority',{ascending:false}).limit(7)
+      if (error || !Array.isArray(data)) throw new Error('weekly_follow_ups_unavailable')
+      return data
+    })(),
+  ])
+  const output = calendar.status === 'fulfilled' ? calendar.value?.output : undefined
+  const matchingWindow = output && 'window' in output && output.window?.startDate === today && output.window?.endDate === lastDay
+  const calendarComplete = Boolean(matchingWindow && output.complete === true)
+  const calendarLines = matchingWindow && 'itemLines' in output && Array.isArray(output.itemLines) ? output.itemLines : []
+  const calendarOff = calendar.status === 'fulfilled' && calendar.value === null
+  const reminders = remindersResult.status === 'fulfilled' ? remindersResult.value || [] : []
+  const followUps = followUpsResult.status === 'fulfilled' ? followUpsResult.value : []
+  const lines = [`Weekly life-admin review · ${today} to ${lastDay} (${timeZone})`]
+  const append = (heading: string, items: string[], empty: string, more: boolean) => {
+    lines.push('', `*${heading}*`, ...items.slice(0,6).map(item => `• ${item}`))
+    if (!items.length) lines.push(empty)
+    if (more) lines.push('More items may be available.')
+  }
+  const calendarEmpty = calendarOff ? 'Calendar is off in autonomy settings.'
+    : calendarComplete ? 'No events returned for this window.' : 'Full calendar unavailable.'
+  append('Calendar', calendarLines.map((line:unknown) => safe(line,125).replace(/^\d+\.\s*/,'')),
+    calendarEmpty, (!calendarComplete && calendarLines.length > 0) || calendarLines.length > 6)
+  append('Upcoming reminders', reminders.map(row => `${localDateKey(new Date(row.remind_at),timeZone)} ${localClock(row.remind_at,timeZone)} — ${safe(row.message,105)}`),
+    remindersResult.status === 'rejected' ? 'Reminders unavailable.' : remindersResult.value === null ? 'Reminders are off in autonomy settings.' : 'None pending in this window.', reminders.length > 6)
+  append('Open follow-ups', followUps.map(row => safe(row.title,110)),
+    followUpsResult.status === 'rejected' ? 'Follow-ups unavailable.' : 'None recorded.', followUps.length > 6)
+  const window = {startDate:today,endDate:lastDay,label:'next 14 days'}
+  return {text:lines.join('\n'),calendarEvents:[],reminders,timeZone,tomorrowKey:nextLocalDateKey(now,timeZone),window,calendarReadVerified:calendarComplete}
+}
+
+export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 'calendar' | 'agenda' | 'weekly'; text?: string }): Promise<ScheduleReply> {
   const held=calendarReadHoldReply(params.text||'')
   if(held)return {text:held,calendarEvents:[],reminders:[],timeZone:'',tomorrowKey:'',calendarReadVerified:false}
   const clarification=calendarReadClarificationReply(params.text||'')
@@ -88,9 +153,11 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
     .eq('telegram_id', telegramId)
     .maybeSingle()
   if (userError) throw new Error(`read_only_schedule_user_failed:${userError.message}`)
+  if (params.scope === 'weekly' && !user) throw new Error('weekly_review_owner_unavailable')
 
   const requestedTimeZone = normalizeTimezone(user?.timezone)
   const now = new Date()
+  if (params.scope === 'weekly') return readWeeklyLifeAdmin(params.actor,now,requestedTimeZone)
   const tomorrowKey = nextLocalDateKey(now, requestedTimeZone)
   const originalRequest=params.text||'Show my calendar tomorrow'
   let window:ReturnType<typeof calendarReadWindow>
