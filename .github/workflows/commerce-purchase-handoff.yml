@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'lib/commerce/purchase-*.ts'
+      - 'lib/commerce/instamart-chat.ts'
+      - 'scripts/verify-instamart-chat.mts'
       - 'lib/commerce/creditiq-rewards.ts'
       - 'lib/commerce/creditiq-commerce-adapter.ts'
       - 'lib/commerce/enterprise-spending-policy.ts'
@@ -35,6 +37,7 @@ on:
       - 'supabase/migrations/20261115180000_commerce_native_checkout_one_attempt.sql'
       - 'supabase/migrations/20261115120000_commerce_outcome_readbacks.sql'
       - 'supabase/migrations/20261115090000_commerce_purchase_intents.sql'
+      - 'supabase/migrations/*_commerce_purchase_budget.sql'
       - '.github/workflows/commerce-purchase-handoff.yml'
   workflow_dispatch:
 
@@ -67,6 +70,8 @@ jobs:
       - run: npm ci
       - name: Purchase boundary regression
         run: npx --no-install tsx scripts/verify-commerce-purchase-handoff.mts
+      - name: Instamart cart to checkout review
+        run: npx --no-install tsx scripts/verify-instamart-chat.mts
       - name: Purchase ledger and approval regression
         run: node scripts/verify-commerce-purchase-store.cjs
       - name: Merchant order/payment outcome verification regressions

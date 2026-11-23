@@ -9,6 +9,7 @@ import {commerceHandoffUrl} from './evidence'
 import {readCommerceTask, selectCommerceTaskAddress, saveCommerceCatalogue, saveCommerceReadBlocker, commerceTaskLink, type CommerceTask} from './task'
 import {prepareInstamartCart} from './instamart-cart'
 import {withSwiggyAttribution} from './swiggy-attribution'
+import {PURCHASES_ENABLED, snapshotFromVerifiedCart} from './purchase-contract'
 
 // Chat entry point for Swiggy Instamart through the user's own official Swiggy MCP connection.
 // "order milk on Instamart" -> read-only search -> three options. Only a 1/2/3 reply that answers
@@ -55,6 +56,16 @@ const result = (text: string, status: InstamartChatResult['status'], runId: stri
   ({text, handledBy: 'instamart-chat', status, runId, capability: 'commerce', risk: 'low', mutated})
 const connectLink = () => commerceOrigin() + '/dashboard/commerce'
 const rupees = (paise: number | null) => paise === null ? 'price shown in the Swiggy app' : '₹' + (paise % 100 ? (paise / 100).toFixed(2) : String(paise / 100))
+
+function verifiedCheckoutReviewLink(owner: string, task: CommerceTask): string | null {
+  if (!PURCHASES_ENABLED()) return null
+  try {
+    const snapshot = snapshotFromVerifiedCart(owner, task)
+    return commerceOrigin() + '/dashboard/commerce/checkout?run=' + encodeURIComponent(snapshot.runId)
+  } catch {
+    return null
+  }
+}
 
 export async function tryInstamartChat(params: {telegramId: number | string; text: string; surface?: string}): Promise<InstamartChatResult | null> {
   const subject = parseInstamartOrderRequest(params.text)
@@ -172,7 +183,11 @@ async function bindInstamartPick(owner: string, pick: 1 | 2 | 3): Promise<Instam
     }
     if (saved.metadata_json.state === 'cart_contents_verified') {
       const url = commerceHandoffUrl('swiggy', CHECKOUT_URL)
-      return result(withSwiggyAttribution(saved.summary + '\n\nReview and pay in the Swiggy app' + (url ? ': ' + url : '.') + '\nYou pay in the Swiggy app; Gogo does not place orders.', 'instamart'), 'completed', saved.id, true)
+      const review = verifiedCheckoutReviewLink(owner, saved)
+      const next = review
+        ? 'Review this basket and set a spending limit: ' + review + '\nCheckout requires your separate approval.'
+        : 'Review and pay in the Swiggy app' + (url ? ': ' + url : '.') + '\nYou pay in the Swiggy app; Gogo does not place orders.'
+      return result(withSwiggyAttribution(saved.summary + '\n\n' + next, 'instamart'), 'completed', saved.id, true)
     }
     return result(withSwiggyAttribution('I asked Instamart to add it but could not confirm your cart afterwards. I will not try again automatically. Check the cart here (reading only): ' + commerceTaskLink(saved.id) + '\nNo order was placed.', 'instamart'), 'outcome_unknown', saved.id, true)
   } finally {
