@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto'
+import {isMetaMessageId} from '@/lib/channels/whatsapp-provider/provider'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {formatInTimezone, getLocalParts, isValidTimezone, zonedLocalTimeToUtc} from '@/lib/timezone'
 import {getCalendarAccountAccess, fetchMergedCalendarEventsPage} from '@/lib/services/google-calendar-accounts'
@@ -52,7 +53,8 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
   if (!clock) return null
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId === 0) return 'I couldn’t verify the reminder owner. Nothing was changed.'
   if (!clock.valid) return 'Please give one valid meeting time. Nothing was changed.'
-  if (p.replyToSid && (p.surface !== 'whatsapp' || !/^(?:SM|MM)[a-f0-9]{32}$/i.test(p.replyToSid))) return null
+  if (p.replyToSid && (p.surface !== 'whatsapp' || p.replyToSid.length > 256 ||
+    !(/^(?:SM|MM)[a-f0-9]{32}$/i.test(p.replyToSid) || isMetaMessageId(p.replyToSid)))) return null
   const maxAgeMs = (p.replyToSid ? 24 : 1) * 60 * 60_000
   const owner = p.telegramId
   try {

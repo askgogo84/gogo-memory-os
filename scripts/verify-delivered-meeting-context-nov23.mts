@@ -4,6 +4,7 @@ import {runInNewContext} from 'node:vm'
 import {createHash} from 'node:crypto'
 import ts from 'typescript'
 import * as timezone from '../lib/timezone'
+import {isMetaMessageId} from '../lib/channels/whatsapp-provider/provider'
 
 const command = 'Move this tmrw 4.30pm'
 const phone = '+918884501501'
@@ -50,6 +51,7 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/contextual-meeting-re
   require(name:string){
     if(name==='node:crypto')return {createHash}
     if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
+    if(name==='@/lib/channels/whatsapp-provider/provider')return {isMetaMessageId}
     if(name==='@/lib/timezone')return timezone
     if(name==='./adaptive-autonomy')return {capabilityPermissionLevel:async(owner:number,cap:string)=>{assert.equal(owner,-42);if(failure==='policy')throw Error('policy');if(failure==='permission-change'&&calendars&&cap==='reminders')return 'off';return levels[cap]}}
     if(name==='@/lib/services/google-calendar-accounts')return {
@@ -75,6 +77,10 @@ assert.match(await quoted(),/24 Nov 2026, 4:20 pm/,'an exact quoted delivery win
 assert.equal(rows.filter(r=>!r.sent).length,1)
 assert.equal(rows[1].message,'Call Divya')
 assert.equal(await invoke(),null,'unquoted stale context cannot authorize a change')
+laterDelivery()
+const metaReplyId = 'wamid.fixture_b7bn-eg='
+rows[0].twilio_sid = receipt.provider_sid = metaReplyId
+assert.match(await quoted(metaReplyId),/24 Nov 2026, 4:20 pm/,'a signed Meta quote uses the same exact delivered reminder')
 for (const invalidate of [
   ()=>{rows[0].telegram_id=-43},
   ()=>{rows[0].whatsapp_to='+919999999999'},
