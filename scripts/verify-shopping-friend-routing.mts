@@ -434,7 +434,7 @@ const web=executeModule('app/api/dashboard/chat/route.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
     if(table==='conversations')return {insert:async(rows:any[])=>{webHistory.push(...rows);return {error:null}}}
     assert.equal(table,'users')
-    const query:any={select:()=>query,eq:(key:string,value:any)=>{assert.equal(key,'telegram_id');assert.equal(value,42);return query},
+    const query:any={select:()=>query,eq:(key:string,value:any)=>{assert.equal(key,'telegram_id');assert.equal(value,'42','dashboard uses the exact signed owner text');return query},
       maybeSingle:async()=>({data:{telegram_id:42,whatsapp_id:fixtureUser.whatsappId,name:'Gogo'}})}
     return query
   }}},

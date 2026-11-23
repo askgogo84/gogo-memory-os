@@ -103,14 +103,25 @@ function cleanHistory(role: string, raw: string): string | null {
 }
 
 async function resolveDashboardUser(telegramId: string) {
-  const tg = parseInt(telegramId, 10)
-  if (!Number.isFinite(tg)) return null
-  const { data } = await supabaseAdmin
+  // A session owner is a signed Postgres BIGINT, not a JS number or a parseable prefix.
+  // Keeping the exact decimal text avoids aliasing adjacent 64-bit owners before this
+  // service-role users lookup. Fail closed on malformed/out-of-range session values.
+  if (typeof telegramId !== 'string' || telegramId.length > 20 || !/^-?[1-9]\d*$/.test(telegramId)) return null
+  const owner = BigInt(telegramId)
+  if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) return null
+  const { data, error } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id, name')
-    .eq('telegram_id', tg)
+    .eq('telegram_id', telegramId)
     .maybeSingle()
-  return data || null
+  if (error || !data) return null
+  // Supabase may return BIGINT columns as strings, or safe numbers on older
+  // drivers. Never trust an already-rounded unsafe number or a mismatched row.
+  const storedOwner = data.telegram_id
+  if ((typeof storedOwner !== 'string' &&
+      (typeof storedOwner !== 'number' || !Number.isSafeInteger(storedOwner))) ||
+      String(storedOwner) !== telegramId) return null
+  return data
 }
 
 async function saveConversation(telegramId: number | string, userText: string, assistantText: string) {
