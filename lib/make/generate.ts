@@ -5,6 +5,9 @@ import { deckPrompt, editPrompt, firstJson, scrubInventedNumbers, sheetPrompt, v
 
 // The person's own data never leaves the primary model.
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|salary|income|bank|account|expenses?|bills?|card)\b/i
+// Explicit user source restrictions must stop web search before any import/call.
+// Clause boundaries avoid treating "do not use only this text" as an opt-out.
+const SOURCE_ONLY = /(?:^|[.!?;,\r\n]\s*)(?:please\s+)?(?:use\s+only\s+(?:this\s+text|(?:the\s+)?(?:provided|supplied)\s+(?:text|data|content))|(?:do not|don't|never)\s+(?:use|search|consult|browse|read)\s+(?:(?:the\s+)?(?:web|internet)|(?:any\s+)?(?:external|outside)\s+(?:sources|information|data)))\b/i
 
 type Model = (prompt: string, scanText: string, opts?: { strong?: boolean }) => Promise<string>
 export type { Model }
@@ -31,7 +34,7 @@ function unwrap(raw: any): any {
 }
 
 async function publicFacts(request: string, search?: (q: string) => Promise<any[]>) {
-  if (PERSONAL.test(request)) return { facts: '', sources: [] as string[] }
+  if (PERSONAL.test(request) || SOURCE_ONLY.test(request)) return { facts: '', sources: [] as string[] }
   try {
     const run = search || (async (q: string) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: 6000 }))
     // Search the subject, not "pitch deck": "Make a 6 slide pitch deck for AskGogo, a …" → "AskGogo, a …".
