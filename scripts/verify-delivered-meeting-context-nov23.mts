@@ -103,4 +103,31 @@ runInNewContext(ts.transpileModule(readFileSync('lib/feature-intents.ts','utf8')
 })
 for(const surface of ['web','whatsapp']){reset();assert.match(await routed.routeFeatureIntent(phone,command,{telegramId:-42,surface}),/reminder is set/);assert.equal(legacy,0);assert.equal(rows.length,2)}
 reset();failure='readback';assert.match(await routed.routeFeatureIntent(phone,command,{telegramId:-42,surface:'web'}),/couldn’t verify/);assert.equal(legacy,0)
+// Execute the literal authenticated entry-point blocks before their model/goal
+// paths, using the actual handler. The existing full route auth suites remain.
+for (const surface of ['web','whatsapp']) {
+  const path = surface === 'web' ? 'app/api/dashboard/chat/route.ts' : 'app/api/webhooks/whatsapp/route.ts'
+  const source = readFileSync(path,'utf8'), marker = '// Delivered meeting context precedes model/goal clarification on this surface.'
+  const start = source.indexOf(marker)
+  const end = source.indexOf(surface === 'web' ? '// Round 6 (#34' : '// 11 Nov: "forget my travel details"', start)
+  assert.ok(start > source.indexOf(surface === 'web' ? 'if (!session)' : 'if (signatureAudit.reject)'))
+  assert.ok(start < source.indexOf(surface === 'web' ? 'const understoodReply' : 'const understoodReply'))
+  assert.ok(end > start)
+  const block = source.slice(start,end)
+  let saved:any[]=[],sent:any[]=[],preserve=false,importFailure=false
+  const api:any={}
+  class ResponseFixture {constructor(public body:any,public options:any){}static json(data:any){return data}}
+  runInNewContext(ts.transpileModule(`export async function run(text:string){${block};return 'fallback'}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+    exports:api,NextResponse:ResponseFixture,user:{telegram_id:-42,whatsapp_id:phone},actor:{legacyTelegramId:-42},resolvedUser:{telegramId:-42},from:phone,
+    get preserveFriendFlow(){return preserve},detectFriendReminder:()=>false,isFriendReminderFollowupCandidate:()=>preserve,getPendingFriend:async()=>preserve,
+    saveConversation:async(...args:any[])=>saved.push(args),sendWhatsAppMessage:async(...args:any[])=>sent.push(args),emptyTwiml:()=>'<Response/>',
+    require(name:string){assert.equal(name,'@/lib/agent/contextual-meeting-reschedule');if(importFailure)throw Error('import failed');return actual},
+  })
+  reset();const result=await api.run(command);assert.notEqual(result,'fallback');assert.equal(rows.filter(r=>!r.sent).length,1)
+  assert.equal(saved.length,surface==='web'?1:2);assert.equal(sent.length,surface==='web'?0:1)
+  if(surface==='web')assert.match(result.text,/reminder is set/);else assert.match(sent[0][1],/reminder is set/)
+  reset();saved=[];sent=[];failure='readback';assert.notEqual(await api.run(command),'fallback');assert.equal(writes.length,1)
+  reset();saved=[];sent=[];preserve=true;assert.equal(await api.run(command),'fallback');assert.equal(reads.length,0)
+  reset();preserve=false;importFailure=true;const failed=await api.run(command);assert.notEqual(failed,'fallback');assert.equal(writes.length,0)
+}
 console.log('verify-delivered-meeting-context-nov23: actual handler/router context, Calendar truth, stable successor, CAS and fail-closed controls PASS (offline)')

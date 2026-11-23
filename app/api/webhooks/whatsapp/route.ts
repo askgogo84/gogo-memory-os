@@ -1006,6 +1006,20 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // Delivered meeting context precedes model/goal clarification on this surface.
+    if (!preserveFriendFlow && /^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)\b/i.test(text)) {
+      let reply: string | null = null
+      try {
+        const contextual = await import('@/lib/agent/contextual-meeting-reschedule')
+        if (contextual.isContextualMeetingMove(text)) reply = await contextual.tryContextualMeetingReschedule({telegramId:resolvedUser.telegramId,phone:from,text,surface:'whatsapp'})
+      } catch {reply = 'I couldn’t verify that meeting reminder change. Please check your reminders; I haven’t retried the write.'}
+      if (reply) {
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',reply)
+        await sendWhatsAppMessage(from,reply)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
     // 11 Nov: "forget my travel details" deletes the saved booking details (lib/agent/traveller-profile.ts). Checked
     // before memory and taste so no other handler claims it. The raw id is passed; exactOwner rejects unsafe ids.
     if (/^\s*(?:please\s+)?(?:forget|delete|remove|clear)\s+my\b/i.test(text)) {
