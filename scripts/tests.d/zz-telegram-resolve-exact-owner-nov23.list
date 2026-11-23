@@ -1,0 +1,2 @@
+# 23 Nov: actual Telegram user resolver, malformed/prefix/signed64 owners, offline VM
+node scripts/verify-telegram-resolve-exact-owner-nov23.mjs
