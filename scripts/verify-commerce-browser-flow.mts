@@ -1,3 +1,4 @@
+import * as makeRequest from '../lib/agent/make-request'
 // Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
 process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
 import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
@@ -30,6 +31,7 @@ let browserResult:any={status:'blocked',url:'https://blinkit.com/',title:'Sign i
 let permissionAllowed=true
 const browserParams:any[]=[]
 const command=load('lib/agent/browser-command.ts',{
+  './make-request':makeRequest,
   // 26 Oct: store reads add the delivery pincode instruction (no saved pincode in this harness, so a no-op).
   './delivery-pincode':await import('../lib/agent/delivery-pincode'),
   './browser-failure-notice':{browserFailureSummary},
