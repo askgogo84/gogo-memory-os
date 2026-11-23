@@ -72,6 +72,8 @@ async function exercise(s: Scenario) {
     exports: exported, module: { exports: exported },
     supabaseAdmin: db, BigInt, Number, String, Promise,
     decryptGoogleToken(input: unknown) {
+      // The real implementation checks the optional refresh token first.
+      if(input == null) return ''
       decrypts++
       assert.equal(input, 'synthetic-local-access')
       return String(input)
