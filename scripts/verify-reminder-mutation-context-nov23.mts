@@ -71,6 +71,10 @@ assert.equal(rows.length,4,'updates never insert a replacement')
 for(const text of ['Move my existing Askgogo<>Fund Raise reminder today to 4:20 pm', 'Move the “Askgogo<>Fund Raise” reminder to 4:20 pm today', 'Please reschedule Askgogo<>Fund Raise reminder to 4:20 pm']){
   reset();assert.equal((await run(text)).status,'completed',text);assert.equal(applied,1)
 }
+reset();assert.equal((await run('Move Askgogo<>Fund Raise reminder to 4:20 pm IST tomorrow')).status,'completed');assert.equal(rows[0].remind_at,'2026-11-24T10:50:00.000Z')
+for(const text of ['Move Askgogo<>Fund Raise reminder today to 4:20 pm IST tomorrow','Move reminder today to 4:20 pm IST for Fund Raise','Move Askgogo<>Fund Raise reminder to 4:20 pm IST on Tuesday','Move Askgogo<>Fund Raise reminder to 4:20 pm IST or 5 pm']){
+  reset();assert.equal((await run(text)).status,'failed',text);assert.equal(writes.length,0)
+}
 reset();history=[{telegram_id:-42,role:'assistant',content:'✅ Reminder set\n\nDrink water\ntoday at 4:50 pm.'}]
 assert.equal((await run('Move that reminder today to 4:20 pm')).status,'completed');assert.equal(rows[1].remind_at,'2026-11-23T10:50:00.000Z');assert.equal(rows[0].remind_at,fund.remind_at)
 reset();rows.push({...fund,id:'duplicate'});assert.match((await run()).text,/which time/);assert.equal(applied,0)

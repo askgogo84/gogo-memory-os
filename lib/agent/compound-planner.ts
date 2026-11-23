@@ -206,12 +206,18 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
   if (target) target = cleanListItem(target).replace(/^(?:(?:my|the|existing)\s+)+/i, '').replace(/^["“]|["”]$/g, '').trim()
   const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i.exec(raw)
   if (generic) target = null
-  const beforeDay = named?.[2] || generic?.[1]
-  const day = beforeDay || time[2]
   const afterTime=raw.slice((time.index || 0)+time[0].length)
-  const unresolved = (!target && !generic) || (!!beforeDay && !!time[2] && beforeDay.toLowerCase() !== time[2].toLowerCase()) || (!!generic && /^\s+(?:for|about|called|named)\b/i.test(afterTime))
+  const zoneMatch=afterTime.match(/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/)
+  const zone=zoneMatch?.[1]
+  const afterZone=zoneMatch?afterTime.slice(zoneMatch[0].length):afterTime
+  const tailDay=afterZone.match(/^\s+(today|tomorrow)\b/i)?.[1]
+  const days=[named?.[2],generic?.[1],time[2],tailDay].filter(Boolean).map(s=>s!.toLowerCase())
+  const day=days[0]
   const meetingStart = raw.match(/\b(?:the\s+)?meeting\s+starts?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)?.[1]
-  const zone = raw.slice((time.index || 0) + time[0].length).match(/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/)?.[1]
+  const remaining=afterZone.replace(/^\s+(?:today|tomorrow)\b/i,'')
+  const unresolved = (!target && !generic) || new Set(days).size>1 || (!!generic && /\b(?:for|about|called|named)\b/i.test(afterTime))
+    || /^\s+(?:on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|or)\b/i.test(remaining)
+    || (/\bmeeting\s+starts?\b/i.test(raw) && !meetingStart)
   return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone }
 }
 
