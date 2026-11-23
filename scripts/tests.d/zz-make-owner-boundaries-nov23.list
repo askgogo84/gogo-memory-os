@@ -1,0 +1,2 @@
+# 23 Nov: production-source VM, zero providers or database, Make owner BIGINT extrema/canonicality
+node scripts/verify-make-negative-owner-testonly.mjs
