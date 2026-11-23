@@ -340,8 +340,7 @@ async function model(page){
           const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
           return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
             const field=inputs(input);
-            return !input.form&&visible(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' '));
-          });
+            return !input.form&&visible(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' ')); });
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>visible(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
@@ -912,8 +911,7 @@ async function model(page){
           const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
           return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
             const field=inputs(input);
-            return !input.form&&actionable(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' '));
-          });
+            return !input.form&&actionable(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' ')); });
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>actionable(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
