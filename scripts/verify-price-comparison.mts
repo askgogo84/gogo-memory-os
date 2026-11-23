@@ -153,7 +153,16 @@ const db = {from(table: string) {
     then(resolve: any, reject: any) {return Promise.resolve(execute()).then(resolve, reject)}}
   return q
 }}
-const lease = {acquireBrainUserLease: async () => locked ? null : {ownerToken: 'fixture'}, releaseBrainUserLease: async () => true}
+const busyBrowserLanes = new Set<string>()
+const heldBrowserLanes = new Set<string>()
+const lease = {
+  acquireBrainUserLease: async (key: string) => {
+    if (locked || busyBrowserLanes.has(key) || heldBrowserLanes.has(key)) return null
+    if (key.startsWith('commerce-browser:')) heldBrowserLanes.add(key)
+    return {ownerToken: 'fixture'}
+  },
+  releaseBrainUserLease: async (key: string) => { heldBrowserLanes.delete(key); return true },
+}
 const actor = {userId: 'fixture-owner', legacyTelegramId: 42, whatsappId: 'fixture', name: 'Fixture'}
 let liveHandoff = false
 const browser = {
@@ -214,7 +223,16 @@ tables.agent_runs.push({id: id(), telegram_id: '42', type: 'secure_browser', sta
 locked = true
 await service.advancePriceComparison(actor, start.runId)
 assert.equal(calls, 0); locked = false
+busyBrowserLanes.add('commerce-browser:42:amazon')
+busyBrowserLanes.add('commerce-browser:42:flipkart')
+const beforeContention = tables.agent_runs.length
+const waiting = await service.advancePriceComparison(actor, start.runId)
+assert.equal(calls, 0)
+assert.equal(tables.agent_runs.length, beforeContention, 'a busy lane must not leave an unstarted child')
+assert.ok(waiting.metadata_json.providers.every((row: any) => row.status === 'pending'))
+busyBrowserLanes.clear()
 let partial = await service.advancePriceComparison(actor, start.runId)
+assert.equal(heldBrowserLanes.size, 0)
 assert.equal(partial.metadata_json.providers[0].status, 'blocked')
 assert.equal(partial.metadata_json.providers[0].evidence, undefined)
 assert.equal(calls, 1)
@@ -253,6 +271,7 @@ assert.equal((await service.readPriceComparison('42', interrupted.runId)).metada
 failStart = true
 await service.advancePriceComparison(actor, interrupted.runId)
 assert.equal(tables.agent_runs.find(r => r.id === interrupted.runId).status, 'paused', 'start failure is bounded, not endlessly requeued')
+assert.equal(heldBrowserLanes.size, 0, 'failed child preparation releases the browser lane')
 
 for (const path of ['app/api/dashboard/chat/route.ts', 'app/api/webhooks/whatsapp/route.ts', 'app/api/agent/run/route.ts', 'lib/bot/process-message.ts']) {
   const source = readFileSync(path, 'utf8')
@@ -276,7 +295,7 @@ const worker = load('app/api/cron/price-comparisons/route.ts', {
     assert.equal(name, 'due_price_comparison_deliveries')
     return {data: finishedParent.metadata_json.notified ? [] : [finishedParent], error: null}
   }}}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
-  '@/lib/commerce/price-comparison': {advancePriceComparison: async () => {throw new Error('browser_stalled')}, readPriceComparison: async (_owner: string, id: string) => id === terminalTask.id ? terminalTask : id===webFinished.id?webFinished:null},
+  '@/lib/commerce/price-comparison': {advancePriceComparisonAll: async () => {throw new Error('browser_stalled')}, readPriceComparison: async (_owner: string, id: string) => id === terminalTask.id ? terminalTask : id===webFinished.id?webFinished:null},
   '@/lib/commerce/comparison-delivery': {deliverCompletedComparison: async (task:any) => {
     if(task.source==='web'){webPublished++;webFinished.metadata_json.notified=true;return 'history_published'}
     notifications++

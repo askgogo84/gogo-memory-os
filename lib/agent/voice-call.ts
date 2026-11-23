@@ -742,9 +742,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     const language = languageRequest.language
     if (cmd.kind === 'book') cmd = { ...cmd, text:callLead(languageRequest.request) }
     if (language !== 'english') {
-      const callLanguage = language === 'hindi' ? 'Hindi' : language === 'kannada' ? 'Kannada' : null
       const ask = cmd.kind === 'book' ? splitCallAsk(stripCallBookingName(cmd.text)) : null
-      const { sarvamCallProfile } = await import('./voice-call-language')
+      const { resolveCallLanguage, sarvamCallProfile } = await import('./voice-call-language')
+      const callLanguage = resolveCallLanguage(language)
       const profile = sarvamCallProfile(tg,callLanguage,ask && !isTableAsk(ask.ask) ? 'general' : 'table')
       if (!callLanguage || !profile) return {text:'That call language is unavailable for this account. Nothing was called.',handledBy:'voice-call'}
       voiceProfile = {callLanguage,voiceAgentId:profile}
