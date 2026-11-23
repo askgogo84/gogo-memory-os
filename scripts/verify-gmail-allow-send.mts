@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 const page = readFileSync('app/dashboard/(app)/connections/page.tsx', 'utf8')
-assert.match(page, /const sendUpgradeUrl=authKnown&&c\.gmail&&!gmailSend&&!gmailReadOff/, 'only when Gmail is connected read-only and reading is on')
+assert.match(page, /const sendUpgradeUrl=gmailCanRead&&!gmailSend/, 'only when Gmail is connected read-only and reading is on')
 assert.match(page, /buildGmailSendConnectUrl\(tgNum\)/, 'signed, owner-bound, expiring upgrade link')
 assert.match(page, /await import\('@\/lib\/services\/google-gmail'\)/, 'lazy import keeps the page harnesses working')
 assert.match(page, /\{sendUpgradeUrl&&<section/)

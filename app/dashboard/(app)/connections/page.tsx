@@ -82,7 +82,9 @@ export default async function ConnectionsPage(){
   const browserState=!browserKnown?'Permission status unavailable':browserAvailable?`Permission · ${browserLevel}`:'Off'
   const gmailSend=authKnown&&Boolean(u?.gmail_send_connected)
   const gmailReadOff=gmailConsent?.data?.gmail_enabled===false
-  const gmailReadUnknown=Boolean(gmailConsent?.error)
+  const gmailReadUnknown=Boolean(gmailConsent?.error)||typeof gmailConsent?.data?.gmail_enabled!=='boolean'
+  const gmailCanRead=authKnown&&c.gmail&&!gmailReadUnknown&&!gmailReadOff
+  const gmailSettings=c.gmail?'/dashboard/settings/email':'/dashboard/you'
   // Duet parity step 5: one tap to let Gogo send email for you. Every send still waits for your approval and is
   // confirmed from your Sent folder. The signed link only grants the Gmail Send scope.
   // Gmail's signed OAuth state currently accepts only safe numeric IDs. A large
@@ -90,7 +92,7 @@ export default async function ConnectionsPage(){
   // rounded OAuth upgrade token for somebody else's ID.
   const canEncodeGmailOwner=BigInt(tg)>=BigInt(Number.MIN_SAFE_INTEGER)&&BigInt(tg)<=BigInt(Number.MAX_SAFE_INTEGER)
   const tgNum=canEncodeGmailOwner?Number(tg):null
-  const sendUpgradeUrl=authKnown&&c.gmail&&!gmailSend&&!gmailReadOff&&tgNum!==null
+  const sendUpgradeUrl=gmailCanRead&&!gmailSend&&tgNum!==null
     ?await import('@/lib/services/google-gmail').then(m=>m.buildGmailSendConnectUrl(tgNum)).catch(()=>null)
     :null
 
@@ -110,8 +112,8 @@ export default async function ConnectionsPage(){
       <p className="mt-1 text-[15px] leading-5 text-[#a8a8a8]">What is saved for this account. The live check above is what a provider confirmed; these are not claimed as working until one does. Open a card for what Gogo can do and how it verifies results.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <ConnectionCard name="Gmail" state={!authKnown?'Connection status unavailable':!c.gmail?'Not connected':gmailReadUnknown?'Reading status unavailable':gmailReadOff?'Reading off':gmailSend?'Read and send connected':'Read only'}
-          detail={!authKnown?'Your saved connection could not be checked.':!c.gmail?'Connect Gmail in You.':gmailReadUnknown?'Your reading preference could not be checked.':gmailReadOff?'Your saved preference disables reading.':'Reading does not authorize a send.'}
-          available={c.gmail&&!gmailReadOff&&!gmailReadUnknown} href="/dashboard/you"/>
+          detail={!authKnown?'Your saved connection could not be checked.':!c.gmail?'Connect Gmail in You.':gmailReadUnknown?'Open email settings to check your reading preference.':gmailReadOff?'Your saved preference disables reading.':'Reading does not authorize a send.'}
+          available={gmailCanRead} href={gmailSettings}/>
         <ConnectionCard name="Google Calendar" state={!authKnown?'Connection status unavailable':c.googleCalendar?'Connected':'Not connected'}
           detail={!authKnown?'Your saved connection could not be checked.':c.googleCalendar?'Events can be read; changes keep their approval boundary.':'Connect Calendar in You.'}
           available={c.googleCalendar} href="/dashboard/calendar"/>
@@ -142,11 +144,11 @@ export default async function ConnectionsPage(){
           approval="Reads are safe. Create/update/delete remains behind the calendar approval boundary."
           verification="Google Calendar read-back of the exact event/object after mutation."
           detail={c.googleCalendar?'Connection recorded on this account.':undefined} href="/dashboard/calendar"/>
-        <ConnRow name="Gmail" state={!authKnown?'Connection status unavailable':c.gmail?(gmailReadUnknown?'Connected · Reading status unavailable':gmailReadOff?'Connected · Reading off':gmailSend?'Connected · Send enabled':'Connected · Read only'):'Not connected'} available={c.gmail&&!gmailReadOff&&!gmailReadUnknown}
-          operations={!authKnown?'Gmail connection and send permission could not be checked.':gmailSend?'Read/search mail, inspect attachments, draft and approved send.':'Read/search mail and attachments; drafts are safe. Gmail Send has not been granted.'}
+        <ConnRow name="Gmail" state={!authKnown?'Connection status unavailable':c.gmail?(gmailReadUnknown?'Connected · Reading status unavailable':gmailReadOff?'Connected · Reading off':gmailSend?'Connected · Send enabled':'Connected · Read only'):'Not connected'} available={gmailCanRead}
+          operations={!authKnown?'Gmail connection and send permission could not be checked.':!c.gmail?'Connect Gmail to use mail tools.':gmailReadUnknown?'Reading permission is unverified. Check your email settings.':gmailReadOff?'Reading is off in email settings.':gmailSend?'Read/search mail, inspect attachments, draft and approved send.':'Read/search mail and attachments; drafts are safe. Gmail Send has not been granted.'}
           approval="Reading never authorizes sending. Every consequential send requires the existing bounded approval."
           verification="Gmail provider message/thread evidence; send success requires provider read-back."
-          detail={gmailReadUnknown?'Could not verify your reading preference.':gmailReadOff?'Email reading is disabled in your saved privacy preference.':'Connecting Gmail alone does not start an inbox watch.'} href="/dashboard/you"/>
+          detail={gmailReadUnknown?'Could not verify your reading preference.':gmailReadOff?'Email reading is disabled in your saved privacy preference.':'Connecting Gmail alone does not start an inbox watch.'} href={gmailSettings}/>
         <ConnRow name="Google Drive" state={driveComposio?'Connected via Google (Composio)':!authKnown?'Connection status unavailable':c.gmail?'Connected via Workspace':'Not connected'} available={c.gmail||driveComposio}
           detail={driveComposio||c.gmail?undefined:'Tap to connect with Google. The consent screen says Composio while our own Google review is pending.'}
           operations="Read/search Drive context and fetch supported files for bounded analysis."

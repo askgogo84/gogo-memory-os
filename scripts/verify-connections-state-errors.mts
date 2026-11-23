@@ -6,6 +6,8 @@ import ts from 'typescript'
 // Execute the real profile query and server page. All reads are inert; writes,
 // credentials and provider calls are forbidden by this fixture.
 let failures=new Set<string>(),throws=new Set<string>(),authenticated=true,emptyPermission=false,emptyCounts=false,emptyCredit=false,permissionLevel='ask'
+let consent: unknown = {gmail_enabled:true}
+const signedOwners: number[] = []
 const calls:Array<{table:string;filters:Array<[string,unknown]>}>=[]
 const user={name:'Fixture',whatsapp_id:'fixture-owner',gmail_connected:true,google_calendar_connected:true,gmail_send_connected:true}
 const db={from(table:string){
@@ -14,13 +16,14 @@ const db={from(table:string){
   return Promise.resolve().then(()=>{
    if(throws.has(table))throw new Error('fixture transport failure')
    const error=failures.has(table)?{message:'fixture unavailable'}:null
-   const data=error?null:table==='users'?user:table==='user_consent_settings'?{gmail_enabled:true}:table==='agent_permissions'?(emptyPermission?null:{level:permissionLevel}):table==='wa_creditiq_links'?(emptyCredit?null:{consumer_user_id:'fixture-link'}):null
+   const data=error?null:table==='users'?user:table==='user_consent_settings'?consent:table==='agent_permissions'?(emptyPermission?null:{level:permissionLevel}):table==='wa_creditiq_links'?(emptyCredit?null:{consumer_user_id:'fixture-link'}):null
    return {data,count:error?null:emptyCounts?0:table==='vault_credentials'?3:table==='travel_tickets'?2:null,error}
   }).then(resolve,reject)
  }};return q
 }}
 const jsx=(type:unknown,props:unknown)=>({type:typeof type==='function'?type.name:type,props})
 const deps:Record<string,unknown>={
+ '@/lib/services/google-gmail':{buildGmailSendConnectUrl:(owner:number)=>{signedOwners.push(owner);return '/synthetic-upgrade'}},
  'next/link':{default:'a'},'react/jsx-runtime':{jsx,jsxs:jsx},
  '@/lib/dashboard/session':{getSession:async()=>authenticated?{telegramId:'123'}:null},
  '@/lib/supabase-admin':{supabaseAdmin:db},
@@ -73,6 +76,24 @@ assert.equal(good.get('Google Calendar').state,'Connected')
 assert.equal(good.get('Vault').state,'3 saved logins')
 assert.equal(good.get('Travel context').state,'2 upcoming legs')
 assert.equal(good.get('CreditIQ').state,'Connected')
+user.gmail_send_connected=false
+for (const saved of [null, {}, {gmail_enabled:null}, {gmail_enabled:'true'}]) {
+  consent=saved
+  const gmail=(await rows()).found.get('Gmail')
+  assert.match(gmail.state,/Reading status unavailable/)
+  assert.equal(gmail.available,false)
+  assert.doesNotMatch(gmail.operations,/Read\/search/)
+}
+consent={gmail_enabled:false}
+assert.match((await rows()).found.get('Gmail').state,/Reading off/)
+consent={gmail_enabled:true}
+failures.add('user_consent_settings')
+assert.match((await rows()).found.get('Gmail').state,/Reading status unavailable/)
+assert.deepEqual(signedOwners, [], 'unknown, disabled and failed consent cannot generate an upgrade link')
+failures.clear()
+assert.match(JSON.stringify((await rows()).tree),/synthetic-upgrade/)
+assert.deepEqual(signedOwners,[123], 'explicit consent retains the existing upgrade for this owner')
+user.gmail_send_connected=true
 permissionLevel='off';emptyCounts=true;emptyCredit=true
 const empty=(await rows()).found
 assert.equal(empty.get('Secure Browser').state,'Off')
