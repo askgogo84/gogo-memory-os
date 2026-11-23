@@ -518,6 +518,23 @@ assert.equal(isBrowserRegistrationBarrier(observedUnboundLogin),false,
 const unboundLoginWorker=await syntheticVaultWorker(observedUnboundLogin)
 assert.equal(unboundLoginWorker.vaultLogin.registrationRefused,undefined)
 assert.deepEqual(unboundLoginWorker.actions.slice(0,2),['fill:user','fill:password'])
+for(const attribute of ['placeholder','aria-label']){
+  const headerEmail={...formlessEmail,getAttribute:(key:string)=>key==='type'?'text':key===attribute?'Email':null}
+  const signupRegion={querySelectorAll:()=>[headerEmail]}
+  const activeHeaderSignup={...formlessButton,closest:(selector:string)=>selector.includes('header')?signupRegion:null}
+  const body={innerText:'Home Products Sign up Email Log in',querySelectorAll:()=>[headerEmail]}
+  const observed=await observedModel({evaluate:async(callback:unknown)=>vm.runInNewContext('('+String(callback)+')()',{
+    URL,CSS:{escape:(x:string)=>x},location:{href:'https://example.com/session'},
+    document:{title:'Welcome',body,forms:[],querySelector:()=>null,
+      querySelectorAll:(selector:string)=>selector.includes('button')?[activeHeaderSignup]:[headerEmail]},
+    getComputedStyle:()=>({display:'block',visibility:'visible'}),
+  })})
+  assert.equal(isBrowserRegistrationBarrier(observed),true,
+    'header signup with an account field identified by '+attribute+' must block Vault resolution')
+  const worker=await syntheticVaultWorker(observed)
+  assert.equal(worker.vaultLogin.registrationRefused,true)
+  assert.deepEqual(worker.actions,[],'header signup must never receive saved identity')
+}
 for(const snapshot of [
   {url:'https://example.com/register',title:'Register',text:'Create your account'},
   {url:'https://example.com/auth',title:'Create account',text:'Welcome',forms:[{inputs:[{name:'email',type:'email'}]}]},

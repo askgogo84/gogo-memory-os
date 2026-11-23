@@ -338,8 +338,10 @@ async function model(page){
           if(f!==document.body)return el.form===f&&actualSubmit;
           if(el.form||el.closest('form'))return false;
           const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
-          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>!input.form&&visible(input)
-            &&/\b(?:email|phone|mobile|username|password)\b/i.test([input.getAttribute('name'),input.getAttribute('type'),input.getAttribute('autocomplete')].join(' ')));
+          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
+            const field=inputs(input);
+            return !input.form&&visible(input)&&/\b(?:email|phone|mobile|username|password)\b/i.test([field.name,field.type,field.label].join(' '));
+          });
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>visible(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
@@ -908,8 +910,10 @@ async function model(page){
           if(f!==document.body)return el.form===f&&actualSubmit;
           if(el.form||el.closest('form'))return false;
           const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
-          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>!input.form&&actionable(input)
-            &&/\b(?:email|phone|mobile|username|password)\b/i.test([input.getAttribute('name'),input.getAttribute('type'),input.getAttribute('autocomplete')].join(' ')));
+          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
+            const field=inputs(input);
+            return !input.form&&actionable(input)&&/\b(?:email|phone|mobile|username|password)\b/i.test([field.name,field.type,field.label].join(' '));
+          });
         }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>actionable(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
