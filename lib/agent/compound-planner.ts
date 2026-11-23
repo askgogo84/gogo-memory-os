@@ -1,6 +1,7 @@
 import { rememberTypedObjects } from './typed-object-context'
 import { isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getLocalParts, isValidTimezone, zonedLocalTimeToUtc } from '@/lib/timezone'
 import { addToListDetailed, getList } from '@/lib/data/lists'
 import { dispatchThroughSameBrain } from './same-brain'
 import type { AgentActor } from './actor'
@@ -194,23 +195,54 @@ async function readReminderQuery(actor: AgentActor, text: string) {
 }
 
 
-function parseReminderMutation(text: string): { target: string | null; timeText: string } | null {
+function parseReminderMutation(text: string): { target: string | null; timeText: string; unresolved?: boolean; meetingStart?: string; zone?: string; meetingZone?: string } | null {
   const raw = String(text || '').trim().replace(/\s+/g, ' ')
   if (!/\breminder\b/i.test(raw)) return null // Generic verbs cannot establish a reminder identity.
-  if (!/\b(move|reschedule|change|update|make)\b/i.test(raw)) return null
-  const time = raw.match(/\b(?:to|for|at)\s+((?:\d{1,2}(?::\d{2})?\s*(?:am|pm)))(?:\s+(today|tomorrow))?/i)
-  if (!time) return null
-  const quoted = raw.match(/["“]([^"”]+)["”]/)
-  const named = raw.match(/(?:move|reschedule|change|update)\s+(?:the\s+)?(.+?)\s+reminder\s+(?:to|for|at)\b/i)
-  let target = quoted?.[1] || named?.[1] || null
-  if (target) target = cleanListItem(target).replace(/^the\s+/i, '').trim()
-  const day = time[2] ? ` ${time[2]}` : ''
-  return { target, timeText: `${time[1]}${day}` }
+  if (!/^(?:please\s+)?(?:move|reschedule|change|update)\b/i.test(raw) && !/^(?:please\s+)?make\s+(?:my|the|existing|it|that|this)\b/i.test(raw)) return null
+  const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
+    || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
+  let target = named?.[1] || null
+  // Subject modifiers were consumed outside the capture. They may be literal
+  // title words inside quotes ("My passport" must not select "passport").
+  if (target) target = cleanListItem(target).replace(/^["“]|["”]$/g, '').trim()
+  const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i.exec(raw)
+  if (generic) target = null
+  const head=generic || named
+  const tail=head?raw.slice(head[0].length):''
+  // The new clock belongs after this reminder subject, never inside its title.
+  const time=tail.match(/^\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b(?:\s+(today|tomorrow))?/i)
+  if(!time)return {target,timeText:'',unresolved:true}
+  const afterTime=tail.slice(time[0].length)
+  const zonePattern=/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/
+  const zoneMatch=afterTime.match(zonePattern)
+  const zone=zoneMatch?.[1]
+  const afterZone=zoneMatch?afterTime.slice(zoneMatch[0].length):afterTime
+  const tailDay=afterZone.match(/^\s+(today|tomorrow)\b/i)?.[1]
+  const days=[named?.[2],generic?.[1],time[2],tailDay].filter(Boolean).map(s=>s!.toLowerCase())
+  const day=days[0]
+  const meeting=afterTime.match(/\b(?:the\s+)?meeting\s+starts?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
+  const meetingStart=meeting?.[1]
+  const meetingTail=meeting?afterTime.slice(meeting.index!+meeting[0].length):''
+  const meetingZoneMatch=meetingTail.match(zonePattern)
+  const meetingZone=meetingZoneMatch?.[1]
+  const meetingDateTail=(meetingZoneMatch?meetingTail.slice(meetingZoneMatch[0].length):meetingTail).split(/[.!?]/)[0]
+  // An explicitly different meeting date cannot be overwritten with the alert's
+  // date. This bounded correction supports a same-day start clock only.
+  const unsupportedMeetingDate=/\b(?:today|tomorrow|on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,4})\b/i.test(meetingDateTail)
+  const remaining=afterZone.replace(/^\s+(?:today|tomorrow)\b/i,'')
+  const unresolved = (!target && !generic) || new Set(days).size>1 || (!!generic && /\b(?:for|about|called|named)\b/i.test(afterTime))
+    || /^\s+(?:on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|or)\b/i.test(remaining)
+    || (/\bmeeting\s+starts?\b/i.test(afterTime) && !meetingStart)
+    || unsupportedMeetingDate
+  return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone, meetingZone }
 }
 
 async function tryRunReminderMutation(params: { actor: AgentActor; surface: AgentSurface; text: string }): Promise<CompoundRunResult | null> {
   const mutation = parseReminderMutation(params.text)
   if (!mutation) return null
+  const fail = (text: string): CompoundRunResult => ({ runId:'none', status:'failed', capability:'reminders', risk:'low', text, handledBy:'compound-plan', steps:[] })
+  if (!Number.isSafeInteger(params.actor.legacyTelegramId) || params.actor.legacyTelegramId === 0) return fail('I couldn’t verify the reminder owner. Nothing was changed.')
+  if (mutation.unresolved) return fail('Please name the reminder and one new date/time clearly. Nothing was changed.')
   let resolvedTarget = mutation.target
   if (!resolvedTarget || /^(?:it|that|this)$/i.test(resolvedTarget)) {
     const { data: recent } = await supabaseAdmin.from('conversations')
@@ -233,46 +265,69 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
       handledBy: 'compound-plan', steps: [] }
   }
   const { data, error } = await supabaseAdmin.from('reminders')
-    .select('id,message,remind_at,timezone,created_at').eq('telegram_id', params.actor.legacyTelegramId).eq('sent', false)
-    .order('remind_at', { ascending: true }).limit(100)
+    .select('id,message,remind_at,timezone,created_at,sent,is_recurring,recurring_pattern,delivery_state,claim_token,send_started_at').eq('telegram_id', params.actor.legacyTelegramId).eq('sent', false)
+    .order('remind_at', { ascending: true }).limit(101)
   if (error) throw new Error(`reminder_mutation_read_failed:${error.message}`)
+  if (!Array.isArray(data) || data.length > 100) return fail('I couldn’t establish one reminder from the complete inventory. Please narrow the reminder name. Nothing was changed.')
   const norm=(v:string)=>String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
   const needle=norm(resolvedTarget)
-  const matches=(data||[]).filter((r:any)=>{const h=norm(r.message);return h===needle||h.includes(needle)||needle.includes(h)})
+  if (!needle) return fail('Please give the reminder a clear name. Nothing was changed.')
+  const exact=data.filter((r:any)=>norm(String(r.message||'').split('\n')[0].split(/\s+[—–-]\s+starts\b/i)[0])===needle)
+  const matches=exact.length ? exact : data.filter((r:any)=>{const h=norm(r.message);return !!needle&&(h===needle||h.includes(needle))})
   let row:any=null
   if(matches.length===1) row=matches[0]
   else if(matches.length>1){
-    // Conversational mutation rule: when "it/that/this" was resolved from the
-    // immediately preceding reminder turn, bind the mutation to the newest matching
-    // reminder row. This preserves object identity even when older reminders share
-    // the same label. A move always PATCHES that row; it never creates a replacement.
-    const wasReferential=!mutation.target || /^(?:it|that|this)$/i.test(String(mutation.target||''))
-    if(wasReferential){
-      row=[...matches].sort((a:any,b:any)=>Date.parse(String(b.created_at||0))-Date.parse(String(a.created_at||0)))[0]||null
-    }
-    if(!row){
       return { runId:'none', status:'failed', capability:'reminders', risk:'low',
         text:`I found ${matches.length} matching reminders for “${resolvedTarget}”. Please tell me which time you mean.`,
         handledBy:'compound-plan', steps:[] }
-    }
   } else {
     return { runId:'none', status:'failed', capability:'reminders', risk:'low',
       text:`I could not find an active reminder matching “${resolvedTarget}”. I did not create a new one.`,
       handledBy:'compound-plan', steps:[] }
   }
-  const timezone=await actorTimezone(params.actor)
+  if (row.sent || row.is_recurring || row.recurring_pattern || row.delivery_state !== 'pending' || row.claim_token || row.send_started_at) return fail('That reminder is recurring or already being delivered. I haven’t changed or duplicated it.')
+  const timezone=String(row.timezone || await actorTimezone(params.actor))
+  if (!isValidTimezone(timezone)) return fail('I couldn’t verify the reminder timezone. Nothing was changed.')
+  for (const declaredZone of [mutation.zone,mutation.meetingZone].filter((z):z is string=>!!z)) {
+    const requested=declaredZone.toUpperCase()==='IST'?'Asia/Kolkata':/^(?:UTC|GMT)$/i.test(declaredZone)?'UTC':declaredZone
+    const canonical=(zone:string)=>new Intl.DateTimeFormat('en',{timeZone:zone}).resolvedOptions().timeZone
+    if(!isValidTimezone(requested)||canonical(requested)!==canonical(timezone))return fail('The requested timezone differs from the saved reminder timezone or is unclear. Please confirm the intended timezone. Nothing was changed.')
+  }
   const base=new Date(row.remind_at)
-  const day=/\btomorrow\b/i.test(mutation.timeText)?new Date(Date.now()+36*60*60*1000):/\btoday\b/i.test(mutation.timeText)?new Date():base
-  const dateKey=localDateKey(day,timezone)
-  const tm=mutation.timeText.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i)!
-  let hour=Number(tm[1])%12;if(tm[3].toLowerCase()==='pm')hour+=12
-  // Asia/Kolkata is the product default; preserve the existing timezone contract without silently creating.
-  const offset=timezone==='Asia/Kolkata'?'+05:30':'Z'
-  const due=new Date(`${dateKey}T${String(hour).padStart(2,'0')}:${String(Number(tm[2]||0)).padStart(2,'0')}:00${offset}`)
-  const { error:updateError }=await supabaseAdmin.from('reminders').update({remind_at:due.toISOString()}).eq('id',row.id).eq('telegram_id',params.actor.legacyTelegramId)
-  if(updateError)throw new Error(`reminder_mutation_update_failed:${updateError.message}`)
+  if (!Number.isFinite(base.getTime())) return fail('I couldn’t verify the saved reminder time. Nothing was changed.')
+  let dateKey=localDateKey(/\b(?:today|tomorrow)\b/i.test(mutation.timeText)?new Date():base,timezone)
+  if (/\btomorrow\b/i.test(mutation.timeText)) { const next=new Date(`${dateKey}T12:00:00Z`);next.setUTCDate(next.getUTCDate()+1);dateKey=next.toISOString().slice(0,10) }
+  const [year,month,day]=dateKey.split('-').map(Number)
+  const clock=(text:string)=>{
+    const tm=text.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s|$)/i)
+    if(!tm||Number(tm[1])<1||Number(tm[1])>12||Number(tm[2]||0)>59)return null
+    const hour=Number(tm[1])%12+(tm[3].toLowerCase()==='pm'?12:0),minute=Number(tm[2]||0)
+    const at=zonedLocalTimeToUtc({year,month,day,hour,minute,timezone})
+    const parts=getLocalParts(at,timezone)
+    if(parts.year!==year||parts.month!==month||parts.day!==day||parts.hour!==hour||parts.minute!==minute)return null
+    // A repeated DST clock is ambiguous; do not choose one occurrence silently.
+    if([-7200000,-3600000,-1800000,1800000,3600000,7200000].some(delta=>{const p=getLocalParts(new Date(at.getTime()+delta),timezone);return p.year===year&&p.month===month&&p.day===day&&p.hour===hour&&p.minute===minute}))return null
+    return at
+  }
+  const due=clock(mutation.timeText)
+  if(!due||due.getTime()<=Date.now())return fail('That new time is invalid, ambiguous or already past. Nothing was changed.')
+  let message=String(row.message)
+  if(mutation.meetingStart){
+    const start=clock(mutation.meetingStart)
+    if(!start||start.getTime()<due.getTime())return fail('Please confirm a valid meeting start after the reminder. Nothing was changed.')
+    if(/ — starts [^\n]+/.test(message))message=message.replace(/ — starts [^\n]+/,` — starts ${new Intl.DateTimeFormat('en-IN',{timeZone:timezone,day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true}).format(start)}`)
+  }
+  const update=supabaseAdmin.from('reminders').update({remind_at:due.toISOString(),message})
+    .eq('id',row.id).eq('telegram_id',params.actor.legacyTelegramId).eq('sent',false)
+    .eq('delivery_state','pending').is('claim_token',null).is('send_started_at',null).eq('is_recurring',false).is('recurring_pattern',null)
+    .eq('message',row.message).eq('remind_at',row.remind_at)
+  const {data:changed,error:updateError}=await (row.timezone==null?update.is('timezone',null):update.eq('timezone',row.timezone)).select('id').maybeSingle()
+  if(updateError||!changed||changed.id!==row.id)return fail('I couldn’t verify the reminder update. Please check your reminders; I haven’t retried or created another.')
+  const {data:stored,error:readError}=await supabaseAdmin.from('reminders').select('id,message,remind_at,sent')
+    .eq('id',row.id).eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+  if(readError||!stored||stored.id!==row.id||stored.sent||stored.message!==message||Date.parse(stored.remind_at)!==due.getTime())return fail('I couldn’t verify the saved reminder update. Please check your reminders; I haven’t retried or created another.')
   return { runId:'none',status:'completed',capability:'reminders',risk:'low',
-    text:`✅ Reminder updated\n\n${row.message}\nNew time: ${new Intl.DateTimeFormat('en-IN',{timeZone:timezone,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(due)}`,
+    text:`✅ Reminder updated\n\n${stored.message}\nNew time: ${new Intl.DateTimeFormat('en-IN',{timeZone:timezone,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(due)}`,
     handledBy:'compound-plan',steps:[] }
 }
 
