@@ -47,7 +47,7 @@ function exactRuleOwner(value: number | string): number | string {
   if (typeof value !== 'string' || !/^-?[1-9]\d{0,18}$/.test(value))
     throw new Error('email_attention_owner_invalid')
   const bigint = BigInt(value)
-  if (bigint < -9223372036854775808n || bigint > 9223372036854775807n)
+  if (bigint < BigInt('-9223372036854775808') || bigint > BigInt('9223372036854775807'))
     throw new Error('email_attention_owner_invalid')
   return bigint >= BigInt(Number.MIN_SAFE_INTEGER) && bigint <= BigInt(Number.MAX_SAFE_INTEGER)
     ? Number(bigint) : value
