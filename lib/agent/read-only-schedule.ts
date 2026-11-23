@@ -94,7 +94,9 @@ async function readWeeklyLifeAdmin(actor: AgentActor, now: Date, timeZone: strin
   last.setUTCDate(last.getUTCDate() + 1)
   const horizonEnd = parseLocalDateTime({date:last.toISOString().slice(0,10),time:'00:00',timezone:timeZone}).dueAtUtc
   const owner = actor.legacyTelegramId
-  const {capabilityIsOff} = await import('./adaptive-autonomy')
+  const [{capabilityIsOff}, {isRelevantOpenLoop}] = await Promise.all([
+    import('./adaptive-autonomy'), import('./task-lifecycle'),
+  ])
   const instruction = `Show my calendar from ${today} to ${lastDay} in ${timeZone}.`
   const [calendar, remindersResult, followUpsResult] = await Promise.allSettled([
     (async () => await capabilityIsOff(owner,'calendar') ? null : await executeReadOnlyCalendarStep({actor,instruction,missionText:instruction}))(),
@@ -107,8 +109,8 @@ async function readWeeklyLifeAdmin(actor: AgentActor, now: Date, timeZone: strin
       return data
     })(),
     (async () => {
-      const {data,error} = await supabaseAdmin.from('agent_open_loops').select('title')
-        .eq('telegram_id',String(owner)).eq('status','active').order('priority',{ascending:false}).limit(7)
+      const {data,error} = await supabaseAdmin.from('agent_open_loops').select('title,summary,source_type')
+        .eq('telegram_id',String(owner)).eq('status','active').order('priority',{ascending:false}).order('updated_at',{ascending:false}).limit(35)
       if (error || !Array.isArray(data)) throw new Error('weekly_follow_ups_unavailable')
       return data
     })(),
@@ -119,7 +121,8 @@ async function readWeeklyLifeAdmin(actor: AgentActor, now: Date, timeZone: strin
   const calendarLines = matchingWindow && 'itemLines' in output && Array.isArray(output.itemLines) ? output.itemLines : []
   const calendarOff = calendar.status === 'fulfilled' && calendar.value === null
   const reminders = remindersResult.status === 'fulfilled' ? remindersResult.value || [] : []
-  const followUps = followUpsResult.status === 'fulfilled' ? followUpsResult.value : []
+  const followUpRows = followUpsResult.status === 'fulfilled' ? followUpsResult.value : []
+  const followUps = followUpRows.filter(isRelevantOpenLoop)
   const lines = [`Weekly life-admin review · ${today} to ${lastDay} (${timeZone})`]
   const append = (heading: string, items: string[], empty: string, more: boolean) => {
     lines.push('', `*${heading}*`, ...items.slice(0,6).map(item => `• ${item}`))
@@ -133,7 +136,7 @@ async function readWeeklyLifeAdmin(actor: AgentActor, now: Date, timeZone: strin
   append('Upcoming reminders', reminders.map(row => `${localDateKey(new Date(row.remind_at),timeZone)} ${localClock(row.remind_at,timeZone)} — ${safe(row.message,105)}`),
     remindersResult.status === 'rejected' ? 'Reminders unavailable.' : remindersResult.value === null ? 'Reminders are off in autonomy settings.' : 'None pending in this window.', reminders.length > 6)
   append('Open follow-ups', followUps.map(row => safe(row.title,110)),
-    followUpsResult.status === 'rejected' ? 'Follow-ups unavailable.' : 'None recorded.', followUps.length > 6)
+    followUpsResult.status === 'rejected' ? 'Follow-ups unavailable.' : 'No relevant follow-ups found.', followUps.length > 6 || followUpRows.length === 35)
   const window = {startDate:today,endDate:lastDay,label:'next 14 days'}
   return {text:lines.join('\n'),calendarEvents:[],reminders,timeZone,tomorrowKey:nextLocalDateKey(now,timeZone),window,calendarReadVerified:calendarComplete}
 }

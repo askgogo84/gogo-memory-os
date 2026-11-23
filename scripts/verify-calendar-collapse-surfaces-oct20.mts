@@ -15,6 +15,7 @@ const timezone = await import('../lib/timezone.ts')
 const calendarWord = await import('../lib/data/calendar-word.ts')
 const {redactSecretShapedText} = await import('../lib/bot/memory-redaction.ts')
 const {exactDashboardOwnerId} = await import('../lib/dashboard/session-access.ts')
+const taskLifecycle = await import('../lib/agent/task-lifecycle.ts')
 
 function load(file: string, deps: Record<string, unknown>) {
   const exports: any = {}
@@ -84,7 +85,10 @@ const weeklyDb = {from(table: string) {
   const rows: Record<string, unknown> = {
     users: {timezone:tz},
     reminders: [{id:'r',message:'Renew library card',remind_at:at(tomorrow,'11:00'),sent:false}],
-    agent_open_loops: [{title:'Collect the signed form'}],
+    agent_open_loops: [
+      {title:'Pending reminders question',summary:'How many reminders do I have pending?',source_type:'conversation'},
+      {title:'Collect the signed form',source_type:'task'},
+    ],
   }
   const ok = () => table === 'agent_open_loops' && followUpsFail ? {data:null,error:'offline'} : {data:rows[table],error:null}
   const q: any = {select: () => q, maybeSingle: async () => ok(), then: (res: any, rej: any) => Promise.resolve(ok()).then(res, rej)}
@@ -95,12 +99,14 @@ const weeklySchedule = load('lib/agent/read-only-schedule.ts', {
   '@/lib/supabase-admin': {supabaseAdmin:weeklyDb}, './calendar-read': read, '@/lib/timezone':timezone,
   './typed-object-context': {rememberTypedObjects:async () => assert.fail('Weekly review must not change the selected item')},
   './adaptive-autonomy': {capabilityIsOff:async (id:number, name:string) => {assert.equal(id,123);return calendarOff && name==='calendar'}},
+  './task-lifecycle':taskLifecycle,
 })
 const weeklyAgenda = await weeklySchedule.readTomorrowSchedule({actor,scope:weeklyIntent.scope,text:weeklyAsk})
 assert.match(weeklyAgenda.text, new RegExp(`Weekly life-admin review · ${today} to ${addDays(today,13)}`))
 assert.match(weeklyAgenda.text, /ONDC l Tipplr weekly connect/)
 assert.match(weeklyAgenda.text, /Renew library card/)
 assert.match(weeklyAgenda.text, /Collect the signed form/)
+assert.doesNotMatch(weeklyAgenda.text,/Pending reminders question/)
 assert.ok(weeklyCalls.some(call => call.join('|')==='reminders|eq|telegram_id|123'))
 assert.ok(weeklyCalls.some(call => call[0]==='agent_open_loops' && call[1]==='eq' && call[2]==='telegram_id' && call[3]==='123'))
 assert.ok(weeklyCalls.some(call => call[0]==='reminders' && call[1]==='lt' && call[3]===new Date(at(addDays(today,14),'00:00')).toISOString()))
