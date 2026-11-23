@@ -1,7 +1,7 @@
 import { runMeteredTask } from '@/lib/metering/core'
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { selectSpecialistRoute, type SpecialistRoute } from './specialist-registry'
+import { capabilityForSpecialist, selectSpecialistRoute, type SpecialistRoute } from './specialist-registry'
 import type { AgentActor } from './actor'
 import { notifyRunOutcome } from './run-notify'
 import { assertApprovalBinding } from './approval-binding'
@@ -187,17 +187,7 @@ async function activity(telegramId: string, runId: string, eventType: string, me
   if (error) console.error('AUTONOMOUS_ACTIVITY_FAILED:', error.message)
 }
 
-// 2 Nov live: "make a grocery list … and remind me at 6 pm" failed with agent_runs_capability_check — the
-// specialist id ("grocery") was written into the capability column, which accepts only the original capability
-// set. The specialist stays in metadata_json.route; the column gets the nearest original capability.
-const SPECIALIST_CAPABILITY: Record<string, string> = {
-  orchestrator: 'memory', travel: 'travel', ticketing: 'browser', food: 'browser', grocery: 'browser', shopping: 'browser',
-  local_services: 'browser', communications: 'email', documents: 'files', calendar: 'calendar', life_events: 'memory',
-  payments: 'payments', research: 'browser', secure_browser: 'browser',
-}
-export function capabilityForSpecialist(id: unknown): string {
-  return SPECIALIST_CAPABILITY[String(id || '')] || 'memory'
-}
+export { capabilityForSpecialist } from './specialist-registry'
 
 export async function createAutonomousRun(params: {
   actor: AgentActor
@@ -222,9 +212,9 @@ export async function createAutonomousRun(params: {
       runtime_version: AUTONOMOUS_RUNTIME_VERSION,
       objective: safe(params.plan.objective, 4000),
       plan_revision: 1,
-      route,
       state: 'executing',
       ...(params.plan.metadata || {}),
+      route,
     },
     started_at: now,
     updated_at: now,

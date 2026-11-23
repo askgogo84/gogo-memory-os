@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { readableRunSummary } from '@/lib/dashboard/readable-summary'
+import { recordedSpecialistAssignment } from '@/lib/agent/specialist-registry'
 import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { browserContextForRun, getDashboardActivityRun } from '@/lib/dashboard/agent-activity'
@@ -42,6 +43,7 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
   const run=await getDashboardActivityRun(session.telegramId,runId)
   if(!run)notFound()
   const browser=browserContextForRun(run)
+  const assignment = run.type === 'autonomous' ? recordedSpecialistAssignment(run.metadata?.route) : null
   const done=run.steps.filter(s=>s.status==='completed').length
   const total=Math.max(run.steps.length,1)
   const needsUser=['paused','waiting_approval'].includes(run.status)
@@ -57,6 +59,10 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
       <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <h1 className="font-serif text-[30px] font-semibold leading-[1.08] tracking-[-.02em] text-[#F2EFEA] lg:text-[38px]">{run.title}</h1>
+          {assignment && <dl className="mt-3 space-y-1 text-[15px] text-[#bbb]">
+            <div><dt className="inline font-medium">Assigned specialist</dt>{' '}<dd className="inline">{assignment.lead}</dd></div>
+            {assignment.supporting.length > 0 && <div><dt className="inline font-medium">Supporting specialists</dt>{' '}<dd className="inline">{assignment.supporting.join(', ')}</dd></div>}
+          </dl>}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-bold uppercase tracking-[.12em] ${badge(run.status)}`}><span className={`h-2 w-2 rounded-full ${dot(run.status)}`}/>{TASK_STATE_LABEL[taskState]}</span>
             <span className="text-[15px] text-[#6A6A6A]">Started {fmt(run.startedAt)}</span>

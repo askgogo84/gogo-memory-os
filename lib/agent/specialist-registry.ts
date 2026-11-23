@@ -34,6 +34,8 @@ export type SpecialistAgentId =
 
 export type SpecialistAgentDefinition = {
   id: SpecialistAgentId
+  label: string
+  runCapability: 'memory' | 'travel' | 'browser' | 'email' | 'files' | 'calendar' | 'payments'
   purpose: string
   memories: AgentMemoryType[]
   surfaces: ExecutionSurface[]
@@ -56,76 +58,90 @@ const ALL_MEMORY: AgentMemoryType[] = ['working','semantic','episodic','procedur
 
 export const SPECIALIST_AGENTS: Record<SpecialistAgentId, SpecialistAgentDefinition> = {
   orchestrator: {
-    id:'orchestrator', purpose:'Understand the desired outcome, choose specialists, constrain context, sequence work and verify completion.',
+    id:'orchestrator', label:'Task coordination', runCapability:'memory',
+    purpose:'Understand the desired outcome, choose specialists, constrain context, sequence work and verify completion.',
     memories:['working','semantic','episodic','procedural','prospective'],
     surfaces:['local_memory','human_approval'], providerFamilies:[], externalMutationRequiresApproval:true, paymentBoundary:'none',
   },
   travel: {
-    id:'travel', purpose:'Research and prepare rail, flight, bus, hotel and itinerary outcomes across providers.',
+    id:'travel', label:'Travel', runCapability:'travel',
+    purpose:'Research and prepare rail, flight, bus, hotel and itinerary outcomes across providers.',
     memories:ALL_MEMORY, surfaces:['local_memory','connected_account_read','partner_api','secure_browser','device_handoff','human_approval','payment_handoff'],
     providerFamilies:['rail','airline','hotel','bus','ota'], externalMutationRequiresApproval:true, paymentBoundary:'approval_then_handoff',
   },
   ticketing: {
-    id:'ticketing', purpose:'Find, compare, prepare and manage movie, concert, sports and event tickets.',
+    id:'ticketing', label:'Tickets', runCapability:'browser',
+    purpose:'Find, compare, prepare and manage movie, concert, sports and event tickets.',
     memories:ALL_MEMORY, surfaces:['local_memory','connected_account_read','partner_api','secure_browser','device_handoff','human_approval','payment_handoff'],
     providerFamilies:['movie','concert','event','sports'], externalMutationRequiresApproval:true, paymentBoundary:'approval_then_handoff',
   },
   food: {
-    id:'food', purpose:'Compare restaurants, menus, fees, delivery times, preferences and prepare food orders.',
+    id:'food', label:'Food and dining', runCapability:'browser',
+    purpose:'Compare restaurants, menus, fees, delivery times, preferences and prepare food orders.',
     memories:['working','semantic','episodic','procedural','retrieval','parametric'],
     surfaces:['local_memory','partner_api','secure_browser','device_handoff','human_approval','payment_handoff'],
     providerFamilies:['restaurant_marketplace','direct_restaurant'], externalMutationRequiresApproval:true, paymentBoundary:'approval_then_handoff',
   },
   grocery: {
-    id:'grocery', purpose:'Compare basket availability, substitutions, final price and delivery time across quick-commerce/grocery providers.',
+    id:'grocery', label:'Groceries', runCapability:'browser',
+    purpose:'Compare basket availability, substitutions, final price and delivery time across quick-commerce/grocery providers.',
     memories:['working','semantic','episodic','procedural','retrieval','parametric'],
     surfaces:['local_memory','partner_api','secure_browser','device_handoff','human_approval','payment_handoff'],
     providerFamilies:['quick_commerce','grocery'], externalMutationRequiresApproval:true, paymentBoundary:'approval_then_handoff',
   },
   shopping: {
-    id:'shopping', purpose:'Research products, compare landed price, seller quality, delivery, returns, rewards and prepare carts.',
+    id:'shopping', label:'Shopping', runCapability:'browser',
+    purpose:'Research products, compare landed price, seller quality, delivery, returns, rewards and prepare carts.',
     memories:['working','semantic','episodic','procedural','retrieval','parametric','prospective'],
     surfaces:['local_memory','connected_account_read','partner_api','secure_browser','device_handoff','human_approval','payment_handoff'],
     providerFamilies:['marketplace','brand_store'], externalMutationRequiresApproval:true, paymentBoundary:'approval_then_handoff',
   },
   local_services: {
-    id:'local_services', purpose:'Find and prepare bookings for appointments, home services, reservations and other local services.',
+    id:'local_services', label:'Local services', runCapability:'browser',
+    purpose:'Find and prepare bookings for appointments, home services, reservations and other local services.',
     memories:['working','semantic','episodic','procedural','retrieval','parametric','prospective'],
     surfaces:['local_memory','partner_api','secure_browser','device_handoff','human_approval','payment_handoff'],
     providerFamilies:['local_service','reservation'], externalMutationRequiresApproval:true, paymentBoundary:'approval_then_handoff',
   },
   communications: {
-    id:'communications', purpose:'Read approved communication context and prepare messages/email while protecting outbound mutation boundaries.',
+    id:'communications', label:'Communications', runCapability:'email',
+    purpose:'Read approved communication context and prepare messages/email while protecting outbound mutation boundaries.',
     memories:['working','semantic','episodic','procedural','retrieval','parametric'],
     surfaces:['local_memory','connected_account_read','human_approval'], providerFamilies:['gmail','contacts','messaging'], externalMutationRequiresApproval:true, paymentBoundary:'none',
   },
   documents: {
-    id:'documents', purpose:'Read, classify, retrieve and track documents, receipts, credentials and expiry evidence.',
+    id:'documents', label:'Documents', runCapability:'files',
+    purpose:'Read, classify, retrieve and track documents, receipts, credentials and expiry evidence.',
     memories:['working','semantic','episodic','procedural','retrieval','prospective'],
     surfaces:['local_memory','connected_account_read'], providerFamilies:['files','drive','email_attachments'], externalMutationRequiresApproval:false, paymentBoundary:'none',
   },
   calendar: {
-    id:'calendar', purpose:'Reason over schedule context and prepare calendar mutations with conflict awareness.',
+    id:'calendar', label:'Calendar', runCapability:'calendar',
+    purpose:'Reason over schedule context and prepare calendar mutations with conflict awareness.',
     memories:['working','semantic','episodic','procedural','retrieval','prospective'],
     surfaces:['local_memory','connected_account_read','human_approval'], providerFamilies:['calendar'], externalMutationRequiresApproval:true, paymentBoundary:'none',
   },
   life_events: {
-    id:'life_events', purpose:'Maintain long-running state for trips, bookings, purchases, renewals, deadlines and follow-up actions.',
+    id:'life_events', label:'Life events', runCapability:'memory',
+    purpose:'Maintain long-running state for trips, bookings, purchases, renewals, deadlines and follow-up actions.',
     memories:['working','semantic','episodic','procedural','retrieval','prospective'],
     surfaces:['local_memory','connected_account_read','partner_api','secure_browser','device_handoff','human_approval'], providerFamilies:['life_event'], externalMutationRequiresApproval:true, paymentBoundary:'none',
   },
   payments: {
-    id:'payments', purpose:'Own spend authorization, payment preparation, idempotency and final user-controlled payment handoff.',
+    id:'payments', label:'Payments', runCapability:'payments',
+    purpose:'Own spend authorization, payment preparation, idempotency and final user-controlled payment handoff.',
     memories:['working','semantic','episodic','procedural','retrieval'],
     surfaces:['local_memory','partner_api','device_handoff','human_approval','payment_handoff'], providerFamilies:['payment'], externalMutationRequiresApproval:true, paymentBoundary:'approval_then_handoff',
   },
   research: {
-    id:'research', purpose:'Gather fresh public evidence, normalize alternatives and explain trade-offs without executing purchases.',
+    id:'research', label:'Research', runCapability:'browser',
+    purpose:'Gather fresh public evidence, normalize alternatives and explain trade-offs without executing purchases.',
     memories:['working','semantic','episodic','procedural','retrieval','parametric'],
     surfaces:['local_memory','partner_api','secure_browser'], providerFamilies:['web','catalog','public_data'], externalMutationRequiresApproval:false, paymentBoundary:'none',
   },
   secure_browser: {
-    id:'secure_browser', purpose:'Perform permitted web navigation when no safer supported API exists; never bypass anti-bot or authentication controls.',
+    id:'secure_browser', label:'Secure browser', runCapability:'browser',
+    purpose:'Perform permitted web navigation when no safer supported API exists; never bypass anti-bot or authentication controls.',
     memories:['working','episodic','procedural','retrieval'],
     surfaces:['secure_browser','device_handoff','human_approval'], providerFamilies:['web'], externalMutationRequiresApproval:true, paymentBoundary:'prepare_only',
   },
@@ -158,3 +174,28 @@ export function selectSpecialistRoute(text:string):SpecialistRoute {
 }
 
 export function specialistDefinition(id:SpecialistAgentId){return SPECIALIST_AGENTS[id]}
+
+function registeredSpecialist(id: unknown): SpecialistAgentDefinition | null {
+  return typeof id === 'string' && Object.hasOwn(SPECIALIST_AGENTS, id)
+    ? SPECIALIST_AGENTS[id as SpecialistAgentId]
+    : null
+}
+
+export function capabilityForSpecialist(id: unknown): SpecialistAgentDefinition['runCapability'] {
+  return registeredSpecialist(id)?.runCapability ?? 'memory'
+}
+
+/** Render only names registered by AskGogo. Older tasks may have no recorded route. */
+export function recordedSpecialistAssignment(route: unknown): { lead: string; supporting: string[] } | null {
+  if (!route || typeof route !== 'object' || !('primary' in route)) return null
+  const lead = registeredSpecialist(route.primary)
+  if (!lead) return null
+  const supporting = new Set<string>()
+  if ('supporting' in route && Array.isArray(route.supporting)) {
+    for (const id of route.supporting) {
+      const specialist = registeredSpecialist(id)
+      if (specialist && specialist.id !== lead.id) supporting.add(specialist.label)
+    }
+  }
+  return { lead: lead.label, supporting: [...supporting] }
+}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { readyAutonomousSteps, AUTONOMOUS_RUNTIME_VERSION } from '../lib/agent/autonomous-runtime'
-import { selectSpecialistRoute, SPECIALIST_AGENTS } from '../lib/agent/specialist-registry'
+import { recordedSpecialistAssignment, selectSpecialistRoute, SPECIALIST_AGENTS } from '../lib/agent/specialist-registry'
 
 assert.equal(AUTONOMOUS_RUNTIME_VERSION, 'gogo-autonomous-v1')
 assert.equal(selectSpecialistRoute('Plan my New York trip and compare flights').primary, 'travel')
@@ -69,3 +69,14 @@ console.log('✅ Persistent autonomous runtime + specialist routing regression p
   if (/capability:\s*route\.primary/.test(src)) throw new Error('raw specialist id written to agent_runs.capability')
   console.log('✓ autonomous runs store a valid capability; the specialist stays in metadata_json.route')
 }
+
+const tripAssignment = recordedSpecialistAssignment(selectSpecialistRoute('Compare flights for my trip'))
+assert.deepEqual(tripAssignment, { lead:'Travel', supporting:['Research','Life events','Calendar'] })
+for (const legacy of [undefined, null, {}, 'travel', {primary:'unregistered'}, {primary:'constructor'}]) {
+  assert.equal(recordedSpecialistAssignment(legacy), null)
+}
+assert.deepEqual(recordedSpecialistAssignment({
+  primary:'grocery', supporting:['grocery','research','research','toString','__proto__',null],
+  reason:'Private notes', toolPermissions:['private_tool'],
+}), { lead:'Groceries', supporting:['Research'] })
+assert.deepEqual(recordedSpecialistAssignment({primary:'travel', supporting:'calendar'}), {lead:'Travel', supporting:[]})
