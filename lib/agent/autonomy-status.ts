@@ -77,14 +77,18 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
   const capabilities=await tryGetConnectionCapabilities(params)
   if(capabilities)return capabilities
   if(!isConnectionStatus(params.text))return null
+  // A rounded legacy numeric identity can alias another owner's private account.
+  // The number-only actor contract cannot recover an unsafe 64-bit identifier.
+  const owner = params.actor.legacyTelegramId
+  if(!Number.isSafeInteger(owner)||owner===0)throw new Error('connection_status_owner_invalid')
   const {data,error}=await supabaseAdmin.from('users')
     .select('gmail_connected,gmail_send_connected,gmail_email,gmail_connected_at,google_calendar_connected,google_refresh_token')
-    .eq('telegram_id',params.actor.legacyTelegramId)
+    .eq('telegram_id',owner)
     .maybeSingle()
   if(error)throw new Error(`connection_status_read_failed:${error.message}`)
   if(!data)return null
   const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
-    .select('gmail_enabled').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+    .select('gmail_enabled').eq('telegram_id',owner).maybeSingle()
   if(consentError)throw new Error('connection_status_consent_failed')
   const lines:string[]=[]
   if(data.gmail_connected){
@@ -96,7 +100,7 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
     let calendarAccounts:Array<{email:string|null}>=[]
     try{
       const {getCalendarAccountAccess}=await import('@/lib/services/google-calendar-accounts')
-      calendarAccounts=await getCalendarAccountAccess(params.actor.legacyTelegramId,data.google_refresh_token?String(data.google_refresh_token):null)
+      calendarAccounts=await getCalendarAccountAccess(owner,data.google_refresh_token?String(data.google_refresh_token):null)
     }catch{calendarAccounts=[]}
     const emails=calendarAccounts.map(a=>a.email).filter((e):e is string=>!!e)
     if(emails.length>1){

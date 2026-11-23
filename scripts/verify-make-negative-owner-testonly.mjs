@@ -151,6 +151,40 @@ await check('verified negative WhatsApp owner can edit its own existing deck',tr
   assert.ok(h.docReads.every(owner=>owner==='-42'),'unverified cross-tenant document read')
 })
 
+// Regression 23 Nov: persisted UUID owner identity must be canonical signed BIGINT,
+// not trimmed or rounded before a privileged deck/sheet save. Every test executes
+// unchanged production functions inside this fixture; nothing reaches a provider.
+await check('signed 64-bit extrema remain valid UUID-bound owners',true,async()=>{
+  for(const owner of ['9223372036854775807','-9223372036854775808']){
+    const h=fixture({owner,legacy:42})
+    assert.equal((await h.run())?.status,'completed',owner)
+    assertSaved(h,owner)
+    assert.deepEqual(h.ownerQueries,['fictional-uuid'])
+  }
+})
+await check('persisted BIGINT owner stays exact, without numeric alias',true,async()=>{
+  const owner=BigInt('9223372036854775807')
+  const h=fixture({owner,legacy:42})
+  assert.equal((await h.run())?.status,'completed')
+  assertSaved(h,'9223372036854775807')
+})
+await check('out-of-range signed 64-bit UUID owner fails closed before generation',true,async()=>{
+  for(const owner of ['9223372036854775808','9999999999999999999','-9223372036854775809']){
+    const h=fixture({owner,legacy:42})
+    assert.equal((await h.run())?.status,'failed',owner)
+    assert.equal(h.generated.length,0,'model must not run for '+owner)
+    assert.equal(h.saved.length,0,'doc must not save for '+owner)
+  }
+})
+await check('noncanonical persisted UUID owner cannot alias another account',true,async()=>{
+  for(const owner of [' 42','42 ','+42','042','-042','42\\n','-0']){
+    const h=fixture({owner,legacy:42})
+    assert.equal((await h.run())?.status,'failed',JSON.stringify(owner))
+    assert.equal(h.generated.length,0)
+    assert.equal(h.saved.length,0)
+  }
+})
+
 console.log('MAKE SIGNED WHATSAPP OWNER: controls '+controls+' PASS / '+controlFailures+
   ' FAIL; mandatory '+mandatoryPass+' PASS / '+mandatoryFail+' FAIL')
 if(controlFailures)process.exitCode=2

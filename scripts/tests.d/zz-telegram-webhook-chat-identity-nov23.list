@@ -1,0 +1,2 @@
+# Signed Telegram webhook chat-owner admission; actual route in a sealed VM, no provider traffic.
+node scripts/verify-telegram-webhook-chat-identity-nov23.mjs
