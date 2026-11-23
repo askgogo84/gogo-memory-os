@@ -126,3 +126,47 @@ for(const [date,clock] of [['2026-11-01T06:00:00Z','1:30 am'],['2026-03-08T06:00
 }
 reset();rows=Array.from({length:101},(_,i)=>({...fund,id:String(i)}));assert.equal((await run()).status,'failed');assert.equal(writes.length,0)
 console.log('PASS: actual compound entry point preserves explicit named reminder over recent context; owner, one-off state, timezones/day, CAS, exact read-back and no-insert/no-retry controls')
+
+// The web route calls this real router before processIncomingMessage's calendar
+// preparation path. The incident was intercepted here before reaching the planner.
+let off=false,legacyCalls=0,calendarCalls=0,handlerThrows=false,importFails=false
+let featureSurfaces:string[]=[]
+const feature:any={}
+const none=new Proxy({}, {get:()=>()=>null})
+runInNewContext(ts.transpileModule(readFileSync('lib/feature-intents.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+  exports:feature,Date:FixtureDate,Intl,URL,console,process:{env:{}},fetch:()=>{throw new Error('No provider/network allowed')},
+  require:(name:string)=>{
+    if(name==='@/lib/agent/compound-planner'){
+      if(importFails)throw new Error('fixture import failure')
+      return {...actual,tryRunExpiryReminderPlan:async(p:any)=>{featureSurfaces.push(p.surface);if(handlerThrows)throw new Error('fixture handler failure');return actual.tryRunExpiryReminderPlan(p)}}
+    }
+    if(name==='@/lib/bot/input-normalizer')return {normalizeUserInputForRouting:(text:string)=>({text,changed:false,reasons:[]})}
+    if(name==='@/lib/agent/adaptive-autonomy')return {parseAutonomyCommand:()=>null,capabilityIsOff:async(owner:number,cap:string)=>{assert.equal(owner,-42);assert.equal(cap,'reminders');return off}}
+    if(name==='@/lib/agent/adaptive-trust')return {isAdaptiveTrustQuery:()=>false}
+    if(name==='@/lib/bot/handlers/followup-state')return {getLatestFollowupState:async()=>{calendarCalls++;return null}}
+    if(name==='@/lib/bot/handlers/calendar-actions')return {getCalendarTokens:async()=>({connected:false}),parseCalendarCreate:(text:string)=>{calendarCalls++;assert.notEqual(text,command,'named reminder must not reach calendar preparation');return null}}
+    if(name==='@/lib/feature-intents-legacy')return {routeFeatureIntent:async()=>{legacyCalls++;return 'legacy-control'}}
+    if(name==='@/lib/supabase-admin')return {supabaseAdmin:database}
+    if(name==='@/lib/channels/whatsapp'||name==='@/lib/google-calendar'||name==='@/lib/agent/whatsapp-bridge')return new Proxy({}, {get:()=>()=>{throw new Error('No provider or unrelated bridge allowed')}})
+    return none
+  },
+})
+function resetFeature(){reset();off=false;legacyCalls=0;calendarCalls=0;handlerThrows=false;importFails=false;featureSurfaces=[]}
+for(const surface of ['web','whatsapp']){
+  resetFeature();const reply=await feature.routeFeatureIntent('test-owner',command,{telegramId:-42,surface})
+  assert.match(reply,/Reminder updated/);assert.equal(rows[0].remind_at,'2026-11-23T10:50:00.000Z');assert.match(rows[0].message,/4:30 pm/)
+  assert.equal(applied,1);assert.equal(rows.length,4);assert.equal(legacyCalls,0);assert.equal(calendarCalls,0);assert.deepEqual(featureSurfaces,[surface])
+}
+resetFeature();off=true;assert.match(await feature.routeFeatureIntent('test-owner',command,{telegramId:-42,surface:'web'}),/Reminders are currently off/);assert.equal(reads.length,0);assert.equal(legacyCalls,0)
+for(const owner of [0,NaN,9007199254740992]){
+  resetFeature();assert.match(await feature.routeFeatureIntent('test-owner',command,{telegramId:owner,surface:'web'}),/verify the reminder owner/);assert.equal(reads.length,0);assert.equal(legacyCalls,0)
+}
+for(const failure of ['handler','import','readback']){
+  resetFeature();handlerThrows=failure==='handler';importFails=failure==='import';if(failure==='readback')scenario='readback-error'
+  assert.match(await feature.routeFeatureIntent('test-owner',command,{telegramId:-42,surface:'web'}),/verify/);assert.equal(legacyCalls,0);assert.equal(calendarCalls,0);assert.ok(writes.length<=1)
+}
+for(const text of ['Create a reminder to update my passport tomorrow','Make a reminder to update my passport tomorrow','Move my calendar meeting to 4:30 pm','Move my calendar event “reminder” to 4:30 pm']){
+  resetFeature();assert.equal(actual.isExplicitReminderMutationCommand(text),false,text)
+  assert.equal(await feature.routeFeatureIntent('test-owner',text,{telegramId:-42,surface:'web'}),'legacy-control');assert.equal(writes.length,0);assert.equal(legacyCalls,1)
+}
+console.log('PASS: actual feature router gives explicit reminder subjects first refusal before calendar/legacy, preserves surface, respects off/owner guards, and fails closed without fallback')

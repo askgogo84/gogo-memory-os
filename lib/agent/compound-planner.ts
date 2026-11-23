@@ -195,7 +195,7 @@ async function readReminderQuery(actor: AgentActor, text: string) {
 }
 
 
-function parseReminderMutation(text: string): { target: string | null; timeText: string; unresolved?: boolean; meetingStart?: string; zone?: string; meetingZone?: string } | null {
+function parseReminderMutation(text: string): { target: string | null; timeText: string; unresolved?: boolean; meetingStart?: string; zone?: string; meetingZone?: string; hasSubject?: boolean } | null {
   const raw = String(text || '').trim().replace(/\s+/g, ' ')
   if (!/\breminder\b/i.test(raw)) return null // Generic verbs cannot establish a reminder identity.
   if (!/^(?:please\s+)?(?:move|reschedule|change|update)\b/i.test(raw) && !/^(?:please\s+)?make\s+(?:my|the|existing|it|that|this)\b/i.test(raw)) return null
@@ -211,7 +211,7 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
   const tail=head?raw.slice(head[0].length):''
   // The new clock belongs after this reminder subject, never inside its title.
   const time=tail.match(/^\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b(?:\s+(today|tomorrow))?/i)
-  if(!time)return {target,timeText:'',unresolved:true}
+  if(!time)return {target,timeText:'',unresolved:true,hasSubject:!!head}
   const afterTime=tail.slice(time[0].length)
   const zonePattern=/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/
   const zoneMatch=afterTime.match(zonePattern)
@@ -234,7 +234,12 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
     || /^\s+(?:on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|or)\b/i.test(remaining)
     || (/\bmeeting\s+starts?\b/i.test(afterTime) && !meetingStart)
     || unsupportedMeetingDate
-  return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone, meetingZone }
+  return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone, meetingZone, hasSubject:true }
+}
+
+/** First refusal only for a parsed reminder subject, never a calendar object's quoted title. */
+export function isExplicitReminderMutationCommand(text: string): boolean {
+  return parseReminderMutation(text)?.hasSubject === true
 }
 
 async function tryRunReminderMutation(params: { actor: AgentActor; surface: AgentSurface; text: string }): Promise<CompoundRunResult | null> {
