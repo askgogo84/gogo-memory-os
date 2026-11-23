@@ -100,7 +100,7 @@ const db={from(table:string){
     if(table==='agent_artifacts'&&!inserted.length&&!patch){reportQueries++;if(reportReadError)return {data:null,error:{message:'fixture outage'}}}
     if(!rows[table])return {data:single?null:[],error:null}
     if(inserted.length)rows[table].push(...inserted)
-    const selected=inserted.length?inserted:rows[table].filter(row=>filters.every(([k,v])=>String(row[k])===String(v)))
+    const selected=inserted.length?inserted:rows[table].filter(row=>filters.every(([k,v])=>String(k==='content_json->>runId' ? row.content_json?.runId : row[k])===String(v)))
     if(patch)selected.forEach(row=>Object.assign(row,patch))
     return {data:single?selected[0]||null:selected,error:null}
   }).then(resolve,reject)}};return q
@@ -122,6 +122,7 @@ mocks['./classifier']=load('lib/agent/classifier.ts')
 mocks['./approval-fingerprint']=load('lib/agent/approval-fingerprint.ts')
 mocks['./approval-binding']=load('lib/agent/approval-binding.ts')
 mocks['./model-usage']={recordTaskModelUsage:async()=>{}}
+mocks['./make-request']=load('lib/agent/make-request.ts')
 let plannerCalls=0
 mocks['./planner-provider']={completeAgentPlanPrompt:async()=>{plannerCalls++;return JSON.stringify({title:'Audit',reason:'Read and list',steps:[{tool:'email',title:'Read mail',instruction},{tool:'lists',title:'Create subscription audit list',instruction:"Create a list titled 'Gmail Subscription Audit (Last 14 Days)' with columns: Service Name | Amount | Currency | Renewal Date. Populate only with data explicitly shown in the emails retrieved."}]})}}
 const planner=load('lib/agent/general-planner.ts')
@@ -274,4 +275,59 @@ const numericPlanner=load('lib/agent/general-planner.ts')
 const numericReport=await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:researchMission,prepared:{...prepared,plan:researchPlan}})
 assert.ok(numericReport.text.includes(numericUrl),'real planner persistence and publication retain complete numeric citations')
 console.log('PASS: actual planner retains numeric public source URLs while credential-bearing URLs remain excluded')
+
+const nasaSource = 'https://www.nasa.gov/image-article/nasas-lro-observes-chandrayaan-3-landing-site/'
+const isroSource = 'https://www.isro.gov.in/ISRO_EN/Release_of_Chandrayaan-3_science_data_to_the_Scientific_Community.html'
+const restrictedMission = `Create a private research report titled Lunar evidence. Use only these official sources: ${nasaSource} and ${isroSource} . Name the observation date if visible.`
+const sourceQueries: string[] = []
+mocks['@/lib/web-search']={searchWebResults:async (query:string,options:any)=>{
+  assert.equal(options.pageTextOnly,true)
+  assert.equal(options.includeDomains[0],new URL(query).hostname)
+  sourceQueries.push(query)
+  return query.includes('nasa.gov') ? [
+    {url:'https://www.nasa.gov/unrelated',title:'Unrelated search result',snippet:'Wrong observation date'},
+    {url:nasaSource,title:'NASA image archive',snippet:'LRO acquired an oblique view four days after the Aug. 23 landing.'},
+  ] : [{url:'https://www.isro.gov.in/unrelated',title:'Wrong source',snippet:'Unrelated'}]
+}}
+mocks['./planner-provider'].completeAgentPlanPrompt=async()=>{assert.fail('A named-source report must not invent a synthesized claim')}
+const restrictedPlan = await numericPlanner.planGeneralAgentRequest(restrictedMission)
+assert.deepEqual(Array.from(restrictedPlan.steps,(s:any)=>s.tool),['web_search','artifact'])
+const restrictedReport = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:restrictedMission,prepared:{...prepared,plan:restrictedPlan}})
+assert.deepEqual(sourceQueries,[mocks['./make-request'].researchSourceUrl(nasaSource),mocks['./make-request'].researchSourceUrl(isroSource)])
+assert.match(restrictedReport.text,/1 of 2 named sources/)
+assert.match(restrictedReport.text,/four days after the Aug. 23 landing/)
+assert.ok(restrictedReport.text.includes(nasaSource))
+assert.doesNotMatch(restrictedReport.text,/Wrong observation date|Wrong source|Unrelated search result/)
+assert.match(rows.agent_artifacts.at(-1).content_json.sections[0].result.text,/1 of 2/)
+const previousReportCount = rows.agent_artifacts.length
+for (const source of ['https://www.nasa.gov/moon','https://www.nasa.gov/mars']) {
+  const untitledMission = `Create a private research report. Use only these official sources: ${source}`
+  mocks['@/lib/web-search']={searchWebResults:async()=>[{url:source,title:'NASA archive',snippet:source}]}
+  const plan = await numericPlanner.planGeneralAgentRequest(untitledMission)
+  await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:untitledMission,prepared:{...prepared,plan}})
+}
+const independentReports = rows.agent_artifacts.slice(previousReportCount)
+assert.equal(independentReports.length,2,'untitled reports on the same site retain separate artifacts')
+assert.notEqual(independentReports[0].content_json.runId,independentReports[1].content_json.runId)
+assert.match(independentReports[0].content_json.sections[1].result.text,/nasa.gov\/moon/)
+assert.match(independentReports[1].content_json.sections[1].result.text,/nasa.gov\/mars/)
+const compoundMission = restrictedMission + ' Also create a task: Review the report.'
+mocks['./planner-provider'].completeAgentPlanPrompt = async () => JSON.stringify({title:'Report and task',reason:'Both outcomes',steps:[...restrictedPlan.steps,{tool:'tasks',title:'Create task Review the report',instruction:'Create task: Review the report'}]})
+const compoundPlan = await numericPlanner.planGeneralAgentRequest(compoundMission)
+assert.deepEqual(Array.from(compoundPlan.steps,(s:any)=>s.tool),['web_search','artifact','tasks'])
+mocks['@/lib/web-search']={searchWebResults:async (query:string)=>{
+  if (query.includes('isro.gov.in')) throw Error('search_unavailable')
+  return [{url:nasaSource,title:'NASA image archive',snippet:'LRO acquired an oblique view after the landing.'}]
+}}
+const partialOutagePlan = await numericPlanner.planGeneralAgentRequest(restrictedMission)
+const partialOutage = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:restrictedMission,prepared:{...prepared,plan:partialOutagePlan}})
+assert.match(partialOutage.text,/1 of 2 named sources/)
+assert.match(partialOutage.text,/Search was unavailable for 1/)
+assert.doesNotMatch(partialOutage.text,/No matching excerpt/)
+mocks['@/lib/web-search']={searchWebResults:async()=>{throw Error('search_unavailable')}}
+const savedReports = rows.agent_artifacts.length
+const outageResult = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:restrictedMission,prepared:{...prepared,plan:restrictedPlan}})
+assert.equal(outageResult.status,'failed')
+assert.equal(rows.agent_artifacts.length,savedReports)
+console.log('PASS: source-bound report saves only matched excerpts with coverage and no generated dates')
 

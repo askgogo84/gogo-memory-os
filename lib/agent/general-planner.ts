@@ -1,5 +1,5 @@
 import { recordTaskModelUsage, type ModelUsage } from './model-usage'
-import { isMakeDeliverableRequest } from './make-request'
+import { isMakeDeliverableRequest, researchSourceUrl, sourceBoundReport } from './make-request'
 import { completeAgentPlanPrompt } from './planner-provider'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -260,6 +260,15 @@ export function shouldUseGeneralPlanner(text: string) {
 }
 
 export async function planGeneralAgentRequest(text: string, onUsage?:(usage:ModelUsage)=>void, contextualBlock = ''): Promise<GeneralPlan | null> {
+  const restricted = sourceBoundReport(text)
+  if (restricted?.reportOnly) return {
+    title:restricted.title,
+    reason:'Collect public search excerpts from the named pages and save them in a private report.',
+    steps:[
+      {tool:'web_search',title:'Check the named public sources',instruction:'Find search excerpts for the requested reference pages.'},
+      {tool:'artifact',title:'Save the source-bound brief',instruction:'Save only the named-source evidence.',artifactType:'research_brief',artifactTitle:restricted.title},
+    ],
+  }
   const auditPlan=readOnlySubscriptionAuditPlan(text)
   if(auditPlan)return auditPlan
   if (!shouldUseGeneralPlanner(text)) return null
@@ -293,6 +302,7 @@ export async function prepareGeneralPlan(text:string,contextualBlock=''):Promise
 }
 
 export async function prepareGeneralPlanForActor(actor:AgentActor,text:string):Promise<PreparedGeneralPlan>{
+  if (sourceBoundReport(text)?.reportOnly) return prepareGeneralPlan(text)
   const pack=await buildContextPack({actor,text,options:{includeSemantic:true,maxFacts:12,horizonDays:60}}).catch(()=>null)
   return prepareGeneralPlan(text,pack?renderContextBlock(pack,3200):'')
 }
@@ -388,7 +398,8 @@ async function createArtifact(tg:number, runId:string, step:GeneralPlanStep, mis
   const { data: prior, error: priorError } = await supabaseAdmin.from('agent_steps')
     .select('ordinal,title,tool_name,status,output_json').eq('run_id',runId).eq('telegram_id',String(tg)).order('ordinal',{ascending:true})
   if(priorError)throw new Error(`general_plan_artifact_sources_failed:${priorError.message}`)
-  const sections = (prior || []).filter((x:any)=>x.status==='completed' && x.tool_name!=='artifact').map((x:any)=>({
+  const restricted = sourceBoundReport(missionText)
+  const sections = (prior || []).filter((x:any)=>x.status==='completed' && (restricted ? x.tool_name==='web_search' : x.tool_name!=='artifact')).map((x:any)=>({
     title:x.title, tool:x.tool_name, result:x.output_json || {},
   }))
   const title = step.artifactTitle || artifactTitleFromInstruction(step) || step.title || 'AskGogo artifact'
@@ -399,7 +410,20 @@ async function createArtifact(tg:number, runId:string, step:GeneralPlanStep, mis
     .slice(0,30).map((source:any)=>({title:safeLog(source.title,240),url:source.url.slice(0,2000),snippet:safeLog(source.snippet,1500)}))
   // Counts are telemetry, not the research itself. Retain readable citations even
   // if report synthesis is unavailable, and never present snippets as live prices.
-  if (publicSources.length) {
+  if (restricted) {
+    const matching = publicSources.filter(source => restricted.urls.includes(researchSourceUrl(source.url)))
+    const seen = new Map(matching.map(source => [researchSourceUrl(source.url), source]))
+    const unavailable = new Set(sections.flatMap(section => Array.isArray(section.result?.unavailableSources)
+      ? section.result.unavailableSources.filter((url:string) => restricted.urls.includes(url) && !seen.has(url)) : []))
+    const missing = restricted.urls.length - seen.size - unavailable.size
+    sections.length = 0
+    const readingNote = !restricted.urls.length ? 'Please provide one to five public HTTPS source pages without credentials or query parameters.'
+      : `Search excerpts were found for ${seen.size} of ${restricted.urls.length} named sources.${unavailable.size ? ` Search was unavailable for ${unavailable.size}.` : ''}${missing ? ` No matching excerpt was returned for ${missing}.` : ''} Excerpts are shown as returned by search. Publication dates do not establish event dates.`
+    sections.push({title:'Source coverage',tool:'artifact',result:{text:readingNote}})
+    for (const source of seen.values()) {
+      sections.push({title:source.title,tool:'web_search',result:{text:`${source.snippet}\n\n${source.url}`,sourceUrls:[source.url]}})
+    }
+  } else if (publicSources.length) {
     for (const section of sections) {
       if (section.tool!=='web_search' || !Array.isArray(section.result?.results)) continue
       section.result={...section.result,sourceUrls:section.result.results.map((source:any)=>publicResearchUrl(source?.url)).filter(Boolean),reply:section.result.results.map((source:any)=>
@@ -423,8 +447,11 @@ async function createArtifact(tg:number, runId:string, step:GeneralPlanStep, mis
   const content_json = { runId, sections }
   const source_refs = [{type:'agent_run',id:runId}]
 
-  const { data: existing } = await supabaseAdmin.from('agent_artifacts')
-    .select('id,title,content_json,updated_at').eq('telegram_id',String(tg)).eq('type',type).ilike('title',title).order('created_at',{ascending:false}).limit(1).maybeSingle()
+  const artifactLookup = supabaseAdmin.from('agent_artifacts')
+    .select('id,title,content_json,updated_at').eq('telegram_id',String(tg)).eq('type',type).ilike('title',title)
+  // Retrying the same run can reuse its report. Untitled requests from other runs are independent.
+  if (restricted && !restricted.explicitTitle) artifactLookup.eq('content_json->>runId',runId)
+  const { data: existing } = await artifactLookup.order('created_at',{ascending:false}).limit(1).maybeSingle()
   if (existing?.id) {
     // Make v2: regenerating keeps history and never overwrites what the owner edited (sections in userEdits, notes).
     const now=new Date().toISOString()
@@ -504,7 +531,22 @@ export async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep, 
 
 async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;missionText:string;messageId?:string|number|null}) {
   const { actor, step } = params
-  if (step.tool === 'web_search') return executeVerifiedMissionWebSearch(step)
+  if (step.tool === 'web_search') {
+    const restricted = sourceBoundReport(params.missionText)
+    if (!restricted) return executeVerifiedMissionWebSearch(step)
+    const {searchWebResults} = await import('@/lib/web-search')
+    const pages = await Promise.allSettled(restricted.urls.map(url => searchWebResults(url,{
+      includeDomains:[new URL(url).hostname],pageTextOnly:true,timeoutMs:6000,
+    })))
+    const unavailableSources = restricted.urls.filter((_,i) => pages[i].status === 'rejected')
+    if (unavailableSources.length && unavailableSources.length === restricted.urls.length) throw new Error('named_source_search_unavailable')
+    const results = pages.flatMap((page,i) => {
+      if (page.status !== 'fulfilled') return []
+      const exact = page.value.find(result => result.snippet && researchSourceUrl(result.url) === restricted.urls[i])
+      return exact ? [exact] : []
+    })
+    return {text:`Found search excerpts for ${results.length} of ${restricted.urls.length} named pages.`,output:{results,unavailableSources}}
+  }
   if (step.tool === 'artifact') {
     const artifact = await createArtifact(actor.legacyTelegramId, params.runId, step, params.missionText)
     return { text:artifactReply(artifact), output:{ artifactId:artifact.id, type:step.artifactType || 'research_brief' } }
