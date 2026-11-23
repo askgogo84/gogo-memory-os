@@ -31,8 +31,13 @@ export async function askWorkspace(owner: string, workspaceId: string, question:
   if (/\b(today|now|live|current|bank|fintech|balance|transaction|account)\b/i.test(q)) {
     return boundary('This is a read-only view of recorded hospitality pilot data, not a live POS or banking connection. Ask for a recorded-order summary, cancellation counts or stock status. No live provider was queried.')
   }
-  if (!/\b(brief|summary|summari[sz]e|overview|orders?|cancellations?|cancelled|stock|inventory|breakfast|cut.?off)\b/i.test(q)) {
-    return boundary('I can summarise recorded pilot orders, count cancellations and out-of-stock reasons, or report recorded stock availability. Other industry questions need their own connected, verified source.')
+  // Accept complete supported questions, not just an order/stock keyword. Ignoring a date,
+  // outlet, customer or other requested filter would misrepresent all-history totals.
+  const intent = q.toLowerCase().replace(/[?.!]+$/, '').replace(/\s+/g, ' ')
+  const stockQuestion = ['stock', 'inventory', 'stock status', 'show recorded stock availability'].includes(intent)
+  const summaryQuestion = ['summary', 'brief', 'overview', 'summarise recorded orders', 'summarize recorded orders', 'count recorded cancellations', 'how many recorded orders', 'how many recorded cancellations'].includes(intent)
+  if (!stockQuestion && !summaryQuestion) {
+    return boundary('This pilot supports all-history workspace totals only; date, outlet and other filters are not supported. Choose “Summarise recorded orders”, “Count recorded cancellations” or “Show recorded stock availability”. I have not answered the requested scoped or unsupported question.')
   }
 
   const { data: workspace, error: workspaceError } = await supabaseAdmin.from('workspaces')
@@ -62,8 +67,8 @@ export async function askWorkspace(owner: string, workspaceId: string, question:
   evidence.lastRecordAt = last.data?.created_at || null
   const format = (n: number) => n.toLocaleString('en-IN')
   const rate = orders ? `${(cancelled / orders * 100).toFixed(1)}%` : 'not available (no recorded orders)'
-  const lines = /\b(stock|inventory)\b/i.test(q) && !/\bcancellations?\b/i.test(q)
+  const lines = stockQuestion
     ? [`${format(items)} recorded menu items across ${ids.length} pilot outlets.`, `${format(unavailable)} marked unavailable in these records.`, 'Suggested review: check outlet-level availability against the POS before changing any menu.']
     : [`${format(orders)} recorded orders across ${ids.length} pilot outlets.`, `${format(cancelled)} cancellations; recorded cancellation rate ${rate}.`, `${format(outOfStock)} cancellations marked out of stock.`, 'Suggested review: investigate out-of-stock items and cut-off rules against the source system. These counts alone do not establish a cause or a fix.']
-  return { answer: [...lines, 'Pilot records only. No order, stock setting, refund or payment was changed.'].join('\n'), source: evidence }
+  return { answer: ['All recorded history for this workspace (no date, outlet or other filters).', ...lines, 'Pilot records only. No order, stock setting, refund or payment was changed.'].join('\n'), source: evidence }
 }
