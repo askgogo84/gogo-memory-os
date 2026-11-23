@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { canonicalizeLinkUrl, detectLinkPlatform, isLinkVaultQuery, isLinkVaultSaveRequest } from '../lib/services/link-vault'
+import { isMakeDeliverableRequest, researchSourceUrl, sourceBoundReport } from '../lib/agent/make-request'
 
 assert.equal(
   canonicalizeLinkUrl('https://www.instagram.com/reel/ABC123/?utm_source=share&igshid=secret#frag'),
@@ -14,6 +15,23 @@ assert.equal(detectLinkPlatform('https://github.com/a/b'),'github')
 assert.equal(detectLinkPlatform('https://instagram.com/reel/x'),'instagram')
 assert.equal(isLinkVaultSaveRequest('Save this — good reel on consumer app marketing https://instagram.com/reel/abc'),true)
 assert.equal(isLinkVaultSaveRequest('Book this restaurant https://example.com/reserve'),false)
+const sourceReport = 'Create a private research report titled Chandrayaan-3 evidence check. Use only these official sources: https://www.isro.gov.in/ISRO_EN/Release_of_Chandrayaan-3_science_data_to_the_Scientific_Community.html and https://www.nasa.gov/image-article/nasas-lro-observes-chandrayaan-3-landing-site/ . Explain what ISRO verified on the surface and what NASA verified from orbit. Put the supporting source next to each finding and save the report in Make.'
+assert.equal(isLinkVaultSaveRequest(sourceReport),false,'a source URL is not permission to bookmark it')
+assert.equal(isMakeDeliverableRequest(sourceReport),true,'the requested outcome remains a private artifact')
+assert.equal(isLinkVaultSaveRequest('Make a comparison table with evidence from https://example.com/details'),false)
+assert.equal(isLinkVaultSaveRequest('Save this link https://example.com/details as an example of how to make a report'),true)
+assert.equal(isLinkVaultSaveRequest('https://example.com/details'),true)
+assert.deepEqual(sourceBoundReport(sourceReport),{
+  title:'Chandrayaan-3 evidence check',
+  urls:[
+    'https://isro.gov.in/ISRO_EN/Release_of_Chandrayaan-3_science_data_to_the_Scientific_Community.html',
+    'https://nasa.gov/image-article/nasas-lro-observes-chandrayaan-3-landing-site',
+  ],
+})
+assert.deepEqual(sourceBoundReport('Make a brief. Use only these sources: https://127.0.0.1/example').urls,[])
+assert.deepEqual(sourceBoundReport('Make a brief. Use only these sources: https://a.example.net/report?token=private').urls,[])
+assert.equal(researchSourceUrl('https://www.nasa.gov/image-article/other/'),'https://nasa.gov/image-article/other')
+assert.equal(researchSourceUrl('https://nasa.gov.example.org/private/'),'')
 assert.equal(isLinkVaultQuery('Find that Instagram reel I saved about marketing'),true)
 assert.equal(isLinkVaultQuery('Show all links I saved about agent memory last month'),true)
 assert.equal(isLinkVaultQuery('What was that GitHub repo for saving links?'),true)
