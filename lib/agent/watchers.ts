@@ -704,18 +704,22 @@ async function continueInboxOrderAlerts(watcher:any,condition:InboxTriageWatcher
 }
 
 async function processMailAlerts(watcher:any,condition:InboxTriageWatcherCondition,actor:AgentActor,telegramId:string,fresh:any[],seen:string[],messages:any[],now:Date) {
+  // The persisted watcher owner is signed BIGINT text; never round it before private context reads.
+  const owner=exactWatcherOwner(telegramId)
+  if(!owner||owner!==telegramId||BigInt(owner)<BigInt('-9223372036854775808')||BigInt(owner)>BigInt('9223372036854775807'))
+    throw new Error('mail_alert_context_owner_invalid')
   const ma=await import('@/lib/email/mail-alerts')
   const rules=ma.normalizeRules((watcher.condition_json as any)?.mailAlerts)
   const tz=(actor as any).timezone||'Asia/Kolkata'
   const prior:any=watcher.last_state_json?.mailAlerts||null
-  const attention=await import('@/lib/email/attention-store').then(m=>m.loadRules(Number(telegramId))).catch(()=>[] as any[])
+  const attention=await import('@/lib/email/attention-store').then(m=>m.loadRules(owner)).catch(()=>[] as any[])
   // Context the person would want with the alert: today's meetings and saved trips. Best effort, never required.
   const today=await Promise.race([
     import('./calendar-read').then(m=>m.executeReadOnlyCalendarStep({actor,instruction:'what is on my calendar today',missionText:'what is on my calendar today'} as any))
       .then((out:any)=>Array.isArray(out?.output?.events)?out.output.events.filter((e:any)=>/T\d{2}:\d{2}/.test(String(e.start||''))).map((e:any)=>({summary:String(e.summary||''),start:String(e.start),end:e.end?String(e.end):undefined,attendees:(e.attendees||[]).map((a:any)=>({email:String(a.email||'')}))})):[]),
     new Promise<any[]>(r=>setTimeout(()=>r([]),6000)),
   ]).catch(()=>[] as any[])
-  const trips=await supabaseAdmin.from('travel_tickets').select('from_city,to_city,depart_at,arrive_at').eq('telegram_id',Number(telegramId))
+  const trips=await supabaseAdmin.from('travel_tickets').select('from_city,to_city,depart_at,arrive_at').eq('telegram_id',owner)
     .gte('depart_at',new Date(now.getTime()-2*86_400_000).toISOString()).lte('depart_at',new Date(now.getTime()+14*86_400_000).toISOString()).order('depart_at',{ascending:true}).limit(4)
     .then(({data}:any)=>(data||[]).map((t:any)=>({fromCity:t.from_city,toCity:t.to_city,departAt:String(t.depart_at),returnAt:null})),()=>[])
   const emails=fresh.map(ma.toAttentionEmail).filter((e:any):e is NonNullable<typeof e>=>!!e)

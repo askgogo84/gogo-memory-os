@@ -93,7 +93,7 @@ async function main(){
   const owned=()=>wrongOwner?{error:null,data:null}:result
   const q:any={then:(r:any)=>Promise.resolve(owned()).then(r),maybeSingle:async()=>owned()}
   for(const method of ['select','eq','gte','lt','order'])q[method]=()=>q
-  q.eq=(key:string,value:any)=>{if(key==='telegram_id'&&value!==123)wrongOwner=true;return q}
+  q.eq=(key:string,value:any)=>{if(key==='telegram_id'&&String(value)!=='123')wrongOwner=true;return q}
   for(const method of ['gte','lt'])q[method]=(key:string,value:string)=>{if(table==='reminders')reminderFilters.push({method,key,value});return q}
   return q // No insert/update/delete method: any mutation fails the test.
  }

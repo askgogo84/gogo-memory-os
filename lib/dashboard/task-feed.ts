@@ -26,7 +26,7 @@ export type FeedItem = {
   /** Duet parity: a finished task waiting for the owner's Mark complete / Not yet. */
   confirm?: { runId: string; runIds?: string[]; continueHref: string }
 }
-export type TaskFeed = { need: FeedItem[]; radar: FeedItem[]; recent: FeedItem[]; recentUnavailable: boolean; radarCount: number }
+export type TaskFeed = { need: FeedItem[]; radar: FeedItem[]; recent: FeedItem[]; recentUnavailable: boolean; radarCount: number; missing?: Partial<Record<FeedTab, string[]>> }
 
 export const EMPTY_FEED: TaskFeed = { need: [], radar: [], recent: [], recentUnavailable: false, radarCount: 0 }
 
@@ -44,7 +44,7 @@ export function feedTab(raw: unknown): FeedTab {
 export async function getTaskFeed(telegramId: string, now = new Date()): Promise<TaskFeed> {
   const tg = String(telegramId || '')
   if (!tg) return EMPTY_FEED
-  const [approvals, handoffs, watchers, running, recent, finished, deferred, clashes] = await Promise.all([
+  const reads = await Promise.allSettled([
     supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,created_at').eq('telegram_id', tg).eq('status', 'pending').order('created_at', { ascending: false }).limit(10),
     getPendingBrowserHandoffs(tg),
     supabaseAdmin.from('agent_watchers').select('id,type,next_check_at,created_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
@@ -64,6 +64,26 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     supabaseAdmin.from('agent_open_loops').select('id,title,summary,due_at,updated_at').eq('telegram_id', tg).eq('status', 'active')
       .eq('source_type', 'calendar_conflict').gte('due_at', now.toISOString()).order('due_at', { ascending: true }).limit(5),
   ])
+  // Each query can reject or return an error in a fulfilled PostgREST response.
+  // Retain successful sections and expose only fixed source labels to the owner.
+  const missing: NonNullable<TaskFeed['missing']> = {}
+  function unavailable(tab: FeedTab, label: string) {
+    (missing[tab] ??= []).push(label)
+  }
+  function rows<T extends { data: unknown; error?: unknown }>(result: PromiseSettledResult<T>, tab: FeedTab, label: string) {
+    if (result.status === 'fulfilled' && !result.value.error && Array.isArray(result.value.data)) return result.value
+    unavailable(tab, label)
+    return null
+  }
+  const approvals = rows(reads[0], 'need', 'approvals')
+  const handoffs = reads[1].status === 'fulfilled' ? reads[1].value : null
+  if (!handoffs) unavailable('need', 'browser handoffs')
+  const watchers = rows(reads[2], 'radar', 'background watches')
+  const running = rows(reads[3], 'radar', 'running tasks')
+  const recent = rows(reads[4], 'recent', 'recent outcomes')
+  const finished = rows(reads[5], 'need', 'tasks awaiting confirmation')
+  const deferred = rows(reads[6], 'need', 'deferred approvals')
+  const clashes = rows(reads[7], 'need', 'calendar conflicts')
   const deferredUntil = new Map<string, number>()
   for (const row of ((deferred as any)?.data || [])) {
     const id = String(row?.metadata_json?.approval_id || ''), until = Date.parse(String(row?.metadata_json?.until || ''))
@@ -86,8 +106,10 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   })
   // Several stops on the same site are one thing to do: one row with a count.
   const handoffRows = (handoffs || []).filter(h => !approvalRows.some(a => String(a.run_id) === h.id))
-  const groups = [...handoffRows.reduce((map, h) => { const g = map.get(h.title); if (g) g.count += 1 + h.repeats; else map.set(h.title, { first: h, count: 1 + h.repeats }); return map }, new Map<string, { first: typeof handoffRows[number]; count: number }>()).values()]
-  for (const { first, count } of groups) {
+  // The handoff reader already collapses repeated stops by title, reason and site.
+  // Independent sites with the same task title must keep their own run links.
+  for (const first of handoffRows) {
+    const count = 1 + first.repeats
     const state = stateForHandoff(first)
     // 22 Oct live ("When I tried to take control"): the cloud browser closes after 20 minutes, but the card still said
     // Take control. A cloud handoff older than that says Restart; the browser page checks it live and offers restore.
@@ -95,8 +117,8 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     need.push({
       id: `ho-${first.id}`, tab: 'need', state, tag: closed ? 'Browser closed' : state === 'otp' ? 'Code needed' : 'Sign-in needed', title: friendlyTaskTitle(first.title),
       sub: closed ? 'The secure browser closed after 20 minutes. Open it to restart the same task.' : count > 1 ? `Stopped here ${count} times. Latest: ${readableRunSummary(first.summary)}` : readableRunSummary(first.summary),
-      live: GOGO_STATE_LINE[state], href: count > 1 ? '/dashboard/agent?section=approvals' : `/dashboard/activity/${first.id}/browser`,
-      action: closed ? 'Restart' : count > 1 ? 'Open' : 'Take control', at: first.updatedAt,
+      live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(first.id)}/browser`,
+      action: closed ? 'Restart' : 'Take control', at: first.updatedAt,
     })
   }
 
@@ -165,5 +187,5 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   })
     // The tab count is the untruncated total, not the display rows (12 shown of 30 watches still says 30).
   const watcherTotal = Number((watchers as any)?.count ?? ((watchers as any)?.data || []).length)
-  return { need, radar, recent: recentItems, recentUnavailable: Boolean((recent as any)?.error), radarCount: workingCount + watcherTotal }
+  return { need, radar, recent: recentItems, recentUnavailable: !recent, missing, radarCount: workingCount + watcherTotal }
 }

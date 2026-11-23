@@ -37,8 +37,24 @@ function exactAttentionOwner(value: unknown): number {
 
 // ---------- rules and events ----------
 
-export async function loadRules(telegramId: number): Promise<AttentionRule[]> {
-  telegramId = exactAttentionOwner(telegramId)
+// Background mail-alert watchers can have signed BIGINT owners beyond JS's safe-integer range.
+// Preserve the exact decimal text for those read-only rules lookups; keep legacy safe IDs numeric.
+function exactRuleOwner(value: number | string): number | string {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value === 0) throw new Error('email_attention_owner_invalid')
+    return value
+  }
+  if (typeof value !== 'string' || !/^-?[1-9]\d{0,18}$/.test(value))
+    throw new Error('email_attention_owner_invalid')
+  const bigint = BigInt(value)
+  if (bigint < BigInt('-9223372036854775808') || bigint > BigInt('9223372036854775807'))
+    throw new Error('email_attention_owner_invalid')
+  return bigint >= BigInt(Number.MIN_SAFE_INTEGER) && bigint <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(bigint) : value
+}
+
+export async function loadRules(telegramId: number | string): Promise<AttentionRule[]> {
+  telegramId = exactRuleOwner(telegramId)
   const { data, error } = await supabaseAdmin.from('email_attention_rules')
     .select('id,kind,match_type,match_value,category,label,source').eq('telegram_id', telegramId).eq('active', true).limit(300)
   if (error) { console.error('EMAIL_RULES_READ_FAILED:', error.message); return [] }

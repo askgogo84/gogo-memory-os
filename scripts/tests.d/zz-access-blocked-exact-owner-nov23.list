@@ -1,0 +1,1 @@
+npx tsx scripts/verify-access-blocked-exact-owner-nov23.mts

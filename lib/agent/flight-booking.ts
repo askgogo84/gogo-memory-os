@@ -255,9 +255,26 @@ async function savePending(tg: string, state: Record<string, unknown>, reply: st
   if (error) throw new Error('flight_booking_state_write_failed')
 }
 
+/**
+ * Preserve the exact signed BIGINT for owner-bound flight conversation reads.
+ * AgentActor normally contains a safe legacy number; a future exact-text actor must
+ * not be rounded through Number before a privileged Supabase predicate.
+ */
+function exactBookingConversationOwner(actor: AgentActor): string | null {
+  const raw: unknown = actor.legacyTelegramId
+  if (typeof raw === 'number' && !Number.isSafeInteger(raw)) return null
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null
+  const owner = String(raw)
+  if (!/^-?[1-9]\d{0,18}$/.test(owner)) return null
+  const id = BigInt(owner)
+  return id >= BigInt('-9223372036854775808') && id <= BigInt('9223372036854775807') ? owner : null
+}
+
 /** The person's message before this one (the details they sent before a re-ask). Chat history only; nothing new is stored. */
 async function previousUserMessage(actor: AgentActor, current: string): Promise<string | null> {
-  const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', Number(actor.legacyTelegramId)).eq('role', 'user').order('created_at', { ascending: false }).limit(3)
+  const owner = exactBookingConversationOwner(actor)
+  if (!owner) return null
+  const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', owner).eq('role', 'user').order('created_at', { ascending: false }).limit(3)
   if (error || !Array.isArray(data)) return null
   const rows = data.map(r => String(r.content || ''))
   const i = rows.findIndex(r => norm(r) === norm(current))
@@ -351,8 +368,9 @@ const knownDetailsLines = (k: KnownDetails, title: string) => `${title} ${k.name
 
 /** The traveller-details question is open only while it is the latest assistant message and recent. */
 async function loadPending(actor: AgentActor, text: string): Promise<{ runId: string; optionIndex: number; reuse?: boolean; retry?: boolean; known?: boolean } | null> {
-  const tg = String(actor.legacyTelegramId)
-  const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', Number(actor.legacyTelegramId)).order('created_at', { ascending: false }).limit(6)
+  const tg = exactBookingConversationOwner(actor)
+  if (!tg) return null
+  const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(6)
   if (error) throw new Error('flight_booking_conversation_read_failed')
   const rows = Array.isArray(data) ? data : []
   const previous = rows.find(r => r.role === 'assistant')

@@ -31,6 +31,9 @@ const runs = [
   { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-16T08:18:00Z', metadata_json: { plan: { venue: 'Divya Dental', to: 'not-a-number', test: false, source: typed } } },
   { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-15T08:18:00Z', metadata_json: { plan: { venue: 'Meghana Foods', to: '+918022222222', test: false, source: 'justdial.com' } } },
   { telegram_id: OWNER, type: 'voice_call', status: 'failed', started_at: '2026-11-14T08:18:00Z', metadata_json: { plan: { venue: 'Truffles', to: '+918033333333', test: false, source: typed } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'outcome_unknown', started_at: '2026-11-14T09:18:00Z', metadata_json: { plan: { venue: 'Oberoi Hotel', to: '+918033333334', test: false, source: typed } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'running', started_at: '2026-11-14T10:18:00Z', metadata_json: { plan: { venue: 'Cafe Mondo', to: '+918033333335', test: false, source: typed } } },
+  { telegram_id: OWNER, type: 'voice_call', status: 'blocked', started_at: '2026-11-14T11:18:00Z', metadata_json: { plan: { venue: 'Hotel Rose', to: '+918033333336', test: false, source: typed } } },
   { telegram_id: OWNER, type: 'voice_call', status: 'completed', started_at: '2026-11-13T08:18:00Z', metadata_json: { plan: { venue: 'Hari Super Sandwich', to: '+918044444444', test: false, source: typed } } },
   { telegram_id: '999', type: 'voice_call', status: 'completed', started_at: '2026-11-19T08:18:00Z', metadata_json: { plan: { venue: 'Corner House', to: '+918099999999', test: false, source: typed } } },
 ]
@@ -47,6 +50,14 @@ const db = { from: (table: string) => {
 assert.deepEqual(await v.knownCallVenue(OWNER, 'Toit', db), { venue: 'Toit Indiranagar', phone: '+918012345678', source: 'the number you gave for Toit Indiranagar earlier' })
 assert.equal(await v.knownCallVenue(OWNER, 'Meghana Foods', db), null, 'a web-looked-up number is never reused')
 assert.equal(await v.knownCallVenue(OWNER, 'Truffles', db), null, 'a call the provider rejected never vouches for its number')
+assert.equal(await v.knownCallVenue(OWNER, 'Oberoi Hotel', db), null, 'an unknown outcome cannot become a trusted previous call')
+assert.equal(await v.knownCallVenue(OWNER, 'Cafe Mondo', db), null, 'a still-running call does not vouch for a number')
+assert.equal(await v.knownCallVenue(OWNER, 'Hotel Rose', db), null, 'a blocked call was never completed')
+const readsBeforeUnsafeOwner = seen.length
+for (const unsafeOwner of ['9007199254740992', '-9007199254740992', '9223372036854775807', '-9223372036854775808', '000123', '-0']) {
+  assert.equal(await v.knownCallVenue(unsafeOwner, 'Toit', db), null, unsafeOwner + ' must fail closed at the legacy call boundary')
+}
+assert.equal(seen.length, readsBeforeUnsafeOwner, 'no privileged lookup on unsafe or noncanonical owner identity')
 assert.equal(await v.knownCallVenue(OWNER, 'Hari', db), null, 'a friend called Hari is a person, not Hari Super Sandwich')
 assert.equal(await v.knownCallVenue('4205611234567', 'Toit', db), null, 'a different (positive) owner sees nothing')
 assert.ok(seen.some(([t, k, val]) => t === 'agent_runs' && k === 'telegram_id' && val === OWNER), 'exact owner string')
@@ -62,6 +73,9 @@ console.log('✓ a venue called before is recognised by name; other people, test
 const ts: any = (await import('typescript')).default
 const { runInNewContext } = await import('node:vm')
 const src = readFileSync(new URL('../lib/agent/voice-call.ts', import.meta.url), 'utf8')
+const knownVenueSource = src.slice(src.indexOf('export async function knownCallVenue('), src.indexOf('export function unknownCallee('))
+assert.doesNotMatch(knownVenueSource, /Number\s*\(\s*o\s*\)/, 'never round the owner before a privileged lookup')
+assert.match(knownVenueSource, /row\?\.status !== 'completed'/, 'reuse requires a completed prior voice-call run')
 async function run(text: string, iso = '2026-11-22T06:30:00Z') {
   const exports: any = {}; const saved: any[] = []; let provider = 0
   const Real = Date

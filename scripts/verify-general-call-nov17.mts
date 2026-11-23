@@ -98,6 +98,24 @@ eq(await vc.compileCallAsk(ask, 'Manipal Hospital', 'Divya', async () => JSON.st
 eq(await vc.compileCallAsk(ask, 'Manipal Hospital', 'Divya', async () => { throw new Error('down') }), vc.fallbackCallBrief(ask, 'Divya'), 'model down: fallback')
 eq((await vc.compileCallAsk(ask, 'Manipal Hospital', 'Divya', async () => JSON.stringify(good))).details, 'Dr Rao; Friday; 10am', 'model brief used when faithful')
 
+// 22 Nov handoff: salon, hotel and clinic *script* acceptance is synthetic only.
+// These do not dial, book, send or exercise Bolna; owner-supervised live acceptance is still pending.
+// If a model invents a payment, reservation or medical appointment while drafting an enquiry,
+// the caller must fall back to the owner's exact words rather than silently upgrading the action.
+for (const scenario of [
+  { venue: 'Bounce Salon', guest: 'Nithin', ask: 'book a haircut tomorrow at 6pm', invented: 'book a haircut and pay a deposit tomorrow at 6pm' },
+  { venue: 'Novotel', guest: 'Divya', ask: 'ask if early check-in is possible on Friday', invented: 'book and prepay a suite on Friday' },
+  { venue: 'Apollo Clinic', guest: 'Divya', ask: 'ask if the clinic is open on Sunday', invented: 'book a consultation and share medical records on Sunday' },
+]) {
+  const fallback = vc.fallbackCallBrief(scenario.ask, scenario.guest)
+  eq(fallback.details, 'only what is in the request', scenario.venue + ': details are bounded to the owner ask')
+  ok(fallback.task.includes(scenario.ask) && fallback.opening.includes(scenario.ask),
+    scenario.venue + ': fallback preserves the actual owner task and avoids a new booking')
+  const modelBrief = await vc.compileCallAsk(scenario.ask, scenario.venue, scenario.guest, async () =>
+    JSON.stringify({ task: scenario.invented, opening: "I'm calling for " + scenario.guest + ' to ' + scenario.invented, details: [] }))
+  eq(modelBrief, fallback, scenario.venue + ': fabricated model additions cannot enter the call script')
+}
+
 // 5. The plan card, the approval binding, and what the caller is given.
 const plan: any = { venue: 'Manipal Hospital', to: '+918025024444', source: 'the number you gave', guestName: 'Divya', partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
   purpose: 'Book an appointment with Dr Rao on Friday 10am.', opening: "I'm calling for Divya to book an appointment with Dr Rao on Friday 10am.", details: 'Dr Rao; Friday; 10am', kind: 'general', test: false, redials: 0, createdAt: '2026-11-17T11:00:00.000Z' }

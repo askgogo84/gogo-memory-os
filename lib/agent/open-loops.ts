@@ -152,6 +152,12 @@ export function isUncertainOrNegatedCompletion(text:string){
   if(/\bnot\s+(?:(?:been|yet|fully|actually|really|successfully|completely|ever)\s+)*(?:sent|shared|replied|responded|confirmed|approved|reviewed|delivered|updated|called|received|completed|finished|resolved|submitted|signed|arrived)\b/i.test(raw))return true
   if(/\b(?:may|might|could|would|should|will)\s+(?:(?:already|still|yet|not|possibly|probably)\s+)*(?:have|be|send|share|reply|respond|confirm|approve|review|deliver|update|call|receive|complete|finish|resolve|submit|sign|get|arrive)\b/i.test(raw))return true
   if(/\b(?:no\s+(?!(?:worries|problem)\b)|nothing\b|none\b)[^.!?;,]{0,160}\b(?:received|delivered|sent|shared|replied|responded|confirmed|approved|reviewed|updated|called|completed|finished|resolved|submitted|signed|arrived)\b|\b(?:received|delivered|sent|got)\s+(?:no|nothing|none)\b/i.test(raw))return true
+  // A third party's claim or reported status is not owner-verified completion.
+  // Never auto-close a pending loop for "Vendor says it was sent" without actual evidence.
+  if(/\b(?:claimed|claiming|alleges|alleged|allegedly|purported|purportedly|supposedly|reportedly|reported)\b/i.test(raw))return true
+  // Bare claim / reports are often deliverable nouns, e.g. insurance claims or quarterly reports.
+  if(/\b(?:claims|reports)\s+(?:that|they|the|it|he|she)\b/i.test(raw))return true
+  if(/\b(?:said|says|told(?: me| us)?)\b[^.!?;,]{0,120}\b(?:sent|shared|replied|responded|confirmed|approved|reviewed|delivered|updated|called|received|completed|finished|resolved|submitted|signed|arrived)\b/i.test(raw))return true
   if(/\b(?:i think|i believe|i suspect|it seems|it looks like|apparently)\b/i.test(raw))return true
   if(/\byet\s+to\b|\b(?:going|about)\s+to\b|\b(?:failed|unable)\s+to\b/i.test(raw))return true
   if(/\b(?:remains?|still|is|are)\s+(?:undelivered|unreceived|unresolved|incomplete|pending)\b/i.test(raw))return true
@@ -556,22 +562,29 @@ async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string
 // id above 2^53 as its exact decimal string, never through Number. A returned row must belong to this owner.
 /** The owner's own connected Gmail (consent and owner checked), or why not. Read access only. */
 export async function gmailAccessForOwner(telegramId:string|number):Promise<{reason:'disabled'|'disconnected'}|{accessToken:string;ownEmail:string}>{
-  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_gmail_owner_invalid')
-  const owner=String(telegramId??'').trim(),legacy=Number(owner)
-  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))throw new Error('open_loop_gmail_owner_invalid')
+  // Privileged Gmail and consent reads must use a canonical signed BIGINT identity, never a rounded alias.
+  if(typeof telegramId!=='string'&&typeof telegramId!=='number')throw new Error('open_loop_gmail_owner_invalid')
+  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))throw new Error('open_loop_gmail_owner_invalid')
+  const owner=String(telegramId)
+  if(!/^-?[1-9]\d{0,18}$/.test(owner))throw new Error('open_loop_gmail_owner_invalid')
+  const exact=BigInt(owner)
+  if(exact<BigInt('-9223372036854775808')||exact>BigInt('9223372036854775807'))throw new Error('open_loop_gmail_owner_invalid')
+  const legacy=Number(owner)
   const key:string|number=Number.isSafeInteger(legacy)&&String(legacy)===owner?legacy:owner
+  const sameOwner=(value:unknown)=>typeof value==='string'?value===owner:
+    typeof value==='number'&&Number.isSafeInteger(value)&&String(value)===owner
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
-      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token,telegram_id')
+      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token,telegram_id::text')
       .eq('telegram_id',key).maybeSingle(),
     supabaseAdmin.from('user_consent_settings')
-      .select('gmail_enabled,telegram_id').eq('telegram_id',key).maybeSingle(),
+      .select('gmail_enabled,telegram_id::text').eq('telegram_id',key).maybeSingle(),
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
-  if(consent&&consent.telegram_id!=null&&String(consent.telegram_id)!==owner)return {reason:'disabled' as const}
+  if(consent&&!sameOwner(consent.telegram_id))return {reason:'disabled' as const}
   if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
-  if(user&&user.telegram_id!=null&&String(user.telegram_id)!==owner)return {reason:'disconnected' as const}
+  if(user&&!sameOwner(user.telegram_id))return {reason:'disconnected' as const}
   if(!user?.gmail_connected)return {reason:'disconnected' as const}
   if(consent?.gmail_enabled!==true)return {reason:'disabled' as const} // 4 Nov: affirmative yes only
 

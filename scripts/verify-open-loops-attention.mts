@@ -210,7 +210,7 @@ const fixtureDb={from:(table:string)=>{
   const record={table,owner:null as any};queries.push(record)
   const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')record.owner=value;return q},maybeSingle:async()=>({error:null,data:table==='users'
     ? {gmail_connected:inboxConnected,gmail_email:'owner@example.test',gmail_access_token:'fixture-token',telegram_id:42,whatsapp_id:'fixture-wa',name:'Fixture'}
-    : {gmail_enabled:inboxEnabled}})}
+    : {gmail_enabled:inboxEnabled,telegram_id:42}})}
   return q
 }}
 const message=(id:string,from:string,snippet:string,extra:any={})=>({id,from,to:'owner@example.test',subject:'Please review You&#39;re invited',snippet,internalDate:Date.parse('2026-10-07T12:00:00Z'),...extra})
@@ -267,7 +267,7 @@ const webInbox=loadFixture('app/api/dashboard/chat/route.ts',name=>
 )
 const webFresh=await webInbox.POST({headers:{get:()=> 'https://app.example.test'},nextUrl:{host:'app.example.test'},json:async()=>({text:exactInboxPrompt})})
 assert.equal(webFresh.handledBy,'inbox-reply-read','real web POST must claim the read before content/general planners')
-assert.ok(queries.every(q=>q.owner===42),'every connection/consent read is owner scoped')
+assert.ok(queries.every(q=>String(q.owner)==='42'),'every connection/consent read is owner scoped')
 console.log('Fresh inbox reply reads: real handler + web POST + WhatsApp first refusal, ownership, consent, errors, automation suppression and secret-safe text verified')
 
 let failThread=false

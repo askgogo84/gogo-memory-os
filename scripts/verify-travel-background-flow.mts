@@ -43,7 +43,7 @@ const db = {
       })
       cached = {data,error:null};return cached
     }
-    const q:any = {select(){return q},eq(key:string,value:any){filters.push(row=>field(row,key)===value);return q},
+    const q:any = {select(){return q},eq(key:string,value:any){if(table==='users'&&key==='telegram_id')assert.equal(value,'42','dashboard user read must use exact owner text');filters.push(row=>table==='users'&&key==='telegram_id'?String(field(row,key))===value:field(row,key)===value);return q},
       in(key:string,values:any[]){filters.push(row=>values.includes(field(row,key)));return q},
       is(key:string,value:any){filters.push(row=>value===null ? field(row,key)==null||field(row,key)==='undefined' : field(row,key)===value);return q},
       gte(key:string,value:any){filters.push(row=>field(row,key)>=value);return q},

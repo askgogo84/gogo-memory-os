@@ -5,9 +5,9 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GogoChat, type ChatBrief } from '@/components/dashboard/gogo-chat'
 import { firstNameOf } from '@/lib/dashboard/chat-suggestions'
 import { getTodayReminders, getUpcomingReminders } from '@/lib/dashboard/queries'
-import { getTaskFeed, EMPTY_FEED } from '@/lib/dashboard/task-feed'
+import { getTaskFeed } from '@/lib/dashboard/task-feed'
 import { buildHomeSections, homeSummary } from '@/lib/dashboard/home-sections'
-import { getServiceNoticesForPage, EMPTY_SERVICE_NOTICES } from '@/lib/dashboard/service-notices'
+import { getServiceNoticesForPage } from '@/lib/dashboard/service-notices'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,8 +18,8 @@ async function loadBrief(tg: string, tz: string): Promise<ChatBrief | null> {
   const [today, upcoming, feed, notices] = await Promise.all([
     getTodayReminders(tg).catch(() => ({ ok: false as const })),
     getUpcomingReminders(tg).catch(() => []),
-    getTaskFeed(tg).catch(() => EMPTY_FEED),
-    getServiceNoticesForPage(tg).catch(() => EMPTY_SERVICE_NOTICES),
+    getTaskFeed(tg),
+    getServiceNoticesForPage(tg),
   ])
   const sections = buildHomeSections({ feed, today: (today as any).ok ? (today as any).reminders : [], upcoming, now, tz })
   const items: ChatBrief['items'] = [
@@ -28,9 +28,13 @@ async function loadBrief(tg: string, tz: string): Promise<ChatBrief | null> {
     ...sections.comingUp.slice(0, 1).map(l => ({ text: `${l.when} ${l.title}`, tone: 'muted' as const, href: l.href })),
     ...sections.handling.slice(0, 1).map(i => ({ text: `Gogo is handling: ${i.title}`, tone: 'teal' as const, href: i.href || '/dashboard/tasks' })),
   ].slice(0, 3)
+  const missing = [...(feed.missing?.need ?? []), ...(feed.missing?.radar ?? []), ...(feed.missing?.recent ?? [])]
+  if (!today.ok) missing.push("today’s reminders")
+  if (notices.unavailable) missing.push('service notices')
+  const summary = missing.length ? `Couldn’t check ${missing.join(', ')}. Refresh to check again.` : homeSummary(sections, notices.total || 0)
   const hour = Number(new Intl.DateTimeFormat('en-US', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).format(now))
   const time = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz }).format(now).replace(' ', '').toLowerCase()
-  return { title: `${hour < 12 ? 'Morning brief' : hour < 17 ? 'Afternoon brief' : 'Evening brief'} · ${time}`, summary: homeSummary(sections, notices.total || 0), items }
+  return { title: `${hour < 12 ? 'Morning brief' : hour < 17 ? 'Afternoon brief' : 'Evening brief'} · ${time}`, summary, items }
 }
 
 export default async function ChatPage() {

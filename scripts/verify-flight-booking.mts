@@ -58,3 +58,73 @@ console.log('flight booking ok')
   assert.match(objDom, /traveller 1: full name Goverdhan Mandyam Dommane\./)
   assert.doesNotMatch(objDom, /date of birth undefined/)
 }
+
+
+// 23 Nov: the booking re-ask and pending-approval conversation reads must not
+// round a signed BIGINT owner through JS Number before their service-role lookup.
+// Execute the actual private functions with an inert in-memory Supabase substitute.
+{
+  const { createRequire } = await import('node:module')
+  const { runInNewContext } = await import('node:vm')
+  const ts = createRequire(import.meta.url)('typescript')
+  const tree = ts.createSourceFile('flight-booking.ts', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const names = new Set(['exactBookingConversationOwner', 'previousUserMessage', 'loadPending'])
+  const functions = tree.statements
+    .filter((node: any) => ts.isFunctionDeclaration(node) && names.has(node.name?.text))
+    .map((node: any) => node.getText(tree))
+  assert.equal(functions.length, names.size, 'test must execute all three real source functions')
+  assert.doesNotMatch(functions.join('\n'), /Number\s*\(\s*actor\.legacyTelegramId\s*\)/)
+  const compiled = ts.transpileModule(functions.join('\n\n') +
+    '\nmodule.exports = {previousUserMessage,loadPending,exactBookingConversationOwner};',
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+  const A = '9223372036854775806', B = '9223372036854775807'
+  const conversations = [
+    ...[A, B, '-9223372036854775808', '123'].flatMap((owner, index) => [
+      {telegram_id: owner, role: 'user', content: 'New details', created_at: '2026-11-23T00:01:00Z'},
+      {telegram_id: owner, role: 'user', content: 'Prior details '+index, created_at: '2026-11-23T00:00:00Z'},
+    ]),
+  ]
+  function harness(raw: unknown) {
+    const reads: Array<{table:string;filters:[string,unknown][]}> = []
+    const supabaseAdmin = { from(table: string) {
+      assert.equal(table, 'conversations', 'no unrelated private reads')
+      const filters: [string,unknown][] = []
+      let limit = 100
+      const q: any = {
+        select: () => q,
+        eq: (key: string, val: unknown) => {filters.push([key,val]);return q},
+        order: () => q,
+        limit: (n: number) => {limit=n;return q},
+        then: (resolve: any, reject: any) => {
+          reads.push({table, filters:filters.map(pair=>[...pair] as [string,unknown])})
+          const data = conversations
+            .filter(row=>filters.every(([key,val])=>String((row as any)[key])===String(val)))
+            .slice(0,limit)
+          return Promise.resolve({data,error:null}).then(resolve,reject)
+        },
+      }
+      return q
+    }}
+    const sandbox: any = {module:{exports:{}}, supabaseAdmin, Number, String, BigInt, Date, Promise,
+      norm:(text:unknown)=>String(text||'').trim().toLowerCase()}
+    runInNewContext(compiled,sandbox,{timeout:1000})
+    const actor = {legacyTelegramId:raw,userId:'inert',whatsappId:'',name:'Fixture'}
+    return {functions:sandbox.module.exports,actor,reads}
+  }
+  for(const [owner,expected] of [[A,'Prior details 0'],[B,'Prior details 1'],['-9223372036854775808','Prior details 2'],[123,'Prior details 3']] as const){
+    const h=harness(owner)
+    assert.equal(await h.functions.previousUserMessage(h.actor,'New details'),expected, 'owner '+String(owner))
+    assert.equal(h.reads.length,1)
+    assert.deepEqual(JSON.parse(JSON.stringify(h.reads[0].filters)),[['telegram_id',String(owner)],['role','user']])
+    const pending=harness(owner)
+    assert.equal(await pending.functions.loadPending(pending.actor,'Yes'),null,'no prior assistant offer')
+    assert.deepEqual(JSON.parse(JSON.stringify(pending.reads[0].filters)),[['telegram_id',String(owner)]])
+  }
+  for(const invalid of [Number(B),'00123','+123','123abc','9223372036854775808','-9223372036854775809',0,NaN,null,{}]){
+    const h=harness(invalid)
+    assert.equal(await h.functions.previousUserMessage(h.actor,'New details'),null)
+    assert.equal(await h.functions.loadPending(h.actor,'Yes'),null)
+    assert.equal(h.reads.length,0,'invalid or rounded owner must have ZERO private reads: '+String(invalid))
+  }
+  console.log('✓ flight booking conversation re-ask + pending: exact signed BIGINT owner; rounded/malformed owner denied before reads')
+}
