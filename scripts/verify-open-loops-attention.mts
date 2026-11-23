@@ -210,7 +210,7 @@ const fixtureDb={from:(table:string)=>{
   const record={table,owner:null as any};queries.push(record)
   const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')record.owner=value;return q},maybeSingle:async()=>({error:null,data:table==='users'
     ? {gmail_connected:inboxConnected,gmail_email:'owner@example.test',gmail_access_token:'fixture-token',telegram_id:42,whatsapp_id:'fixture-wa',name:'Fixture'}
-    : {gmail_enabled:inboxEnabled}})}
+    : {gmail_enabled:inboxEnabled,telegram_id:42}})}
   return q
 }}
 const message=(id:string,from:string,snippet:string,extra:any={})=>({id,from,to:'owner@example.test',subject:'Please review You&#39;re invited',snippet,internalDate:Date.parse('2026-10-07T12:00:00Z'),...extra})
