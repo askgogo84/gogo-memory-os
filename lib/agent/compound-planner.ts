@@ -202,7 +202,9 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
   const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
     || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
   let target = named?.[1] || null
-  if (target) target = cleanListItem(target).replace(/^(?:(?:my|the|existing)\s+)+/i, '').replace(/^["“]|["”]$/g, '').trim()
+  // Subject modifiers were consumed outside the capture. They may be literal
+  // title words inside quotes ("My passport" must not select "passport").
+  if (target) target = cleanListItem(target).replace(/^["“]|["”]$/g, '').trim()
   const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i.exec(raw)
   if (generic) target = null
   const head=generic || named

@@ -76,6 +76,10 @@ reset();assert.equal((await run('Move Askgogo<>Fund Raise reminder to 4:20 pm IS
 for(const title of ['Call at 5 pm','Say reminder to 5 pm']){
   reset();rows[0].message=title;assert.equal((await run(`Move my “${title}” reminder today to 4:20 pm IST`)).status,'completed');assert.equal(rows[0].remind_at,'2026-11-23T10:50:00.000Z','title clock must not replace requested new clock')
 }
+for(const [title,neighbour] of [['My passport','passport'],['Existing account','account'],['The plan','plan']]){
+  reset();rows[0].message=title;rows[1].message=neighbour
+  assert.equal((await run(`Move my “${title}” reminder today to 4:20 pm IST`)).status,'completed');assert.equal(rows[0].remind_at,'2026-11-23T10:50:00.000Z');assert.equal(rows[1].remind_at,water.remind_at,'quoted title must not lose a possessive or select its shorter neighbour')
+}
 reset();assert.equal((await run(command.replace('starts at 4:30 pm','starts at 4:30 pm UTC'))).status,'failed');assert.equal(writes.length,0)
 for(const tail of [' tomorrow',' IST tomorrow',' on 24 November',' on 2026-11-24']){
   reset();assert.equal((await run(command.replace('starts at 4:30 pm.','starts at 4:30 pm'+tail+'.'))).status,'failed');assert.equal(writes.length,0,'explicit meeting date must never be replaced by the alert date')
