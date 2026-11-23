@@ -41,6 +41,12 @@ assert.match(text, /^\*iPhone 16\*\n\n• \*Flipkart\*: ₹69,900 \+ ₹299 Prot
 assert.match(text, /• \*Croma\*: ₹67,900 · checked [^\n]+\n  Apple iPhone 16 \(128GB, Black\)\n/)
 assert.match(text, /Lowest listed price: Croma, ₹67,900\./)
 assert.doesNotMatch(text, /app\.askgogo\.in|read-only|verifiable|provider page/)
+const tie = comparisonWhatsAppSummary({metadata_json: {subject: 'iPhone 16', request: 'x', providers: [
+  row('croma', 'https://www.croma.com/apple-iphone-16-128gb-black-/p/309621', 'Apple iPhone 16 (128GB, Black)\n₹69,900.00 (Incl. all Taxes)'),
+  row('reliance', 'https://www.reliancedigital.in/product/apple-iphone-16-128-gb-black-m0xrrm-8590265', 'Apple iPhone 16 128 GB Black\n₹69,900'),
+]}} as any)
+assert.match(tie, /Lowest listed price \(tie\): Croma and Reliance Digital, ₹69,900\./)
+assert.match(tie, /Listed prices only; delivery and bank offers not included/)
 console.log('verify-comparison-fast: parallel lanes, immediate start, quick look and crisp reply ok')
 
 // 17 Oct: default and say so; never imply a reply flow that does not exist.

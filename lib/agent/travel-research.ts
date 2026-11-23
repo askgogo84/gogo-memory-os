@@ -99,7 +99,14 @@ const MONTHS: Record<string, number> = {
 function esc(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 function placeFrom(raw: string | undefined): Place | undefined { const cleaned=String(raw||'').trim().replace(/[,.!?]+$/g,'').toLowerCase(); if(!cleaned)return undefined; if(PLACES[cleaned])return PLACES[cleaned]; return {label:cleaned.replace(/\b\w/g,c=>c.toUpperCase()),aliases:[cleaned]} }
 function routeText(text:string) {
-  return text.replace(/\b(?:do\s+not|don't)\s+(?!forget\b)[^.!?;\n]*?(?=[.!?;\n]|\b(?:but|then)\b|,\s*(?:just|please|instead)\b|$)[.!?;]?/gi,' ').trim().replace(/(?:[.!?;,]\s*)+$/,'').trim()
+  const normalized = text.replace(/[ \t]*\(([a-z]{3})\)/gi, (qualifier, code: string, offset: number, original: string) => {
+    const airport = PLACES[code.toLowerCase()]
+    if (airport?.code !== code.toUpperCase()) return qualifier
+    const before = original.slice(0, offset)
+    const alreadySelected = airport.aliases.some(alias => PLACES[alias]?.code === airport.code && new RegExp(`\\b${esc(alias)}$`, 'i').test(before))
+    return alreadySelected ? '' : qualifier
+  })
+  return normalized.replace(/\b(?:do\s+not|don't)\s+(?!forget\b)[^.!?;\n]*?(?=[.!?;\n]|\b(?:but|then)\b|,\s*(?:just|please|instead)\b|$)[.!?;]?/gi,' ').trim().replace(/(?:[.!?;,]\s*)+$/,'').trim()
 }
 function extractSegment(text:string,marker:'from'|'to'|'in') {
   // A weekday or "day after tomorrow" ends a city too ("to Delhi Friday 30 Oct").

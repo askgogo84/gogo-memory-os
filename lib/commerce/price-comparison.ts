@@ -308,6 +308,7 @@ async function withComparisonState<T>(id: string, fn: () => Promise<T>): Promise
 // or create an untracked replacement. All work here is read-only.
 export async function advancePriceComparison(actor: AgentActor, id: string) {
   const owner = String(actor.legacyTelegramId)
+  let releaseLane: (() => Promise<unknown>) | undefined
   // Claim the next store under the state lease, so two workers never pick the same one.
   const claimed = await withComparisonState(id, async () => {
     const task = await readPriceComparison(owner, id)
@@ -322,7 +323,23 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
       ? task.metadata_json.providers.filter(row => row.status === 'blocked' && row.runId && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider)).map(row => String(row.runId))
       : []
     const sharedBusy = task.metadata_json.providers.some(row => row.status === 'checking' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
-    const next = task.metadata_json.providers.find(row => row.status === 'pending' && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy) && !row.waitingForRunId)
+    const candidates = task.metadata_json.providers.filter(row => row.status === 'pending' && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy) && !row.waitingForRunId)
+    let next: StoreRow | undefined
+    const checkedLanes = new Set<string>()
+    for (const row of candidates) {
+      const {provider} = row
+      const parallel = PARALLEL_COMPARISON_PROVIDERS.has(provider)
+      const laneKey = 'commerce-browser:' + owner + (parallel ? ':' + provider : '')
+      if (checkedLanes.has(laneKey)) continue
+      checkedLanes.add(laneKey)
+      const lane = await acquireBrainUserLease(laneKey, 600)
+      if (!lane) continue
+      // Reserve the browser before creating a child. A busy lane leaves the store pending
+      // and a later worker can claim it without waiting for an orphaned child to expire.
+      releaseLane = () => releaseBrainUserLease(laneKey, lane.ownerToken)
+      next = row
+      break
+    }
     if (!next) { await saveProgress(owner, task); return {task, next: null as null, release} }
     const parallel = PARALLEL_COMPARISON_PROVIDERS.has(next.provider)
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
@@ -415,20 +432,22 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     task.metadata_json.providers = task.metadata_json.providers.map(row => row === next
       ? {...row, runId: childId, status: 'checking', startedAt, startUrl} : row)
     await saveProgress(owner, task)
-    return {task, next: {provider: next.provider, childId, parallel}, release}
+    return {task, next: {childId, parallel}, release}
+  }).catch(async error => {
+    await releaseLane?.()
+    throw error
   })
   if (!claimed) return null
-  if (!claimed.next) return claimed.task
-  const {childId, parallel, provider} = claimed.next
-  if (!parallel && claimed.release?.length) {
-    const {releaseRunAuthHandoff} = await import('@/lib/agent/secondary-auth-handoff')
-    await Promise.all(claimed.release.map(runId => releaseRunAuthHandoff(owner, runId).catch(() => {})))
+  if (!claimed.next) {
+    await releaseLane?.()
+    return claimed.task
   }
-  // The shared grocery browser takes one store at a time; each electronics store has its own browser lane.
-  const laneKey = 'commerce-browser:' + owner + (parallel ? ':' + provider : '')
-  const lane = await acquireBrainUserLease(laneKey, 600)
-  if (!lane) return claimed.task
+  const {childId, parallel} = claimed.next
   try {
+    if (!parallel && claimed.release?.length) {
+      const {releaseRunAuthHandoff} = await import('@/lib/agent/secondary-auth-handoff')
+      await Promise.all(claimed.release.map(runId => releaseRunAuthHandoff(owner, runId).catch(() => {})))
+    }
     const {resumePausedBrowserRun} = await import('@/lib/agent/browser-command')
     // A failed provider must not throw away other providers or reroute to an LLM.
     try { await resumePausedBrowserRun({actor, runId: childId}) }
@@ -438,7 +457,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
         .eq('id', childId).eq('telegram_id', owner).in('status', ['running', 'paused'])
       if (error) throw new Error('comparison_failure_save_failed')
     }
-  } finally { await releaseBrainUserLease(laneKey, lane.ownerToken) }
+  } finally { await releaseLane?.() }
   return withComparisonState(id, async () => {
     const task = await readPriceComparison(owner, id)
     if (!task) throw new Error('comparison_missing_after_read')

@@ -603,13 +603,17 @@ export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https
     return `• *${label}*: ${row.reason || 'couldn’t confirm a price on its product page.'}`
   })
   const pending = task.metadata_json.providers.some(row => ['pending','checking'].includes(row.status))
-  const cheapest = priced.length > 1 ? priced.reduce((low, row) => row.value < low.value ? row : low) : null
+  const lowestValue = Math.min(...priced.map(row => row.value))
+  const lowest = priced.length > 1 ? priced.filter(row => row.value === lowestValue) : []
+  const lowestLine = lowest.length > 1
+    ? `Lowest listed price (tie): ${new Intl.ListFormat('en-IN').format(lowest.map(row => row.label))}, ${lowest[0].price}.`
+    : lowest[0] ? `Lowest listed price: ${lowest[0].label}, ${lowest[0].price}.` : null
   // A lone model code ("xm5") fits several products; say what it was matched on.
   const loneCode = (task.metadata_json.subject.match(/[a-z0-9]+/gi) || []).length === 1
   const matchedOnCode = loneCode && task.metadata_json.providers.some(row => row.status === 'observed')
   return [
     `*${task.metadata_json.subject}*`, '', ...lines, '',
-    ...(cheapest ? [`Lowest listed price: ${cheapest.label}, ${cheapest.price}.`] : []),
+    ...(lowestLine ? [lowestLine] : []),
     ...(pending ? [task.metadata_json.providers.some(row => comparisonHandoffPath(row))
       ? 'These store checks stay queued until that browser task is finished or released.' : 'I’ll send the rest here when it’s done.'] : []),
     ...(matchedOnCode ? ['I matched this on the model code only. If it’s not the product you meant, send the full name.'] : []),

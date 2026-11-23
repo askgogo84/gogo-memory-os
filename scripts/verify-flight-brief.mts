@@ -106,6 +106,18 @@ assert.deepEqual([full.originCode, full.destinationCode, full.departDate, full.r
 assert.equal(full.timeOfDay, 'evening')
 assert.deepEqual(t.flightBriefSlots(full), [])
 
+// A matching IATA qualifier is part of the city the user already selected.
+const qualified = t.parseFlightBriefText('Find nonstop economy flights for one adult from Bengaluru (BLR) to Delhi (DEL) on Tuesday, 1 December 2026, departing after 8 am IST. Show airline, departure time, displayed fare and source.', now, tz)
+assert.deepEqual([qualified.originCode, qualified.destinationCode, qualified.departDate, qualified.adults, qualified.cabin, qualified.nonStop], ['BLR', 'DEL', '2026-12-01', 1, 'economy', true])
+assert.deepEqual(t.flightBriefSlots(qualified), [])
+const multiword = t.parseFlightBriefText('Flights from New Delhi (DEL) to Abu Dhabi (AUH) tomorrow', now, tz)
+assert.deepEqual([multiword.originCode, multiword.destinationCode], ['DEL', 'AUH'])
+const arrow = t.parseFlightBriefText('Flights Bengaluru (BLR) → Delhi (DEL) tomorrow', now, tz)
+assert.deepEqual([arrow.originCode, arrow.destinationCode], ['BLR', 'DEL'])
+const conflicting = t.parseFlightBriefText('Flights from Bengaluru (BOM) to Delhi (DEL) tomorrow', now, tz)
+assert.ok(t.flightBriefSlots(conflicting).includes('route'))
+assert.equal(conflicting.originCode, undefined)
+
 // 8. Time of day: understood in a sentence, an answer, or as "any time"; it filters rows by departure hour.
 assert.equal(t.parseFlightBriefText('cheapest flight tomorrow morning from Bangalore to Singapore', now, tz).timeOfDay, 'morning')
 assert.equal(t.applyFlightBriefReply(first, ['time'], 'any time', now, tz).brief.timeOfDay, 'any')
