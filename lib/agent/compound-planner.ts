@@ -199,16 +199,16 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
   const raw = String(text || '').trim().replace(/\s+/g, ' ')
   if (!/\breminder\b/i.test(raw)) return null // Generic verbs cannot establish a reminder identity.
   if (!/\b(move|reschedule|change|update|make)\b/i.test(raw)) return null
-  const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i)
-    || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i)
+  const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
+    || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
   let target = named?.[1] || null
   if (target) target = cleanListItem(target).replace(/^(?:(?:my|the|existing)\s+)+/i, '').replace(/^["“]|["”]$/g, '').trim()
-  const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i.exec(raw)
+  const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i.exec(raw)
   if (generic) target = null
   const head=generic || named
   const tail=head?raw.slice(head[0].length):''
   // The new clock belongs after this reminder subject, never inside its title.
-  const time=tail.match(/^\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))(?:\s+(today|tomorrow))?/i)
+  const time=tail.match(/^\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b(?:\s+(today|tomorrow))?/i)
   if(!time)return {target,timeText:'',unresolved:true}
   const afterTime=tail.slice(time[0].length)
   const zonePattern=/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/

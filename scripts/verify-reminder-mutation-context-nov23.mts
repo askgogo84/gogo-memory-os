@@ -67,6 +67,7 @@ assert.match(rows[0].message,/4:30 pm/);assert.doesNotMatch(rows[0].message,/5:0
 assert.equal(rows[3].remind_at,fund.remind_at);assert.equal(rows[1].remind_at,water.remind_at)
 assert.ok(!reads.includes('conversations'),'explicit named reminder must never consult unrelated recent context')
 assert.equal(rows.length,4,'updates never insert a replacement')
+reset();assert.equal((await run(command.replace('to 4:20 pm','to4:20pm'))).status,'completed');assert.equal(rows[0].remind_at,'2026-11-23T10:50:00.000Z','compact handset time separator retains the same explicit target')
 
 for(const text of ['Move my existing Askgogo<>Fund Raise reminder today to 4:20 pm', 'Move the “Askgogo<>Fund Raise” reminder to 4:20 pm today', 'Please reschedule Askgogo<>Fund Raise reminder to 4:20 pm']){
   reset();assert.equal((await run(text)).status,'completed',text);assert.equal(applied,1)
