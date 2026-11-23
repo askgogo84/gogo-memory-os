@@ -641,9 +641,17 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: message || 'Reminder' }
 }
 
+function explicitReminderCountdown(text:string){
+  return text.match(/^\s*(?:please\s+)?remind(?:er)?\s+(?:me\s+)?in\s+\d+\s+(?:minutes?|mins?|hours?)\b(?:\s+(?:on|via)\s+WhatsApp)?\s+(?:to|about)\b/i)
+}
+
 function parseReminderBase(text: string): ParsedReminder {
   const recurring=parseDailyRecurring(text)||parseEveryNRecurring(text)||parseWeekdayRecurring(text)||parseHourlyWindowRecurring(text)
   if(recurring)return recurring
+  // An explicit short countdown before the task owns WHEN; dates inside that
+  // task are context. Start at this clause so an earlier quoted duration cannot
+  // override it. Keep absolute-date instructions and day/time overrides intact.
+  if(explicitReminderCountdown(text))return parseRelativeReminder(text)
   // A named date or "today" owns its interpretation even when invalid/past.
   // Never fall through to the next weekday, tomorrow, or next year.
   // 24 Oct live: "Saw Divya's wedding invite for 12 Dec … remind me about this tomorrow at 10am" was set for 12 Dec.
@@ -685,7 +693,7 @@ export function reminderTimingProblem(text:string):string|null {
   if(getAmbiguousReminderTime(text))return null
   if(!hasNamedReminderDate(text)&&!/\btoday\b/i.test(text))return null
   const lead=reminderLeadTime(text)
-  const parsed=parseReminderBase(`remind me ${lead?text.replace(lead[0],''):text}`)
+  const parsed=parseReminderBase(explicitReminderCountdown(text)?text:`remind me ${lead?text.replace(lead[0],''):text}`)
   if(!parsed)return hasNamedReminderDate(text)?'Please confirm a valid date and time, including a matching weekday if provided. Nothing has been saved.':null
   const offset=lead?Number(lead[1])*(/^(hour|hr)/i.test(lead[2])?3600000:60000):0
   if(Date.parse(parsed.remindAtIso)-offset<=Date.now())return 'That reminder time has already passed. I haven’t moved it to another day. Please give me a future date and time. Nothing has been saved.'
@@ -694,6 +702,9 @@ export function reminderTimingProblem(text:string):string|null {
 
 export function reminderLeadTime(text: string) {
   if (!/\bremind(?:er)?\b/i.test(text)) return null
+  // The countdown already is the final reminder time; "arrive 10 minutes
+  // before the meeting" in its task must not subtract another ten minutes.
+  if(explicitReminderCountdown(text))return null
   return text.match(/\b(\d+)\s*(minutes?|mins?|hours?|hrs?)\s+(?:earlier|before)\b/i)
 }
 
