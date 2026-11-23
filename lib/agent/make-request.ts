@@ -8,23 +8,28 @@ export function isMakeDeliverableRequest(text: string): boolean {
 }
 
 /** Only accept explicit public citation URLs. These are searched, never fetched directly. */
-export function sourceBoundReport(text: string): {title: string; urls: string[]; reportOnly: boolean} | null {
-  const command = MAKE_DELIVERABLE_RE.exec(text.trim())?.[0] || ''
+export function sourceBoundReport(text: string): {title: string; explicitTitle: boolean; urls: string[]; reportOnly: boolean} | null {
+  text = text.trim()
+  const command = MAKE_DELIVERABLE_RE.exec(text)?.[0] || ''
   if (!/\b(?:report|brief)$/i.test(command)) return null
   const marker = /(?:^|[.!?;]\s*)(?:please\s+)?use only (?:these|the following) (?:(?:official|public) )?sources\s*:\s*/i.exec(text)
   if (!marker) return null
   const before = text.slice(0, marker.index)
-  const title = before.match(/\btitled\s+["“]?([^.!?"”\r\n]{1,120})/i)?.[1].trim() || 'Source-bound research brief'
+  const namedTitle = before.match(/\btitled\s+["“]?([^.!?"”\r\n]{1,120})/i)?.[1].trim()
+  const subject = before.slice(command.length).match(/^\s+(?:on|about|covering)\s+([^.!?\r\n]{1,100})/i)?.[1].trim()
   const list = text.slice(marker.index + marker[0].length)
   const links = [...list.matchAll(/https?:\/\/[^\s<>,]+/gi)]
   const separators = /^(?:[\s,;*•-]|and\b|\d+[.)])*$/i
-  const urls = links.map((link,i) => {
+  const parsedUrls = links.map((link,i) => {
     const prior = links[i-1]
     const from = prior ? prior.index! + prior[0].length : 0
     return separators.test(list.slice(from,link.index)) ? researchSourceUrl(link[0].replace(/[),.;!?]+$/, '')) : ''
   })
-  const reportOnly = !/(?:[.!?;]\s*|\b(?:and|then|also|next)\s+)(?:please\s+)?(?:create|add|set|schedule|remind|send|email|text|call|reply|book|buy|pay|cancel|delete|publish|post|share|submit|upload|update|move|change|find|search|show|list|check|draft)\b/i.test(text.trim().slice(command.length))
-  return {title,reportOnly,urls:text.length <= 1800 && urls.length <= 5 && urls.every(Boolean) ? [...new Set(urls)] : []}
+  const reportOnly = !/(?:[.!?;]\s*|\b(?:and|then|also|next)\s+)(?:please\s+)?(?:create|add|set|schedule|remind|send|email|text|call|reply|book|buy|pay|cancel|delete|publish|post|share|submit|upload|update|move|change|find|search|show|list|check|draft)\b/i.test(text.slice(command.length))
+  const urls = text.length <= 1800 && parsedUrls.length <= 5 && parsedUrls.every(Boolean) ? [...new Set(parsedUrls)] : []
+  const host = urls[0] ? new URL(urls[0]).hostname : ''
+  const title = namedTitle || subject || (host ? `Research brief from ${host}` : 'Source-bound research brief')
+  return {title,explicitTitle:Boolean(namedTitle),reportOnly,urls}
 }
 
 export function researchSourceUrl(link: string): string {

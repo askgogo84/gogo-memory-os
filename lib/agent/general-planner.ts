@@ -447,8 +447,11 @@ async function createArtifact(tg:number, runId:string, step:GeneralPlanStep, mis
   const content_json = { runId, sections }
   const source_refs = [{type:'agent_run',id:runId}]
 
-  const { data: existing } = await supabaseAdmin.from('agent_artifacts')
-    .select('id,title,content_json,updated_at').eq('telegram_id',String(tg)).eq('type',type).ilike('title',title).order('created_at',{ascending:false}).limit(1).maybeSingle()
+  const artifactLookup = supabaseAdmin.from('agent_artifacts')
+    .select('id,title,content_json,updated_at').eq('telegram_id',String(tg)).eq('type',type).ilike('title',title)
+  // Retrying the same run can reuse its report. Untitled requests from other runs are independent.
+  if (restricted && !restricted.explicitTitle) artifactLookup.eq('content_json->>runId',runId)
+  const { data: existing } = await artifactLookup.order('created_at',{ascending:false}).limit(1).maybeSingle()
   if (existing?.id) {
     // Make v2: regenerating keeps history and never overwrites what the owner edited (sections in userEdits, notes).
     const now=new Date().toISOString()

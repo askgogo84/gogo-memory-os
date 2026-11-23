@@ -100,7 +100,7 @@ const db={from(table:string){
     if(table==='agent_artifacts'&&!inserted.length&&!patch){reportQueries++;if(reportReadError)return {data:null,error:{message:'fixture outage'}}}
     if(!rows[table])return {data:single?null:[],error:null}
     if(inserted.length)rows[table].push(...inserted)
-    const selected=inserted.length?inserted:rows[table].filter(row=>filters.every(([k,v])=>String(row[k])===String(v)))
+    const selected=inserted.length?inserted:rows[table].filter(row=>filters.every(([k,v])=>String(k==='content_json->>runId' ? row.content_json?.runId : row[k])===String(v)))
     if(patch)selected.forEach(row=>Object.assign(row,patch))
     return {data:single?selected[0]||null:selected,error:null}
   }).then(resolve,reject)}};return q
@@ -299,10 +299,31 @@ assert.match(restrictedReport.text,/four days after the Aug. 23 landing/)
 assert.ok(restrictedReport.text.includes(nasaSource))
 assert.doesNotMatch(restrictedReport.text,/Wrong observation date|Wrong source|Unrelated search result/)
 assert.match(rows.agent_artifacts.at(-1).content_json.sections[0].result.text,/1 of 2/)
+const previousReportCount = rows.agent_artifacts.length
+for (const source of ['https://www.nasa.gov/moon','https://www.nasa.gov/mars']) {
+  const untitledMission = `Create a private research report. Use only these official sources: ${source}`
+  mocks['@/lib/web-search']={searchWebResults:async()=>[{url:source,title:'NASA archive',snippet:source}]}
+  const plan = await numericPlanner.planGeneralAgentRequest(untitledMission)
+  await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:untitledMission,prepared:{...prepared,plan}})
+}
+const independentReports = rows.agent_artifacts.slice(previousReportCount)
+assert.equal(independentReports.length,2,'untitled reports on the same site retain separate artifacts')
+assert.notEqual(independentReports[0].content_json.runId,independentReports[1].content_json.runId)
+assert.match(independentReports[0].content_json.sections[1].result.text,/nasa.gov\/moon/)
+assert.match(independentReports[1].content_json.sections[1].result.text,/nasa.gov\/mars/)
 const compoundMission = restrictedMission + ' Also create a task: Review the report.'
 mocks['./planner-provider'].completeAgentPlanPrompt = async () => JSON.stringify({title:'Report and task',reason:'Both outcomes',steps:[...restrictedPlan.steps,{tool:'tasks',title:'Create task Review the report',instruction:'Create task: Review the report'}]})
 const compoundPlan = await numericPlanner.planGeneralAgentRequest(compoundMission)
 assert.deepEqual(Array.from(compoundPlan.steps,(s:any)=>s.tool),['web_search','artifact','tasks'])
+mocks['@/lib/web-search']={searchWebResults:async (query:string)=>{
+  if (query.includes('isro.gov.in')) throw Error('search_unavailable')
+  return [{url:nasaSource,title:'NASA image archive',snippet:'LRO acquired an oblique view after the landing.'}]
+}}
+const partialOutagePlan = await numericPlanner.planGeneralAgentRequest(restrictedMission)
+const partialOutage = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:restrictedMission,prepared:{...prepared,plan:partialOutagePlan}})
+assert.match(partialOutage.text,/1 of 2 named sources/)
+assert.match(partialOutage.text,/Search was unavailable for 1/)
+assert.doesNotMatch(partialOutage.text,/No matching excerpt/)
 mocks['@/lib/web-search']={searchWebResults:async()=>{throw Error('search_unavailable')}}
 const savedReports = rows.agent_artifacts.length
 const outageResult = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:restrictedMission,prepared:{...prepared,plan:restrictedPlan}})
