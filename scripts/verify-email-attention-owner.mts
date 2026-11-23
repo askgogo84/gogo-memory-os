@@ -8,7 +8,7 @@ import ts from 'typescript'
 const path='lib/email/attention-store.ts'
 const source=fs.readFileSync(path,'utf8')
 const parsed=ts.createSourceFile(path,source,ts.ScriptTarget.ES2022,true,ts.ScriptKind.TS)
-const wanted=new Set(['exactAttentionOwner','loadRules','saveRule','readAttentionSources','buildAttentionCard','handleEmailAttentionCommand'])
+const wanted=new Set(['exactAttentionOwner','exactRuleOwner','loadRules','saveRule','readAttentionSources','buildAttentionCard','handleEmailAttentionCommand'])
 const declarations=parsed.statements.filter((n):n is ts.FunctionDeclaration => ts.isFunctionDeclaration(n)&&!!n.name&&wanted.has(n.name.text))
 for(const name of ['loadRules','saveRule','readAttentionSources','buildAttentionCard','handleEmailAttentionCommand'])
   assert.ok(declarations.some(d=>d.name?.text===name), 'actual implementation missing: '+name)
