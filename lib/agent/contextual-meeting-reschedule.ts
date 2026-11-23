@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto'
+import {isMetaMessageId} from '@/lib/channels/whatsapp-provider/provider'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {formatInTimezone, getLocalParts, isValidTimezone, zonedLocalTimeToUtc} from '@/lib/timezone'
 import {getCalendarAccountAccess, fetchMergedCalendarEventsPage} from '@/lib/services/google-calendar-accounts'
@@ -47,39 +48,46 @@ function storedMeeting(message: string, timezone: string) {
 
 /** Reconcile an already-rescheduled Calendar event with its delivered reminder.
  * Calendar is read-only here. Sent occurrences are never re-armed or rewritten. */
-export async function tryContextualMeetingReschedule(p: {telegramId:number;phone:string;text:string;surface:'web'|'whatsapp'}): Promise<string|null> {
+export async function tryContextualMeetingReschedule(p: {telegramId:number;phone:string;text:string;surface:'web'|'whatsapp';replyToSid?:string}): Promise<string|null> {
   const clock = moveClock(p.text)
   if (!clock) return null
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId === 0) return 'I couldn’t verify the reminder owner. Nothing was changed.'
   if (!clock.valid) return 'Please give one valid meeting time. Nothing was changed.'
+  if (p.replyToSid && (p.surface !== 'whatsapp' || p.replyToSid.length > 256 ||
+    !(/^(?:SM|MM)[a-f0-9]{32}$/i.test(p.replyToSid) || isMetaMessageId(p.replyToSid)))) return null
+  const maxAgeMs = (p.replyToSid ? 24 : 1) * 60 * 60_000
   const owner = p.telegramId
   try {
     const reminderLevel = await capabilityPermissionLevel(owner, 'reminders')
     const calendarLevel = await capabilityPermissionLevel(owner, 'calendar')
     if (!['ask','auto'].includes(reminderLevel) || calendarLevel === 'off') return 'Your reminder or Calendar permission does not allow this change. Nothing was changed.'
     const now = Date.now()
-    const {data:recent,error:recentError} = await supabaseAdmin.from('reminders')
+    const delivered = supabaseAdmin.from('reminders')
       .select('id,message,remind_at,sent_at,twilio_sid,timezone,whatsapp_to,is_recurring,recurring_pattern')
       .eq('telegram_id',owner).eq('sent',true).in('delivery_state',['delivered','read'])
-      .gte('sent_at',new Date(now - 60 * 60_000).toISOString()).order('sent_at',{ascending:false}).limit(2)
+      .gte('sent_at',new Date(now - maxAgeMs).toISOString())
+    const {data:recent,error:recentError} = await (p.replyToSid ? delivered.eq('twilio_sid',p.replyToSid) : delivered)
+      .order('sent_at',{ascending:false}).limit(2)
     if (recentError) return UNKNOWN
     const source = recent?.[0]
     if (!source || !isValidTimezone(source.timezone) || source.is_recurring || source.recurring_pattern) return null
-    if (recent?.[1]?.sent_at === source.sent_at) return 'More than one reminder was delivered together. Please name the meeting; nothing was changed.'
+    if (recent?.[1] && (p.replyToSid || recent[1].sent_at === source.sent_at)) return 'I found more than one matching reminder. Please name the meeting. Nothing was changed.'
     if (!/^\+\d{8,15}$/.test(phoneKey(p.phone)) || phoneKey(source.whatsapp_to) !== phoneKey(p.phone)) return null
     const sentAt = Date.parse(source.sent_at)
-    if (!Number.isFinite(sentAt) || sentAt > now || now - sentAt > 60 * 60_000) return null
+    if (!Number.isFinite(sentAt) || sentAt > now || now - sentAt > maxAgeMs) return null
     const meeting = storedMeeting(source.message, source.timezone)
     if (!meeting) return null
     const {data:receipt,error:receiptError} = await supabaseAdmin.from('delivery_receipts')
       .select('receipt_verified,status,chunk,chunks').eq('provider_sid',source.twilio_sid).maybeSingle()
     if (receiptError || receipt?.receipt_verified !== true || !['delivered','read'].includes(receipt?.status) || receipt?.chunk !== 1 || receipt?.chunks !== 1) return UNKNOWN
-    // Do not steal a pronoun after an intervening unrelated user request. The
-    // scheduler delivery itself is absent from ordinary conversation history.
-    const {data:turns,error:turnError} = await supabaseAdmin.from('conversations').select('content')
-      .eq('telegram_id',owner).eq('role','user').gte('created_at',source.sent_at).order('created_at',{ascending:false}).limit(21)
-    if (turnError) return UNKNOWN
-    if ((turns || []).length > 20 || (turns || []).some((r:any) => !moveClock(r.content) && !/^(?:yes|yep|yeah|ok|okay|no|cancel)[.!]*$/i.test(String(r.content || '').trim()))) return null
+    // A verified quote identifies the original delivery directly. For a bare
+    // pronoun, intervening requests can change its meaning.
+    if (!p.replyToSid) {
+      const {data:turns,error:turnError} = await supabaseAdmin.from('conversations').select('content')
+        .eq('telegram_id',owner).eq('role','user').gte('created_at',source.sent_at).order('created_at',{ascending:false}).limit(21)
+      if (turnError) return UNKNOWN
+      if ((turns || []).length > 20 || (turns || []).some((r:any) => !moveClock(r.content) && !/^(?:yes|yep|yeah|ok|okay|no|cancel)[.!]*$/i.test(String(r.content || '').trim()))) return null
+    }
     const canonical = (z:string) => new Intl.DateTimeFormat('en',{timeZone:z}).resolvedOptions().timeZone
     if (clock.zone && canonical(clock.zone === 'IST' ? 'Asia/Kolkata' : 'UTC') !== canonical(source.timezone)) return 'Please confirm the timezone for this meeting. Nothing was changed.'
     const today = getLocalParts(new Date(now),source.timezone)
