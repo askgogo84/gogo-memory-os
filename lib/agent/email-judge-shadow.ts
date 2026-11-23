@@ -13,6 +13,14 @@ const INBOX_QUERY = 'in:inbox newer_than:2d -category:promotions -category:socia
 const MAX_AGE_MS = 48 * 3600_000
 
 function addr(from: string) { return (String(from || '').match(/<([^>]+)>/)?.[1] || String(from || '')).trim().toLowerCase() }
+// The shadow model must never see mail reached through an imprecise or noncanonical owner.
+const SIGNED64_MIN = BigInt('-9223372036854775808'), SIGNED64_MAX = BigInt('9223372036854775807')
+function exactSignedOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  const n = BigInt(value)
+  return n >= SIGNED64_MIN && n <= SIGNED64_MAX ? value : null
+}
 function ownerKey(id: string): number | string { const n = Number(id); return Number.isSafeInteger(n) && String(n) === id ? n : id }
 function localHour(tz: string, now: number) { try { return Number(new Intl.DateTimeFormat('en-US', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).format(new Date(now))) } catch { return NaN } }
 function localDay(iso: string | number, tz: string) { try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)) } catch { return '' } }
@@ -65,9 +73,11 @@ export function judgeCandidates(threadsByMailbox: { mailbox: string; threads: an
 }
 
 export async function runEmailJudgeShadow(telegramId: string, deps: Deps = {}) {
+  const ownerId = exactSignedOwner(telegramId)
+  if (!ownerId) return { logged: false, reason: 'owner_invalid' }
   const now = (deps.now || Date.now)()
-  const user = deps.user ? await deps.user(telegramId) : (await supabaseAdmin.from('users').select('telegram_id,whatsapp_id,timezone').eq('telegram_id', ownerKey(telegramId)).maybeSingle()).data
-  if (!user || String(user.telegram_id) !== telegramId) return { logged: false, reason: 'user_unavailable' }
+  const user = deps.user ? await deps.user(telegramId) : (await supabaseAdmin.from('users').select('telegram_id::text,whatsapp_id,timezone').eq('telegram_id', ownerKey(telegramId)).maybeSingle()).data
+  if (!user || exactSignedOwner(user.telegram_id) !== ownerId) return { logged: false, reason: 'user_unavailable' }
   if (!user.whatsapp_id) return { logged: false, reason: 'no_whatsapp' }
   const tz = String(user.timezone || 'Asia/Kolkata')
   const quiet = deps.quiet ? await deps.quiet(telegramId, tz) : await getAlertPreferences(telegramId).then(p => isQuietHour(p, localHour(tz, now)))
