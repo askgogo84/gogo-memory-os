@@ -253,7 +253,7 @@ function departureCutoffFrom(text: string): DeparturePreference | undefined {
   const request = requests[0]
   if (!request) return undefined
   const prefix = text.slice(0, request.index)
-  if (requests.length > 1 || /\b(?:not|never|return|inbound)\s+(?:(?:(?:a|the)\s+)?flight\s+)?$/i.test(prefix)) return 'invalid'
+  if (requests.length > 1 || /\b(?:not|never|return(?:ing)?|inbound)\s+(?:(?:(?:a|the)\s+)?(?:leg|flights?)\s+)?$/i.test(prefix)) return 'invalid'
 
   const suffix = text.slice(request.index! + request[0].length).trimStart()
   const clock = suffix.match(/^(\d{1,2})(?:[:.](\d{2}))?(?:[ \t]*([ap])\.?m\.?(?=\W|$))?(?=$|[\s,.!?;])/i)
@@ -263,7 +263,7 @@ function departureCutoffFrom(text: string): DeparturePreference | undefined {
   const tail = suffix.slice(clock[0].length).trimStart()
   const zone = tail.match(/^(IST|local(?: departure)? time)\b/i)
   const following = zone ? tail.slice(zone[0].length).trimStart() : tail
-  if (!/^(?:$|[.,;!?]|(?:and|on|with|for|please)\b)/i.test(following) || /\b(?:and|but)\s+(?:before|after)\s+\d/i.test(following)) return 'invalid'
+  if (!/^(?:$|[.,;!?]|(?:and|on|with|for|please)\b)/i.test(following) || /\b(?:before|after)\s+\d{1,2}(?::\d{2}|\s*[ap]\.?m\b)/i.test(following)) return 'invalid'
   return {direction:request[1].toLowerCase() as DepartureCutoff['direction'],minutes,ist:zone?.[1].toUpperCase() === 'IST'}
 }
 
