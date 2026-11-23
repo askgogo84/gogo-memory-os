@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {formatInTimezone, getLocalParts, isValidTimezone, zonedLocalTimeToUtc} from '@/lib/timezone'
-import {getCalendarAccountAccess, fetchMergedCalendarEventsPage, describeEventRange} from '@/lib/services/google-calendar-accounts'
+import {getCalendarAccountAccess, fetchMergedCalendarEventsPage} from '@/lib/services/google-calendar-accounts'
 import {capabilityPermissionLevel} from './adaptive-autonomy'
 
 const UNKNOWN = 'I couldn’t verify that meeting reminder change. Please check your reminders; I haven’t retried the write.'
@@ -103,7 +103,8 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
     const event = events[0]
     const start = Date.parse(event.start?.dateTime || ''), end = Date.parse(event.end?.dateTime || '')
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return UNKNOWN
-    if (start !== target.getTime()) return `${meeting.title} is currently on your Calendar ${describeEventRange(event)}. It is not at the requested time yet. I haven’t changed the Calendar event or reminder.`
+    const range = new Intl.DateTimeFormat('en-IN',{timeZone:source.timezone,weekday:'short',year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}).formatRange(new Date(start),new Date(end)) + ` (${source.timezone})`
+    if (start !== target.getTime()) return `${meeting.title} is currently on your Calendar ${range}. It is not at the requested time yet. I haven’t changed the Calendar event or reminder.`
     const due = new Date(start - lead).toISOString()
     if (Date.parse(due) <= now) return 'The Calendar event matches, but its reminder time is already past. I haven’t created a late reminder.'
     const message = source.message.replace(/ — starts [^\n]+/,` — starts ${formatInTimezone(new Date(start),source.timezone)}`)
@@ -140,6 +141,6 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
     const {data:saved,error:savedError} = await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,sent,delivery_state,whatsapp_to,chat_id')
       .eq('id',id).eq('telegram_id',owner).maybeSingle()
     if (savedError || !saved || saved.sent || saved.delivery_state !== 'pending' || saved.message !== message || saved.timezone !== source.timezone || Date.parse(saved.remind_at) !== Date.parse(due) || phoneKey(saved.whatsapp_to) !== phoneKey(p.phone) || String(saved.chat_id) !== String(owner)) return UNKNOWN
-    return `${meeting.title} is already on your Calendar ${describeEventRange(event)}, with the same Meet link.\nYour reminder is set for ${formatInTimezone(saved.remind_at,saved.timezone)}.\n${meeting.meet}`
+    return `${meeting.title} is already on your Calendar ${range}, with the same Meet link.\nYour reminder is set for ${formatInTimezone(saved.remind_at,saved.timezone)}.\n${meeting.meet}`
   } catch { return UNKNOWN }
 }

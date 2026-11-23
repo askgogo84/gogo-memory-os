@@ -87,6 +87,12 @@ reset();rows.push(future());failure='race';assert.match(await invoke(),/couldnâ€
 reset();rows.push({...future(),whatsapp_to:'+919999999999'});assert.match(await invoke(),/different recipient/);assert.equal(writes.length,0)
 reset();rows.push(future());failure='race-recipient';assert.match(await invoke(),/couldnâ€™t verify/);assert.equal(rows[1].remind_at,'2026-11-24T11:00:00.000Z')
 reset();rows.push(future(),{...future(),id:'second'});assert.match(await invoke(),/More than one/);assert.equal(writes.length,0)
+function utcFixture(){
+  reset();now=Date.parse('2026-11-23T16:25:00Z');rows[0].timezone='UTC';rows[0].remind_at='2026-11-23T16:20:00Z';rows[0].sent_at='2026-11-23T16:20:37Z'
+  calendar.events[0].start.dateTime='2026-11-24T16:30:00Z';calendar.events[0].end.dateTime='2026-11-24T17:45:00Z'
+}
+utcFixture();const utcReply=await invoke();assert.match(utcReply,/4:30/);assert.match(utcReply,/5:45/);assert.match(utcReply,/UTC/);assert.doesNotMatch(utcReply,/10:00/);assert.equal(rows[1].remind_at,'2026-11-24T16:20:00.000Z')
+utcFixture();calendar.events[0].start.dateTime='2026-11-24T17:00:00Z';const utcMismatch=await invoke();assert.match(utcMismatch,/5:00/);assert.match(utcMismatch,/UTC/);assert.equal(writes.length,0)
 
 // Exercise the actual router before Calendar/legacy/LLM dispatch.
 const routed:any={},none=new Proxy({}, {get:()=>()=>null})
