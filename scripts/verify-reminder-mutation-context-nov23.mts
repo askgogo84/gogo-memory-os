@@ -72,6 +72,10 @@ for(const text of ['Move my existing Askgogo<>Fund Raise reminder today to 4:20 
   reset();assert.equal((await run(text)).status,'completed',text);assert.equal(applied,1)
 }
 reset();assert.equal((await run('Move Askgogo<>Fund Raise reminder to 4:20 pm IST tomorrow')).status,'completed');assert.equal(rows[0].remind_at,'2026-11-24T10:50:00.000Z')
+for(const title of ['Call at 5 pm','Say reminder to 5 pm']){
+  reset();rows[0].message=title;assert.equal((await run(`Move my “${title}” reminder today to 4:20 pm IST`)).status,'completed');assert.equal(rows[0].remind_at,'2026-11-23T10:50:00.000Z','title clock must not replace requested new clock')
+}
+reset();assert.equal((await run(command.replace('starts at 4:30 pm','starts at 4:30 pm UTC'))).status,'failed');assert.equal(writes.length,0)
 for(const text of ['Move Askgogo<>Fund Raise reminder today to 4:20 pm IST tomorrow','Move reminder today to 4:20 pm IST for Fund Raise','Move Askgogo<>Fund Raise reminder to 4:20 pm IST on Tuesday','Move Askgogo<>Fund Raise reminder to 4:20 pm IST or 5 pm']){
   reset();assert.equal((await run(text)).status,'failed',text);assert.equal(writes.length,0)
 }

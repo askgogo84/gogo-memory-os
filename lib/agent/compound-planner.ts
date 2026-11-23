@@ -195,30 +195,37 @@ async function readReminderQuery(actor: AgentActor, text: string) {
 }
 
 
-function parseReminderMutation(text: string): { target: string | null; timeText: string; unresolved?: boolean; meetingStart?: string; zone?: string } | null {
+function parseReminderMutation(text: string): { target: string | null; timeText: string; unresolved?: boolean; meetingStart?: string; zone?: string; meetingZone?: string } | null {
   const raw = String(text || '').trim().replace(/\s+/g, ' ')
   if (!/\breminder\b/i.test(raw)) return null // Generic verbs cannot establish a reminder identity.
   if (!/\b(move|reschedule|change|update|make)\b/i.test(raw)) return null
-  const time = raw.match(/\b(?:to|for|at)\s+((?:\d{1,2}(?::\d{2})?\s*(?:am|pm)))(?:\s+(today|tomorrow))?/i)
-  if (!time) return null
-  const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i)
+  const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i)
+    || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i)
   let target = named?.[1] || null
   if (target) target = cleanListItem(target).replace(/^(?:(?:my|the|existing)\s+)+/i, '').replace(/^["“]|["”]$/g, '').trim()
   const generic = /^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing|it|that|this)\s+)*reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)\b/i.exec(raw)
   if (generic) target = null
-  const afterTime=raw.slice((time.index || 0)+time[0].length)
-  const zoneMatch=afterTime.match(/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/)
+  const head=generic || named
+  const tail=head?raw.slice(head[0].length):''
+  // The new clock belongs after this reminder subject, never inside its title.
+  const time=tail.match(/^\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))(?:\s+(today|tomorrow))?/i)
+  if(!time)return {target,timeText:'',unresolved:true}
+  const afterTime=tail.slice(time[0].length)
+  const zonePattern=/^\s+([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+|(?:[A-Z]{2,5}|[Ii][Ss][Tt]|[Uu][Tt][Cc]|[Gg][Mm][Tt])(?:[+-]\d{1,2}(?::?\d{2})?)?)\b/
+  const zoneMatch=afterTime.match(zonePattern)
   const zone=zoneMatch?.[1]
   const afterZone=zoneMatch?afterTime.slice(zoneMatch[0].length):afterTime
   const tailDay=afterZone.match(/^\s+(today|tomorrow)\b/i)?.[1]
   const days=[named?.[2],generic?.[1],time[2],tailDay].filter(Boolean).map(s=>s!.toLowerCase())
   const day=days[0]
-  const meetingStart = raw.match(/\b(?:the\s+)?meeting\s+starts?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)?.[1]
+  const meeting=afterTime.match(/\b(?:the\s+)?meeting\s+starts?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
+  const meetingStart=meeting?.[1]
+  const meetingZone=meeting?afterTime.slice(meeting.index!+meeting[0].length).match(zonePattern)?.[1]:undefined
   const remaining=afterZone.replace(/^\s+(?:today|tomorrow)\b/i,'')
   const unresolved = (!target && !generic) || new Set(days).size>1 || (!!generic && /\b(?:for|about|called|named)\b/i.test(afterTime))
     || /^\s+(?:on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|or)\b/i.test(remaining)
-    || (/\bmeeting\s+starts?\b/i.test(raw) && !meetingStart)
-  return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone }
+    || (/\bmeeting\s+starts?\b/i.test(afterTime) && !meetingStart)
+  return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone, meetingZone }
 }
 
 async function tryRunReminderMutation(params: { actor: AgentActor; surface: AgentSurface; text: string }): Promise<CompoundRunResult | null> {
@@ -272,8 +279,8 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
   if (row.sent || row.is_recurring || row.recurring_pattern || row.delivery_state !== 'pending' || row.claim_token || row.send_started_at) return fail('That reminder is recurring or already being delivered. I haven’t changed or duplicated it.')
   const timezone=String(row.timezone || await actorTimezone(params.actor))
   if (!isValidTimezone(timezone)) return fail('I couldn’t verify the reminder timezone. Nothing was changed.')
-  if (mutation.zone) {
-    const requested=mutation.zone.toUpperCase()==='IST'?'Asia/Kolkata':/^(?:UTC|GMT)$/i.test(mutation.zone)?'UTC':mutation.zone
+  for (const declaredZone of [mutation.zone,mutation.meetingZone].filter((z):z is string=>!!z)) {
+    const requested=declaredZone.toUpperCase()==='IST'?'Asia/Kolkata':/^(?:UTC|GMT)$/i.test(declaredZone)?'UTC':declaredZone
     const canonical=(zone:string)=>new Intl.DateTimeFormat('en',{timeZone:zone}).resolvedOptions().timeZone
     if(!isValidTimezone(requested)||canonical(requested)!==canonical(timezone))return fail('The requested timezone differs from the saved reminder timezone or is unclear. Please confirm the intended timezone. Nothing was changed.')
   }
