@@ -1,5 +1,6 @@
 import { sanitizeBrowserReadDiagnostics } from './browser-read-diagnostics'
 import { createHash } from 'node:crypto'
+import { sourceBoundReport } from './make-request'
 import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
@@ -71,7 +72,10 @@ function explicitlyNegates(text:string, actionPattern:string){
 }
 
 export function parseBrowserCommand(text:string):BrowserCommand|null{
-  const raw=String(text||'').trim();const url=extractUrl(raw);if(!url)return null
+  const raw=String(text||'').trim()
+  // Explicit citations belong to the Make report planner.
+  if(sourceBoundReport(raw))return null
+  const url=extractUrl(raw);if(!url)return null
   const t=actionTextWithoutUrls(raw)
   const signal=/\b(open|browse|browser|website|site|page|form|fill|apply|submit|book|checkout|buy|purchase|reserve|navigate|go to|visit|inspect|check|read|research|summari[sz]e|look|search|find|tell|show|what|when|where|why|how)\b/.test(t)
   if(!signal)return null
@@ -112,7 +116,7 @@ function startsWithProviderTarget(text:string){
 
 export function parseConnectedProviderReadCommand(text:string):BrowserCommand|null{
   const raw=String(text||'').trim()
-  if(!raw)return null
+  if(!raw||sourceBoundReport(raw))return null
   // A provider named only inside a shared link is not a request to read that provider:
   // a pasted instagram.com reel link was sent to Instagram's login page (13 Oct 18:46).
   // A social account handle is the object being read, not a second provider
@@ -248,7 +252,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 // delicate read path stays strictly read-only.
 export function parseConnectedProviderCartAction(text:string):BrowserCommand|null{
   const raw=String(text||'').trim()
-  if(!raw)return null
+  if(!raw||sourceBoundReport(raw))return null
   const lower=raw.toLowerCase()
   // Must be an explicit, affirmative "add <item> to cart/basket" — not negated.
   const wantsCart=/\badd\b[^.!?;,]*\bto\s+(?:my\s+|the\s+)?(?:cart|basket)\b/i.test(lower)

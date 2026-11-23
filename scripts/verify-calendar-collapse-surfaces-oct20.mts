@@ -15,6 +15,7 @@ const timezone = await import('../lib/timezone.ts')
 const calendarWord = await import('../lib/data/calendar-word.ts')
 const {redactSecretShapedText} = await import('../lib/bot/memory-redaction.ts')
 const {exactDashboardOwnerId} = await import('../lib/dashboard/session-access.ts')
+const taskLifecycle = await import('../lib/agent/task-lifecycle.ts')
 
 function load(file: string, deps: Record<string, unknown>) {
   const exports: any = {}
@@ -68,6 +69,57 @@ for (const title of ['ONDC l Tipplr weekly connect', 'Cohort Connect']) assert.o
 assert.doesNotMatch(agenda.text, /Sat, \d+ \w+, 11:45|– \w{3}, \d+ \w{3}, 11:45 am — Daily/, 'no multi-week range labels')
 assert.match(agenda.text, /Calendar: 6 events \(14 returned entries; repeats combined\)/)
 console.log('PASS tomorrow agenda collapses the broken invite and shows the real meetings')
+
+const weeklyAsk = 'Show my weekly life-admin review for the next two weeks.'
+const weeklyIntent = schedule.detectReadOnlyScheduleRequest(weeklyAsk)
+assert.equal(weeklyIntent?.scope, 'weekly')
+for (const text of [
+  'Schedule my weekly life-admin review every Sunday',
+  'Do not show my weekly life-admin review',
+  'Show my weekly life-admin review and email it to Ravi',
+]) assert.equal(schedule.detectReadOnlyScheduleRequest(text), null, text)
+const weeklyCalls: Array<[string, string, ...unknown[]]> = []
+let calendarOff = false, followUpsFail = false
+const weeklyDb = {from(table: string) {
+  assert.ok(['users','reminders','agent_open_loops'].includes(table), table)
+  const rows: Record<string, unknown> = {
+    users: {timezone:tz},
+    reminders: [{id:'r',message:'Renew library card',remind_at:at(tomorrow,'11:00'),sent:false}],
+    agent_open_loops: [
+      {title:'Pending reminders question',summary:'How many reminders do I have pending?',source_type:'conversation'},
+      {title:'Collect the signed form',source_type:'task'},
+    ],
+  }
+  const ok = () => table === 'agent_open_loops' && followUpsFail ? {data:null,error:'offline'} : {data:rows[table],error:null}
+  const q: any = {select: () => q, maybeSingle: async () => ok(), then: (res: any, rej: any) => Promise.resolve(ok()).then(res, rej)}
+  for (const method of ['eq','gte','lt','order','limit']) q[method] = (...args: unknown[]) => {weeklyCalls.push([table,method,...args]);return q}
+  return q
+}}
+const weeklySchedule = load('lib/agent/read-only-schedule.ts', {
+  '@/lib/supabase-admin': {supabaseAdmin:weeklyDb}, './calendar-read': read, '@/lib/timezone':timezone,
+  './typed-object-context': {rememberTypedObjects:async () => assert.fail('Weekly review must not change the selected item')},
+  './adaptive-autonomy': {capabilityIsOff:async (id:number, name:string) => {assert.equal(id,123);return calendarOff && name==='calendar'}},
+  './task-lifecycle':taskLifecycle,
+})
+const weeklyAgenda = await weeklySchedule.readTomorrowSchedule({actor,scope:weeklyIntent.scope,text:weeklyAsk})
+assert.match(weeklyAgenda.text, new RegExp(`Weekly life-admin review · ${today} to ${addDays(today,13)}`))
+assert.match(weeklyAgenda.text, /ONDC l Tipplr weekly connect/)
+assert.match(weeklyAgenda.text, /Renew library card/)
+assert.match(weeklyAgenda.text, /Collect the signed form/)
+assert.doesNotMatch(weeklyAgenda.text,/Pending reminders question/)
+assert.ok(weeklyCalls.some(call => call.join('|')==='reminders|eq|telegram_id|123'))
+assert.ok(weeklyCalls.some(call => call[0]==='agent_open_loops' && call[1]==='eq' && call[2]==='telegram_id' && call[3]==='123'))
+assert.ok(weeklyCalls.some(call => call[0]==='reminders' && call[1]==='lt' && call[3]===new Date(at(addDays(today,14),'00:00')).toISOString()))
+calendarOff = followUpsFail = true
+const partial = await weeklySchedule.readTomorrowSchedule({actor,scope:weeklyIntent.scope,text:weeklyAsk})
+assert.match(partial.text, /Calendar is off/)
+assert.match(partial.text, /Follow-ups unavailable/)
+assert.match(partial.text, /Renew library card/)
+assert.equal(partial.calendarReadVerified,false)
+const callsBeforeUnsafe = weeklyCalls.length
+await assert.rejects(weeklySchedule.readTomorrowSchedule({actor:{...actor,legacyTelegramId:Number.MAX_SAFE_INTEGER+1},scope:weeklyIntent.scope,text:weeklyAsk}), /owner_unsafe/)
+assert.equal(weeklyCalls.length,callsBeforeUnsafe)
+console.log('PASS weekly review is owner scoped, read-only and honest about missing sources')
 
 // Calendar-only scope / canonical reader: all 5 real events survive the display bound (cut after collapse).
 const direct = await read.executeReadOnlyCalendarStep({actor, instruction: 'Show my calendar tomorrow', missionText: 'Show my calendar tomorrow'})

@@ -20,6 +20,8 @@ function safe(value: unknown, max = 1600) {
 }
 
 export type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night'
+type DepartureCutoff = { direction: 'before' | 'after'; minutes: number; ist: boolean }
+type DeparturePreference = DepartureCutoff | 'invalid'
 type Place = { label: string; code?: string; aliases: string[] }
 type TravelContext = {
   kind: 'flight' | 'hotel'
@@ -37,6 +39,7 @@ type TravelContext = {
   adults?: number
   nonStop?: boolean
   timeOfDay?: TimeOfDay
+  departureCutoff?: DeparturePreference
 }
 type DateRelevance = 'matched' | 'unknown' | 'mismatched'
 
@@ -99,7 +102,14 @@ const MONTHS: Record<string, number> = {
 function esc(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 function placeFrom(raw: string | undefined): Place | undefined { const cleaned=String(raw||'').trim().replace(/[,.!?]+$/g,'').toLowerCase(); if(!cleaned)return undefined; if(PLACES[cleaned])return PLACES[cleaned]; return {label:cleaned.replace(/\b\w/g,c=>c.toUpperCase()),aliases:[cleaned]} }
 function routeText(text:string) {
-  return text.replace(/\b(?:do\s+not|don't)\s+(?!forget\b)[^.!?;\n]*?(?=[.!?;\n]|\b(?:but|then)\b|,\s*(?:just|please|instead)\b|$)[.!?;]?/gi,' ').trim().replace(/(?:[.!?;,]\s*)+$/,'').trim()
+  const normalized = text.replace(/[ \t]*\(([a-z]{3})\)/gi, (qualifier, code: string, offset: number, original: string) => {
+    const airport = PLACES[code.toLowerCase()]
+    if (airport?.code !== code.toUpperCase()) return qualifier
+    const before = original.slice(0, offset)
+    const alreadySelected = airport.aliases.some(alias => PLACES[alias]?.code === airport.code && new RegExp(`\\b${esc(alias)}$`, 'i').test(before))
+    return alreadySelected ? '' : qualifier
+  })
+  return normalized.replace(/\b(?:do\s+not|don't)\s+(?!forget\b)[^.!?;\n]*?(?=[.!?;\n]|\b(?:but|then)\b|,\s*(?:just|please|instead)\b|$)[.!?;]?/gi,' ').trim().replace(/(?:[.!?;,]\s*)+$/,'').trim()
 }
 function extractSegment(text:string,marker:'from'|'to'|'in') {
   // A weekday or "day after tomorrow" ends a city too ("to Delhi Friday 30 Oct").
@@ -222,19 +232,58 @@ export function flightSearchPreferences(text: string) {
   const words: Record<string, number> = {one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9}
   const adultText = text.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b/i)?.[1]?.toLowerCase()
   const adults = adultText ? words[adultText] ?? Number(adultText) : 1
-  const timeOfDay = timeOfDayFrom(text)
+  const departureCutoff = departureCutoffFrom(text)
+  const timeOfDay = timeOfDayFrom(text, !departureCutoff)
   const dates = text.match(/\bround trip\b.*?\bdeparting (\d{4}-\d{2}-\d{2}) returning (\d{4}-\d{2}-\d{2})\b/i)
   return {cabin, adults, nonStop: /\b(?:non[- ]?stop|direct flights?)\b/i.test(text), ...(timeOfDay ? { timeOfDay } : {}),
+    ...(departureCutoff ? { departureCutoff } : {}),
     ...(dates ? { roundTrip: true, startDate: dates[1], returnDate: dates[2] } : {})}
 }
 
-export function timeOfDayFrom(text: string): TimeOfDay | undefined {
+export function timeOfDayFrom(text: string, inferLateCutoff = true): TimeOfDay | undefined {
   const t = String(text || '')
   if (/\btonight\b/i.test(t)) return 'night'
-  if (/\b(?:red[\s-]?eye|late\s+night|after\s+(?:9|10|11)\s*pm)\b/i.test(t)) return 'night'
+  if (/\b(?:red[\s-]?eye|late\s+night)\b/i.test(t) || (inferLateCutoff && /\bafter\s+(?:9|10|11)\s*pm\b/i.test(t))) return 'night'
   const m = t.match(/\b(morning|afternoon|evening|night)\b/i)
   return m ? (m[1].toLowerCase() as TimeOfDay) : undefined
 }
+
+function departureCutoffFrom(text: string): DeparturePreference | undefined {
+  const requests = [...text.matchAll(/\b(?:depart(?:s|ure|ing)?|leav(?:e|es|ing)|take\s*off)\s+(after|before)\b/gi)]
+  const request = requests[0]
+  if (!request) return undefined
+  const prefix = text.slice(0, request.index)
+  if (requests.length > 1 || /\b(?:not|never|return(?:ing)?|inbound)\s+(?:(?:(?:a|the)\s+)?(?:leg|flights?)\s+)?$/i.test(prefix)) return 'invalid'
+
+  const suffix = text.slice(request.index! + request[0].length).trimStart()
+  const clock = suffix.match(/^(\d{1,2})(?:[:.](\d{2}))?(?:[ \t]*([ap])\.?m\.?(?=\W|$))?(?=$|[\s,.!?;])/i)
+  if (!clock || (!clock[2] && !clock[3])) return 'invalid'
+  const minutes = clockMinutes(clock[1], clock[2], clock[3])
+  if (minutes === null) return 'invalid'
+  const tail = suffix.slice(clock[0].length).trimStart()
+  const zone = tail.match(/^(IST|local(?: departure)? time)\b/i)
+  const following = zone ? tail.slice(zone[0].length).trimStart() : tail
+  if (!/^(?:$|[.,;!?]|(?:and|on|with|for|please)\b)/i.test(following) || /\b(?:before|after)\s+\d/i.test(following)) return 'invalid'
+  return {direction:request[1].toLowerCase() as DepartureCutoff['direction'],minutes,ist:zone?.[1].toUpperCase() === 'IST'}
+}
+
+function clockMinutes(hourText: string, minuteText?: string, meridiem?: string): number | null {
+  const hour = Number(hourText), minute = Number(minuteText || 0)
+  if (minute > 59 || (meridiem ? hour < 1 || hour > 12 : hour > 23)) return null
+  return (meridiem ? hour % 12 + (meridiem.toLowerCase() === 'p' ? 12 : 0) : hour) * 60 + minute
+}
+
+function cutoffLabel(cutoff: DepartureCutoff) {
+  const hours = String(Math.floor(cutoff.minutes / 60)).padStart(2, '0')
+  const minutes = String(cutoff.minutes % 60).padStart(2, '0')
+  return `${cutoff.direction} ${hours}:${minutes}${cutoff.ist ? ' IST' : ''}`
+}
+
+function invalidCutoff(cutoff: DeparturePreference | undefined, origin?: string) {
+  return cutoff === 'invalid' || Boolean(cutoff?.ist && !INDIA_CODES.has(origin || ''))
+}
+
+const CUTOFF_QUESTION = 'Please give one departure cutoff in local time at the departure airport, such as “departing after 08:00”, or say “any time”.'
 
 // Local departure hour from "2026-10-27T06:30", "6:30 AM" or "06:30".
 export function departureHour(value: unknown): number | null {
@@ -258,6 +307,24 @@ export function applyTimeOfDay<T>(rows: T[], departure: (row: T) => unknown, tod
   const matching = rows.filter(row => { const hour = departureHour(departure(row)); return hour !== null && inTimeOfDay(hour, tod) })
   if (matching.length) return { rows: matching, note: `Showing ${tod} departures only.\n\n` }
   return { rows, note: `No ${tod} departures were found, so these are the other options.\n\n` }
+}
+
+/** Exact cutoffs exclude boundary and unknown times. Browser evidence uses local airport time. */
+export function filterFlightDepartureTimes<T>(rows: T[], departure: (row: T) => unknown, context: Pick<TravelContext, 'timeOfDay' | 'departureCutoff'>) {
+  const cutoff = context.departureCutoff
+  if (!cutoff) return applyTimeOfDay(rows, departure, context.timeOfDay)
+  if (cutoff === 'invalid') return { rows: [], note: CUTOFF_QUESTION }
+  const matching = rows.filter(row => {
+    const value = String(departure(row) || '').trim()
+    const iso = value.match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/)
+    const clock = iso || value.match(/^(\d{1,2}):(\d{2})(?:\s*([ap])m)?$/i)
+    if (!clock) return false
+    const minutes = clockMinutes(clock[1], clock[2], clock[3])
+    if (minutes === null || (context.timeOfDay && !inTimeOfDay(Math.floor(minutes / 60), context.timeOfDay))) return false
+    return cutoff.direction === 'after' ? minutes > cutoff.minutes : minutes < cutoff.minutes
+  })
+  const window = `${context.timeOfDay ? `${context.timeOfDay} ` : ''}departures ${cutoffLabel(cutoff)}${cutoff.ist ? '' : ' (departure airport time)'}`
+  return {rows:matching, note:matching.length ? `Showing ${window}.\n\n` : `I found no verified ${window} in the results I could read.`}
 }
 
 // A search the person can open to see live prices themselves. No login is needed and nothing is booked.
@@ -307,6 +374,8 @@ export async function executeTravelResearch(params:{actor:AgentActor;surface:Age
   if(!isPublicTravelResearchRequest(effectiveText))return null
   const context=params.context || {...buildTravelResearchContext(effectiveText),...flightSearchPreferences(effectiveText)};const queries=buildQueries(context,effectiveText);const tg=params.actor.legacyTelegramId;const now=new Date().toISOString()
   if(context.kind === 'flight') {
+    if (invalidCutoff(context.departureCutoff, context.origin?.code)) return {runId:undefined,status:'waiting_user' as const,
+      capability:'travel' as const,risk:'low' as const,handledBy:'travel-details' as const,text:CUTOFF_QUESTION}
     const roundTripRequest = context.roundTrip === true && Boolean(context.returnDate) && Boolean(context.startDate)
     const missing = [!context.origin && 'departure city', !context.destination && 'destination', !context.startDate && 'travel date'].filter(Boolean)
     const unsupported = /\b(?:children|child|infants?|round[- ]trip|return(?:ing)?(?:\s+on|\s+flight|\s+date)?)\b/i.test(roundTripRequest ? effectiveText.replace(/\bround trip\b|\breturning\b/gi, '') : effectiveText)
@@ -341,20 +410,34 @@ export async function executeTravelResearch(params:{actor:AgentActor;surface:Age
       await supabaseAdmin.from('agent_steps').update({title:'Work through live flight search in secure browser'}).eq('id',String(step.id))
       await addActivity(tg,runId,'browser_research_started','Gogo opened a secure browser to complete the flight-search task.',{route:context.routeLabel})
       // 17 Oct: a page that did not load is tried again (up to 3 reads) while there is time, before anything is reported.
-      let browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
+      const browserRequest = {actor:params.actor,context,objective:effectiveText,deadline:params.deadline,observedOnly:Boolean(context.departureCutoff)}
+      let browserTask=await runLiveFlightBrowserTask(browserRequest)
       for(let attempt=2;attempt<=3&&!browserTask?.options?.length&&(!Number.isFinite(params.deadline)||params.deadline!-Date.now()>120_000);attempt++){
         await addActivity(tg,runId,'browser_research_retry',`The flight page did not give readable fares; trying again (${attempt} of 3).`,{attempt})
-        browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
+        browserTask=await runLiveFlightBrowserTask(browserRequest)
       }
       browserReadDiagnostics=sanitizeBrowserReadDiagnostics(browserTask && 'browserReadDiagnostics' in browserTask ? browserTask.browserReadDiagnostics : [])
-      if(browserTask?.options?.length){const completedAt=new Date().toISOString();const timedBrowser=applyTimeOfDay(browserTask.options,(f:any)=>f.departure,context.timeOfDay);const top=timedBrowser.rows.slice(0,8);const text=timedBrowser.note+(context.roundTrip&&context.returnDate?formatRoundTripResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||''):formatBrowserFlightResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||''));await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}}
+      if(browserTask?.options?.length){
+        const completedAt = new Date().toISOString()
+        const timedBrowser = filterFlightDepartureTimes(browserTask.options, flight => flight.departure, context)
+        const top = timedBrowser.rows.slice(0,8)
+        const sourceUrl = browserTask.browser?.sourceUrl || browserTask.browser?.url || ''
+        const results = top.length === 0 ? '' : context.roundTrip && context.returnDate
+          ? formatRoundTripResult(context,top,sourceUrl)
+          : formatBrowserFlightResult(context,top,sourceUrl)
+        const text = timedBrowser.note + results
+        await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id))
+        await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId)
+        await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length})
+        return {runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}
+      }
       console.warn('TRAVEL_BROWSER_DIAGNOSTICS:',JSON.stringify({runId,status:browserTask?.status||'no_result',browserReadDiagnostics}))
       await addActivity(tg,runId,'browser_research_incomplete','The browser could not produce verified flight rows; falling back to public sources.',{status:browserTask?.status||'no_result',browserReadDiagnostics})
     }
     // A projected redemption is never treated as executable until verified; browser research is read-only and cannot book or transfer points.
     await supabaseAdmin.from('agent_runs').update({summary:'Browser/provider inventory did not yield verifiable rows. Checking public sources as a last fallback.',progress:75,updated_at:new Date().toISOString()}).eq('id',runId)
     const batches=await Promise.all(queries.map(q=>searchWebResults(q,{timeoutMs:15_000})));const curated=curateTravelResults(batches.flat(),context);const completedAt=new Date().toISOString();const output={context,results:curated,source:'public-web-fallback',inventoryType:'research',browserReadDiagnostics};await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:output,completed_at:completedAt}).eq('id',String(step.id));// 11 Nov (owner): "simple and easy to read". The search-snippet list (titles like "Fares @fare not verified") is kept in the step output, not sent: it was noise, and the sanitizer used to drop the one useful line, the live search link.
-const liveLink=context.roundTrip&&context.returnDate&&context.origin?.code&&context.destination?.code?roundTripSearchLink(context):googleFlightsSearchUrl(context);const text=context.kind==='hotel'?`Couldn't get live hotel rates for ${context.routeLabel} just now.\n\nSearch (nothing is booked): https://www.google.com/search?q=${encodeURIComponent(`hotels in ${context.destination?.label||context.routeLabel}`)}\n\nSend it again in a few minutes to retry.`:`Couldn't get live fares for ${context.routeLabel} just now.\n\nLive prices (nothing is booked): ${liveLink}\n\nSend it again in a few minutes to retry.`;await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed','Task ended with fallback research rather than verified live inventory.',{travel_engine:'public-web-fallback',result_count:curated.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'travel-research' as const}
+const liveLink=context.roundTrip&&context.returnDate&&context.origin?.code&&context.destination?.code?roundTripSearchLink(context):googleFlightsSearchUrl(context);const text=context.kind==='hotel'?`Couldn't get live hotel rates for ${context.routeLabel} just now.\n\nSearch (nothing is booked): https://www.google.com/search?q=${encodeURIComponent(`hotels in ${context.destination?.label||context.routeLabel}`)}\n\nSend it again in a few minutes to retry.`:context.departureCutoff&&context.departureCutoff!=='invalid'?`I couldn't verify live fares departing ${cutoffLabel(context.departureCutoff)} for ${context.routeLabel}.\n\nOpen the route search and check departure times: ${liveLink}`:`Couldn't get live fares for ${context.routeLabel} just now.\n\nLive prices (nothing is booked): ${liveLink}\n\nSend it again in a few minutes to retry.`;await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed','Task ended with fallback research rather than verified live inventory.',{travel_engine:'public-web-fallback',result_count:curated.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'travel-research' as const}
   }catch(error:any){const message=safe(error?.message||'travel_research_failed',500);const completedAt=new Date().toISOString();await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:message,completed_at:completedAt}).eq('id',String(step.id))).catch(()=>{});await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'failed',summary:'Gogo could not complete the travel task.',error:message,completed_at:completedAt,updated_at:completedAt}).eq('id',runId)).catch(()=>{});await addActivity(tg,runId,'run_failed','Travel task failed.',{error:message});throw error}
 }
 
@@ -374,6 +457,7 @@ export type FlightBrief = {
   cabin?: 'economy' | 'premium_economy' | 'business' | 'first'
   nonStop?: boolean
   timeOfDay?: TimeOfDay | 'any'
+  departureCutoff?: DeparturePreference
   useDefaults?: boolean
   /** The person asked to watch or be alerted about fares; Gogo can't watch fares yet, so it says so. */
   watchAsked?: boolean
@@ -480,7 +564,9 @@ export function parseFlightBriefText(raw: string, now = new Date(), timezone = '
   const cabin = cabinFrom(text)
   if (cabin) brief.cabin = cabin
   if (/\b(?:non[\s-]*stop|direct\s+flights?)\b/i.test(text)) brief.nonStop = true
-  const tod = timeOfDayFrom(text)
+  const cutoff = departureCutoffFrom(text)
+  if (cutoff) brief.departureCutoff = cutoff
+  const tod = timeOfDayFrom(text, !cutoff)
   if (tod) brief.timeOfDay = tod
   else if (/\b(?:any\s*time|anytime|whenever|no\s+preference\s+(?:on|for)\s+(?:the\s+)?time)\b/i.test(text)) brief.timeOfDay = 'any'
   return fixReturnOrder(brief)
@@ -502,6 +588,7 @@ function fixReturnOrder(brief: FlightBrief): FlightBrief {
 export function mergeFlightBrief(previous: FlightBrief | null | undefined, next: FlightBrief): FlightBrief {
   const merged: FlightBrief = { ...(previous || {}) }
   for (const [key, value] of Object.entries(next)) if (value !== undefined) (merged as any)[key] = value
+  if (!next.departureCutoff && (next.timeOfDay === 'any' || (next.timeOfDay && merged.departureCutoff === 'invalid'))) delete merged.departureCutoff
   if (merged.returnDate) delete merged.returnSuggestion
   return fixReturnOrder(merged)
 }
@@ -515,7 +602,7 @@ export function isFlightBriefAnswer(raw: string): boolean {
   if (!text || text.length > 200) return false
   if (isOtherTopicThanFlightReply(text)) return false
   if (/\b(?:remind|reminder|calendar|email|send|create|delete|cancel|buy|pay|order|subscribe|watch|monitor|book|alarm)\b/i.test(text)) return false
-  if (AFFIRM_RE.test(text) || DEFAULTS_RE.test(text)) return true
+  if (AFFIRM_RE.test(text) || DEFAULTS_RE.test(text) || departureCutoffFrom(text)) return true
   if (PLACES[text.toLowerCase().replace(/[.!?]+$/g, '')]) return true
   if (/^\s*(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine)\s*[.!]?\s*$/i.test(text)) return true
   return /\b(?:round[\s-]*trip|one[\s-]*way|return|back|economy|business|first[\s-]*class|premium|adults?|children|child|kids?|infants?|passengers?|travell?ers?|people|persons?|just\s+me|only\s+me|solo|couple|of\s+us|non[\s-]*stop|direct|morning|afternoon|evening|night|any\s*time|anytime)\b/i.test(text)
@@ -551,6 +638,7 @@ export function flightBriefSlots(brief: FlightBrief): FlightBriefSlot[] {
   if (!brief.originLabel || !brief.destinationLabel) slots.push('route')
   if (!brief.departDate) slots.push('date')
   if (slots.length) return slots
+  if (invalidCutoff(brief.departureCutoff, brief.originCode)) return ['time']
   if (brief.returnSuggestion && !brief.returnDate) slots.push('return_confirm')
   if (brief.useDefaults) return slots
   // 17 Oct: travellers, cabin and time are never asked up front. They default to 1 adult, economy, any time,
@@ -582,6 +670,7 @@ export function askFlightBrief(brief: FlightBrief, slots: FlightBriefSlot[]): st
     const missing = [slots.includes('route') && (!brief.originLabel ? 'departure city' : null), slots.includes('route') && (!brief.destinationLabel ? 'destination' : null), slots.includes('date') && 'travel date'].filter(Boolean)
     return `Please send the ${missing.join(', ')} together so I can compare the right flights.`
   }
+  if (slots[0] === 'time' && invalidCutoff(brief.departureCutoff, brief.originCode)) return CUTOFF_QUESTION
   const head = `${cityOf(brief, 'origin')} to ${cityOf(brief, 'destination')} on ${dayLabel(brief.departDate!)}.`
   const next = slots[0]
   const defaults = withFlightDefaults(brief)
@@ -599,15 +688,18 @@ export type FlightLeg = { from: string; to: string; date: string; text: string; 
 export function flightLegs(brief: FlightBrief): FlightLeg[] {
   const b = withFlightDefaults(brief)
   const adults = b.adults!
+  const partOfDay = b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''
+  const cutoff = b.departureCutoff && b.departureCutoff !== 'invalid' ? `, departing ${cutoffLabel(b.departureCutoff)}` : ''
+  const timing = partOfDay + cutoff
   const make = (from: string, to: string, date: string): FlightLeg => ({
     from, to, date, label: `${from} to ${to}, ${dayLabel(date)}`,
-    text: `Compare ${b.nonStop ? 'non-stop ' : ''}flights from ${from} to ${to} on ${date} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''}. Research only; do not book or pay.`,
+    text: `Compare ${b.nonStop ? 'non-stop ' : ''}flights from ${from} to ${to} on ${date} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${timing}. Research only; do not book or pay.`,
   })
   const origin = b.originCode || b.originLabel || ''
   const destination = b.destinationCode || b.destinationLabel || ''
   // 17 Oct: a round trip is ONE search for the exact dates (Google returns the round-trip total).
   if (b.tripType === 'round_trip' && b.returnDate) return [{ from: origin, to: destination, date: b.departDate!, label: `${origin} to ${destination}, ${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate)}`,
-    text: `Compare ${b.nonStop ? 'non-stop ' : ''}round trip flights from ${origin} to ${destination} departing ${b.departDate} returning ${b.returnDate} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''}. Research only; do not book or pay.` }]
+    text: `Compare ${b.nonStop ? 'non-stop ' : ''}round trip flights from ${origin} to ${destination} departing ${b.departDate} returning ${b.returnDate} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${timing}. Research only; do not book or pay.` }]
   return [make(origin, destination, b.departDate!)]
 }
 
@@ -617,7 +709,11 @@ export function flightSearchStartedText(brief: FlightBrief): string {
   const when = round ? `${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate!)}` : dayLabel(b.departDate!)
   const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
   // 11 Nov (owner): "concise like Instinct". One short message; how to book is said with the results.
-  return `Looking for ${cityOf(b, 'origin')} → ${cityOf(b, 'destination')} flights, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''}${round ? 'round trip' : 'one-way'}.\n\n` +
+  const cutoff = b.departureCutoff && b.departureCutoff !== 'invalid'
+    ? `${round ? 'outbound ' : ''}departing ${cutoffLabel(b.departureCutoff)}, `
+    : ''
+  const timing = (b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : '') + cutoff
+  return `Looking for ${cityOf(b, 'origin')} → ${cityOf(b, 'destination')} flights, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${timing}${round ? 'round trip' : 'one-way'}.\n\n` +
     `Best ${round ? 'round-trip ' : ''}fares for exactly these dates coming shortly.${b.watchAsked ? ' I can\'t watch fares on my own yet, so this is today\'s price.' : ''}${perAdult}${round ? '' : ' For a return, add “back <date>”.'}`
 }
 

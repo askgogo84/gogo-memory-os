@@ -7,7 +7,7 @@ import { deckPrompt, editPrompt, firstJson, scrubInventedNumbers, sheetPrompt, v
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|salary|income|bank|account|expenses?|bills?|card)\b/i
 // Explicit user source restrictions must stop web search before any import/call.
 // Clause boundaries avoid treating "do not use only this text" as an opt-out.
-const SOURCE_ONLY = /(?:^|[.!?;,\r\n]\s*)(?:please\s+)?(?:use\s+only\s+(?:this\s+text|(?:the\s+)?(?:provided|supplied)\s+(?:text|data|content))|(?:do not|don't|never)\s+(?:use|search|consult|browse|read)\s+(?:(?:the\s+)?(?:web|internet)|(?:any\s+)?(?:external|outside)\s+(?:sources|information|data)))\b/i
+const SOURCE_ONLY = /(?:^|[.!?;,\r\n]\s*)(?:please\s+)?(?:use\s+only\s+(?:this\s+text|(?:the\s+)?(?:provided|supplied)\s+(?:text|data|content)|(?:the\s+)?(?:information|details|facts|text|data|content)\s+(?:in|from)\s+this\s+(?:request|prompt|message))|(?:do not|don't|never)\s+(?:use|search|consult|browse|read)\s+(?:(?:the\s+)?(?:web|internet)|(?:any\s+)?(?:external|outside)\s+(?:sources|information|data)))\b/i
 
 type Model = (prompt: string, scanText: string, opts?: { strong?: boolean }) => Promise<string>
 export type { Model }

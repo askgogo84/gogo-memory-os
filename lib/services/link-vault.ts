@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { mentionsExternalAccountCreation, parseExternalAccountRequest } from '@/lib/agent/external-account-intent'
+import { isMakeDeliverableRequest, sourceBoundReport } from '@/lib/agent/make-request'
 import { indexMemory, unindexMemory } from '@/lib/services/memory-index'
 import { embedText } from '@/lib/services/embeddings'
 import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
@@ -216,6 +217,8 @@ export function isLinkVaultSaveRequest(text:string){
   if(parseExternalAccountRequest(text)||mentionsExternalAccountCreation(text))return false
   const stripped=String(text||'').replace(url,' ').trim()
   const request=String(text||'').trim().replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?/i,'')
+  // URLs in an explicit deliverable request are its sources, not bookmarks.
+  if (isMakeDeliverableRequest(request) || sourceBoundReport(request)) return false
   // Explicit capture owns its note, even when the note mentions browser verbs.
   if(/^(?:save|remember|keep|store|bookmark|file)\b/i.test(request))return true
   if(/^(?:read|watch|view)\s+(?:(?:this|it)\s+)?later\b/i.test(request))return true
