@@ -11,7 +11,7 @@ import NativePaymentStatus from './NativePaymentStatus'
 
 type Purchase = {
   purchaseId: string; sourceRunId: string; provider: string; state: string
-  totalPaise: number; currency: string; cartVerified: boolean
+  totalPaise: number; budgetPaise: number | null; currency: string; cartVerified: boolean
   phoneCartVerified: boolean; checkoutLinkVerified: boolean
   expiresAt: string; snapshotSha256: string
   items: Array<{spinId: string; skuId: string; quantity: number}>
@@ -30,6 +30,7 @@ function merchantUrl(value: string): string | null {
 
 export default function CommerceCheckoutPage() {
   const [runId, setRunId] = useState('')
+  const [budget, setBudget] = useState('')
   const [purchase, setPurchase] = useState<Purchase | null>(null)
   const [ready, setReady] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -49,14 +50,27 @@ export default function CommerceCheckoutPage() {
 
   async function prepare() {
     if (!runId) return
+    const amount = budget.trim()
+    const digits = /^(\d{1,5})(?:\.(\d{1,2}))?$/.exec(amount)
+    const budgetPaise = digits ? Number(digits[1]) * 100 + Number((digits[2] || '').padEnd(2, '0')) : null
+    if (amount && (budgetPaise === null || budgetPaise < 1 || budgetPaise > 5_000_000)) {
+      setMessage('Enter a spending limit between ₹0.01 and ₹50,000.')
+      return
+    }
     setBusy(true); setMessage(''); setLink(null)
     try {
       const response = await fetch('/api/commerce/purchases', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({runId}), cache:'no-store',
+        body:JSON.stringify({runId, budgetPaise}), cache:'no-store',
       })
       const body = await response.json()
-      if (!response.ok) throw new Error(body.error || 'unavailable')
+      if (!response.ok) {
+        if (body.error === 'purchase_budget_exceeded') {
+          setMessage('The merchant total exceeds your limit. Adjust the basket and refresh it before requesting checkout.')
+          return
+        }
+        throw new Error(body.error || 'unavailable')
+      }
       setPurchase(body)
       window.history.replaceState(null, '', '/dashboard/commerce/checkout?purchase=' + encodeURIComponent(body.purchaseId))
     } catch (error) {setMessage('Cannot prepare checkout: ' + (error instanceof Error ? error.message : 'unavailable') + '. Nothing was ordered.')}
@@ -92,6 +106,11 @@ export default function CommerceCheckoutPage() {
     {message && <p role="alert" className="rounded-lg border border-[#605035] p-3">{message}</p>}
     {ready && !purchase && <section className="rounded-xl border border-[#292929] p-5 space-y-3">
       <p>A verified cart is required before a purchase proposal can be prepared.</p>
+      {runId && <label className="block space-y-1">
+        <span className="block">Spending limit for this order in ₹ (optional)</span>
+        <input className="rounded-lg border border-[#292929] bg-transparent px-3 py-2"
+          inputMode="decimal" maxLength={8} value={budget} onChange={event => setBudget(event.target.value)} />
+      </label>}
       <button disabled={busy || !runId} onClick={prepare} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">
         {busy ? 'Checking provider evidence…' : 'Prepare checkout review'}
       </button>
@@ -101,6 +120,7 @@ export default function CommerceCheckoutPage() {
       <h2 className="text-xl font-medium">Your cart proposal</h2>
       <p>Merchant: {purchase.provider} · Status: {purchase.state.replaceAll('_',' ')}</p>
       <p className="text-2xl font-medium">₹{(purchase.totalPaise/100).toFixed(2)}</p>
+      {purchase.budgetPaise != null && <p>Your spending limit is ₹{(purchase.budgetPaise/100).toFixed(2)}.</p>}
       <p className="text-sm text-[#a0a0a0]">{purchase.items.length} cart line(s). Verify quantities again inside the provider checkout before paying.</p>
       <p className="text-sm text-[#a0a0a0]">Expires: {new Date(purchase.expiresAt).toLocaleString('en-IN')}</p>
       <p className="text-[#a0a0a0]">{purchase.notice}</p>

@@ -58,7 +58,7 @@ export async function readVerifiedCreditIQMerchantBenefits(owner:string,purchase
   },[]), reason:'creditiq_account_not_linked'}
   const task=await readCommerceTask(owner,purchase.source_run_id)
   if(!task) throw new PurchaseBoundaryError('commerce_task_changed')
-  const snapshot=snapshotFromVerifiedCart(owner,task)
+  const snapshot=snapshotFromVerifiedCart(owner,task,Date.now(),purchase.budget_paise)
   if(!sameSnapshot(purchase,snapshot)) throw new PurchaseBoundaryError('purchase_snapshot_changed_new_task_required')
   const secret=String(process.env.CREDITIQ_GOGO_SERVICE_SECRET||'').trim()
   if(!secret) return {...rankVerifiedCreditIQBenefits({

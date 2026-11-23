@@ -21,7 +21,7 @@ export async function readNativeInstamartPaymentOptions(owner:string,purchaseId:
   if(Date.parse(purchase.expires_at)<=Date.now()) throw new PurchaseBoundaryError('purchase_expired')
   const task=await readCommerceTask(owner,purchase.source_run_id)
   if(!task) throw new PurchaseBoundaryError('commerce_task_changed')
-  const snapshot=snapshotFromVerifiedCart(owner,task)
+  const snapshot=snapshotFromVerifiedCart(owner,task,Date.now(),purchase.budget_paise)
   if(!sameSnapshot(purchase,snapshot)) throw new PurchaseBoundaryError('purchase_snapshot_changed_new_task_required')
   const token=await readCommerceConnection(owner,'swiggy')
   if(!token?.accessToken) throw new PurchaseBoundaryError('provider_auth_required')

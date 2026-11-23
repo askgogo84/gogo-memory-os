@@ -18,7 +18,7 @@ export type PurchaseItem = {spinId: string; skuId: string; quantity: number}
 export type PurchaseSnapshot = {
   owner: string; runId: string; provider: 'swiggy'
   cartId: string; addressId: string; items: PurchaseItem[]
-  amountPaise: number; currency: 'INR'; checkoutUrl: string | null
+  amountPaise: number; budgetPaise: number | null; currency: 'INR'; checkoutUrl: string | null
   phoneCartVerified: boolean; checkedAt: string; expiresAt: string; sha256: string
 }
 
@@ -41,7 +41,16 @@ export function canonicalItems(value: unknown): PurchaseItem[] {
   return items.sort((a, b) => itemKey(a).localeCompare(itemKey(b)))
 }
 
-export function snapshotFromVerifiedCart(owner: string, task: CommerceTask, now = Date.now()): PurchaseSnapshot {
+export function purchaseBudgetPaise(value: unknown): number | null {
+  if (value == null) return null
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > PURCHASE_MAX_PAISE) {
+    throw new PurchaseBoundaryError('invalid_purchase_budget')
+  }
+  return value
+}
+
+export function snapshotFromVerifiedCart(owner: string, task: CommerceTask, now = Date.now(), budgetInput?: unknown): PurchaseSnapshot {
+  const budgetPaise = purchaseBudgetPaise(budgetInput)
   const commerce = task?.metadata_json?.commerce
   const receipt = commerce?.cartReceipt
   const operation = commerce?.cartOperation
@@ -64,6 +73,7 @@ export function snapshotFromVerifiedCart(owner: string, task: CommerceTask, now 
   if (!Number.isSafeInteger(amount) || amount <= 0 || amount > PURCHASE_MAX_PAISE) {
     throw new PurchaseBoundaryError('delivered_total_unverified_or_limit')
   }
+  if (budgetPaise !== null && amount > budgetPaise) throw new PurchaseBoundaryError('purchase_budget_exceeded')
   const actual = canonicalItems(receipt.items)
   const expected = canonicalItems(operation.expected)
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new PurchaseBoundaryError('cart_contents_changed')
@@ -78,10 +88,12 @@ export function snapshotFromVerifiedCart(owner: string, task: CommerceTask, now 
     currency: 'INR' as const, checkoutUrl, phoneCartVerified,
     checkedAt: new Date(checkedAt).toISOString(),
   }
-  const sha256 = createHash('sha256').update(JSON.stringify(fields)).digest('hex')
+  // Existing unbudgeted proposals retain their exact approval hash.
+  const fingerprint = budgetPaise === null ? fields : {...fields, budgetPaise}
+  const sha256 = createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex')
   // The customer has at most five minutes from the original provider readback,
   // not five new minutes per browser/endpoint request.
-  return {...fields, expiresAt: new Date(checkedAt + PURCHASE_TTL_MS).toISOString(), sha256}
+  return {...fields, budgetPaise, expiresAt: new Date(checkedAt + PURCHASE_TTL_MS).toISOString(), sha256}
 }
 
 export function purchaseState(snapshot: PurchaseSnapshot): 'awaiting_provider_handoff' | 'pending_approval' {
@@ -94,6 +106,7 @@ export function sameSnapshot(row: Record<string, any>, snapshot: PurchaseSnapsho
       row.snapshot_sha256 === snapshot.sha256 && row.provider === snapshot.provider &&
       row.cart_id === snapshot.cartId && row.address_id === snapshot.addressId &&
       row.currency === 'INR' && row.amount_paise === snapshot.amountPaise &&
+      (row.budget_paise ?? null) === snapshot.budgetPaise &&
       row.checkout_url === snapshot.checkoutUrl && row.phone_cart_verified === snapshot.phoneCartVerified &&
       Date.parse(row.expires_at) === Date.parse(snapshot.expiresAt) &&
       JSON.stringify(canonicalItems(row.items_snapshot)) === JSON.stringify(snapshot.items)
@@ -111,6 +124,7 @@ export function purchaseView(row: Record<string, any>, now = Date.now()) {
     provider: row.provider,
     state: status,
     totalPaise: row.amount_paise,
+    budgetPaise: row.budget_paise ?? null,
     currency: row.currency,
     cartVerified: true,
     phoneCartVerified: row.phone_cart_verified === true,

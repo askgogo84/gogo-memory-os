@@ -3,7 +3,7 @@ import {readCommerceTask} from './task'
 import {commerceEnabled} from './providers'
 import {
   PURCHASES_ENABLED, PurchaseBoundaryError, validRunId,
-  purchaseState, purchaseView, sameSnapshot, snapshotFromVerifiedCart,
+  purchaseBudgetPaise, purchaseState, purchaseView, sameSnapshot, snapshotFromVerifiedCart,
 } from './purchase-contract'
 
 const TABLE = 'commerce_purchase_intents'
@@ -23,13 +23,14 @@ export async function getPurchase(owner: string, id: string): Promise<Row | null
   return data as Row | null
 }
 
-export async function createPurchase(owner: string, runId: string) {
+export async function createPurchase(owner: string, runId: string, budgetInput?: unknown) {
   assertPurchaseFeatureEnabled()
   if (!validRunId(runId)) throw new PurchaseBoundaryError('invalid_commerce_task')
   if (!commerceEnabled('swiggy')) throw new PurchaseBoundaryError('provider_approval_required')
+  const budgetPaise = purchaseBudgetPaise(budgetInput)
   const task = await readCommerceTask(owner, runId)
   if (!task) throw new PurchaseBoundaryError('verified_cart_required')
-  const snapshot = snapshotFromVerifiedCart(owner, task)
+  const snapshot = snapshotFromVerifiedCart(owner, task, Date.now(), budgetPaise)
   // Fail closed on changed carts, or an earlier approval with the same task.
   const {data: existing, error: readError} = await supabaseAdmin.from(TABLE)
     .select('*').eq('owner_telegram_id', owner).eq('source_run_id', runId).maybeSingle()
@@ -43,6 +44,7 @@ export async function createPurchase(owner: string, runId: string) {
     provider: snapshot.provider, cart_id: snapshot.cartId,
     address_id: snapshot.addressId, items_snapshot: snapshot.items,
     snapshot_sha256: snapshot.sha256, amount_paise: snapshot.amountPaise,
+    budget_paise: snapshot.budgetPaise,
     currency: 'INR', checkout_url: snapshot.checkoutUrl,
     phone_cart_verified: snapshot.phoneCartVerified,
     status: purchaseState(snapshot), expires_at: snapshot.expiresAt,
@@ -80,7 +82,7 @@ export async function approvePurchase(owner: string, id: string, input: Record<s
   if (Date.parse(row.expires_at) <= Date.now()) throw new PurchaseBoundaryError('purchase_expired')
   const task = await readCommerceTask(owner, row.source_run_id)
   if (!task) throw new PurchaseBoundaryError('commerce_task_changed')
-  const latest = snapshotFromVerifiedCart(owner, task)
+  const latest = snapshotFromVerifiedCart(owner, task, Date.now(), row.budget_paise)
   if (!sameSnapshot(row, latest) || latest.checkoutUrl !== row.checkout_url ||
     latest.phoneCartVerified !== true) throw new PurchaseBoundaryError('purchase_snapshot_changed_new_task_required')
 
@@ -109,7 +111,7 @@ export async function openPurchaseHandoff(owner: string, id: string, sha256: unk
   if (Date.parse(row.expires_at) <= Date.now()) throw new PurchaseBoundaryError('purchase_expired')
   const task = await readCommerceTask(owner, row.source_run_id)
   if (!task) throw new PurchaseBoundaryError('commerce_task_changed')
-  const latest = snapshotFromVerifiedCart(owner, task)
+  const latest = snapshotFromVerifiedCart(owner, task, Date.now(), row.budget_paise)
   if (!sameSnapshot(row, latest) || latest.checkoutUrl !== row.checkout_url || latest.phoneCartVerified !== true) {
     throw new PurchaseBoundaryError('purchase_snapshot_changed_new_task_required')
   }
