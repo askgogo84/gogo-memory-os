@@ -249,6 +249,7 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
   if (!Array.isArray(data) || data.length > 100) return fail('I couldn’t establish one reminder from the complete inventory. Please narrow the reminder name. Nothing was changed.')
   const norm=(v:string)=>String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
   const needle=norm(resolvedTarget)
+  if (!needle) return fail('Please give the reminder a clear name. Nothing was changed.')
   const exact=data.filter((r:any)=>norm(String(r.message||'').split('\n')[0].split(/\s+[—–-]\s+starts\b/i)[0])===needle)
   const matches=exact.length ? exact : data.filter((r:any)=>{const h=norm(r.message);return !!needle&&(h===needle||h.includes(needle))})
   let row:any=null

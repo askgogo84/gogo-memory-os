@@ -85,7 +85,7 @@ for(const failure of ['race-claim','race-edit','race-timezone','race-recurring',
 for(const owner of [0,NaN,Infinity,1.5,9007199254740992,null,undefined,'-42']){
   reset();assert.equal((await run(command,owner===undefined?{}:owner)).status,'failed');assert.equal(reads.length,0)
 }
-for(const text of ['Move my reminder about Fund Raise to 4:20 pm','Move Askgogo<>Fund Raise reminder today to 4:20 pm tomorrow','Move Askgogo<>Fund Raise reminder to 13:20 pm','Move Askgogo<>Fund Raise reminder to 4:99 pm','Move Askgogo<>Fund Raise reminder today to 1:00 pm','Move Askgogo<>Fund Raise reminder today to 4:20 pm UTC']){
+for(const text of ['Move <> reminder to 4:20 pm','Move my reminder about Fund Raise to 4:20 pm','Move Askgogo<>Fund Raise reminder today to 4:20 pm tomorrow','Move Askgogo<>Fund Raise reminder to 13:20 pm','Move Askgogo<>Fund Raise reminder to 4:99 pm','Move Askgogo<>Fund Raise reminder today to 1:00 pm','Move Askgogo<>Fund Raise reminder today to 4:20 pm UTC']){
   reset();assert.equal((await run(text)).status,'failed',text);assert.equal(writes.length,0)
 }
 reset();now=Date.parse('2026-11-23T20:00:00Z')
