@@ -30,11 +30,11 @@ const users = new Map([
   [ODD, { telegram_id: ODD, gmail_connected: true, gmail_email: 'odd@example.test', gmail_refresh_token: 'fake-refresh-odd', gmail_access_token: null }],
 ])
 const consents = new Map([
-  ['42', { gmail_enabled: true }],
-  ['43', { gmail_enabled: true }],
-  ['44', { gmail_enabled: false }],
-  [EVEN, { gmail_enabled: true }],
-  [ODD, { gmail_enabled: true }],
+  ['42', { telegram_id: '42', gmail_enabled: true }],
+  ['43', { telegram_id: '43', gmail_enabled: true }],
+  ['44', { telegram_id: '44', gmail_enabled: false }],
+  [EVEN, { telegram_id: EVEN, gmail_enabled: true }],
+  [ODD, { telegram_id: ODD, gmail_enabled: true }],
 ])
 
 function harness({ userError = false, consentError = false, oddConsentDisabled = false, overrideUser = null } = {}) {
