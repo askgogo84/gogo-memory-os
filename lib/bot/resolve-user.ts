@@ -28,7 +28,13 @@ export async function resolveUser(params: {
   const { channel, externalUserId, userName } = params
 
   if (channel === 'telegram') {
-    const telegramId = parseInt(externalUserId, 10)
+    // This route's legacy user contract is number-only. Never parse a prefix or
+    // round a signed 64-bit external ID into another owner's database key.
+    if (!/^-?[1-9]\d*$/.test(externalUserId)) throw new Error('telegram_owner_identity_invalid')
+    const telegramId = Number(externalUserId)
+    if (!Number.isSafeInteger(telegramId) || String(telegramId) !== externalUserId) {
+      throw new Error('telegram_owner_identity_invalid')
+    }
 
     let { data: user } = await supabaseAdmin
       .from('users')
