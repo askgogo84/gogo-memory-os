@@ -370,6 +370,25 @@ export async function routeFeatureIntent(
     }
   }
 
+  // A reminder's description may mention its meeting and forbid a duplicate.
+  // Those words must not divert an explicit reminder edit into calendar prep.
+  if(extra?.telegramId!==undefined && /^\s*(?:please\s+)?(?:move|reschedule|change|update|make)\b/i.test(text) && /\breminder\b/i.test(text)) {
+    try {
+      const reminders=await import('@/lib/agent/compound-planner')
+      if(reminders.isExplicitReminderMutationCommand(text)) {
+        if(!Number.isSafeInteger(extra.telegramId)||extra.telegramId===0)return 'I couldn’t verify the reminder owner. Nothing was changed.'
+        if(await capabilityIsOff(extra.telegramId,'reminders'))return 'Reminders are currently off in your Gogo autonomy settings. Say *set reminders autonomy to auto* (or *ask*) to turn them back on.'
+        const actor={userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'}
+        const result=await reminders.tryRunExpiryReminderPlan({actor,surface:extra.surface==='web'?'web':'whatsapp',text})
+        __trace.mark('reminderMutation')
+        return result?.text || 'I couldn’t verify that reminder update. Please check your reminders; I haven’t retried or created another.'
+      }
+    } catch(error:any) {
+      console.error('REMINDER_MUTATION_FIRST_FAILED:',String(error?.code||error?.name||'error').slice(0,60))
+      return 'I couldn’t verify that reminder update. Please check your reminders; I haven’t retried or created another.'
+    }
+  }
+
   if(extra?.telegramId){
     const snoozeReply=await tryHandleSnoozeCommand(extra.telegramId,phone,text)
     __trace.mark('snoozeReply')
