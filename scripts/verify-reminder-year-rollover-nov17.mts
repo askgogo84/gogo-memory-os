@@ -47,17 +47,22 @@ for(const text of [
   'Remind me in 3 minutes on WhatsApp to check AskGogo demo verification 23 Nov 1303.',
   'remind me in 3 mins to check the invoice dated 3 March',
   'remind me in 3 minutes about the meeting on 24 November at 5pm',
-  'The train leaves in 2 days. Remind me in 3 minutes to check the ticket dated 23 November',
+  'remind me in 3 minutes to arrive 10 minutes before the meeting on 24 November at 5pm',
 ]){
   eq(reminderTimingProblem(text),null,`task date does not reject an explicit future countdown: ${text}`)
   eq(iso(text),'2026-11-23T07:42:00.000Z',`explicit reminder clause owns the countdown: ${text}`)
 }
 eq(iso('remind me in 2 hours about the invoice dated 3 March'),'2026-11-23T09:39:00.000Z','hours are also an explicit countdown')
+eq(iso('remind me in 2 hours to arrive 10 minutes before the meeting on 24 November at 5pm'),'2026-11-23T09:39:00.000Z','task-body advance arrival does not shorten the explicit countdown')
 const demo:any=parseReminderIntent('Remind me in 3 minutes on WhatsApp to check AskGogo demo verification 23 Nov 1303.')
 eq(demo.message.includes('23 Nov 1303'),true,'the task date stays in the saved reminder message')
 eq(iso('remind me on 24 November at 10am to check the delivery in 3 minutes'),'2026-11-24T04:30:00.000Z','a duration in the task never overrides the explicit scheduled date')
 eq(/already passed/.test(String(reminderTimingProblem('remind me on 22 November at 10am to check the delivery in 3 minutes'))),true,'absolute past-date refusal remains intact')
 eq(iso('remind me on 30 February at 10am to check the delivery in 3 minutes'),null,'invalid scheduled date remains refused')
+for(const date of ['30 February','22 November']){
+  eq(iso(`remind me on ${date} at 10am to test the phrase "remind me in 3 minutes to check the invoice"`),null,'a quoted inner reminder cannot bypass the invalid or past outer schedule')
+}
+eq(iso('remind me on 24 November at 10am to test the phrase "remind me in 3 minutes to check the invoice"'),'2026-11-24T04:30:00.000Z','a quoted inner countdown cannot replace the actual future schedule')
 
 fixed = RealDate.parse('2026-01-05T04:30:00Z') // 5 Jan 2026
 eq(iso('remind me on 9 January at 10am to renew insurance'), '2026-01-09T04:30:00.000Z', 'in early January it is this January')
