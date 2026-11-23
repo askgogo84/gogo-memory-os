@@ -366,6 +366,23 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
 // Owner's 23 Nov screenshot: this is a Calendar event share, without a Meet URL.
 {
   clock=Date.parse('2026-11-23T05:00:00Z')
+  permission='ask'
+  for(const link of ['https://meet.google.com/abc-defg-hij','https://calendar.app.google/punctuation123']){
+    for(const suffix of ['.',')','),','”']){
+      store.memories=[];store.conversations=[];store.reminders=[]
+      const punctuated=`Punctuation Review\n23 Nov · 4:30 – 5:45 pm\n(${link}${suffix}`
+      assert.equal(worker().parseSharedMeeting(punctuated,'Asia/Kolkata',new Date(clock))?.url,link,'surrounding prose punctuation must not hide a valid invitation')
+      const punctuationOffer=await worker().tryMeetingShareFollowup({actor,text:punctuated,surface:'whatsapp'})
+      assert.match(punctuationOffer.text,/Want a reminder/,'punctuated links still use the actual meeting handler')
+      assert.equal(store.reminders.length,0)
+      const oldClock=clock
+      clock=Date.parse('2026-11-23T13:00:00Z')
+      const pastPunctuation=await worker().tryMeetingShareFollowup({actor,text:punctuated,surface:'web'})
+      assert.match(pastPunctuation.text,/already passed/,'punctuated links retain the past-meeting safeguard')
+      clock=oldClock
+    }
+  }
+  permission='auto'
   const share='Askgogo<>Fund Raise\n23 Nov · 4:30 – 5:45 pm\nView details and RSVP\nhttps://calendar.app.google/8KVz8h3xPM13FnJh9'
   const meeting=worker().parseSharedMeeting(share,'Asia/Kolkata',new Date(clock))
   assert.ok(meeting,'a dated Calendar event card must reach the meeting handler')

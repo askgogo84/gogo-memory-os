@@ -11,7 +11,9 @@ type Meeting={title:string;url:string;joinUrl?:string;startAt:string;endAt:strin
 
 /** Read the invitation text supplied by the owner; never fetch an opaque share link. */
 function meetingLinks(text:string):string[]{
-  return [...new Set((text.match(/https:\/\/[^\s<>]+/gi)||[]).filter(raw=>{
+  return [...new Set((text.match(/https:\/\/[^\s<>]+/gi)||[])
+    .map(raw=>raw.replace(/[)\]}.,;!?'"’”]+$/g,''))
+    .filter(raw=>{
     try{
       const u=new URL(raw)
       if(u.username||u.password||u.port)return false
