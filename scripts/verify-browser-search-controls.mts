@@ -1,3 +1,4 @@
+import * as makeRequest from '../lib/agent/make-request'
 import * as sentinel from '../lib/agent/sentinel'
 import * as productIdentity from '../lib/commerce/product-identity'
 import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
@@ -897,6 +898,7 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/browser-command.ts','
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='@/lib/supabase-admin')return {supabaseAdmin:reuseDb}
+  if(id==='./make-request')return makeRequest
   if(id==='@/lib/bot/memory-redaction')return {redactSecretShapedText:(s:string)=>s}
   if(id==='./sentinel')return {evaluateAgentSentinel:()=>({allowed:true})}
   if(id==='@/lib/services/reporting-directive')return {hasLeadingReportMutation:()=>false}
