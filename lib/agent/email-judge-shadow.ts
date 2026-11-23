@@ -17,7 +17,7 @@ function addr(from: string) { return (String(from || '').match(/<([^>]+)>/)?.[1]
 const SIGNED64_MIN = -(1n << 63n), SIGNED64_MAX = (1n << 63n) - 1n
 function exactSignedOwner(value: unknown): string | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
-  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
   const n = BigInt(value)
   return n >= SIGNED64_MIN && n <= SIGNED64_MAX ? value : null
 }
