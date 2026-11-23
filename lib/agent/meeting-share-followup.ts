@@ -7,7 +7,7 @@ import type { AgentActor } from './actor'
 
 const KIND='meeting_reminder_offer'
 const reply=(text:string,status:'paused'|'completed'='paused')=>({text,handledBy:'meeting-share-followup',capability:'reminders',status,runId:''})
-type Meeting={title:string;url:string;startAt:string;endAt:string;remindAt:string;timezone:string}
+type Meeting={title:string;url:string;joinUrl?:string;startAt:string;endAt:string;remindAt:string;timezone:string}
 
 /** Read the invitation text supplied by the owner; never fetch an opaque share link. */
 function meetingLinks(text:string):string[]{
@@ -80,7 +80,8 @@ export function parseSharedMeeting(raw:string, timezone:string, now=new Date()):
   const startAt=parseLocalDateTime({date:key,time:start,timezone:zone}).dueAtUtcISO
   const endAt=parseLocalDateTime({date:key,time:end,timezone:zone}).dueAtUtcISO
   if(Date.parse(endAt)<=Date.parse(startAt))return null
-  return {title,url:eventUrl,startAt,endAt,remindAt:new Date(Date.parse(startAt)-600000).toISOString(),timezone:zone}
+  const joinUrl=links.find(link=>new URL(link).hostname==='meet.google.com')
+  return {title,url:eventUrl,...(joinUrl?{joinUrl}:{}),startAt,endAt,remindAt:new Date(Date.parse(startAt)-600000).toISOString(),timezone:zone}
 }
 
 function meetingTimeStatus(meeting:Meeting,now=Date.now()){
@@ -115,7 +116,7 @@ function reminderId(tg:number,m:Meeting){
 }
 
 type ReminderTarget={id:string;message:string;remind_at:string;timezone:string;sent:boolean}
-const meetingMessage=(m:Meeting)=>`${m.title} — starts ${formatInTimezone(m.startAt,m.timezone)}\n${m.url}`
+const meetingMessage=(m:Meeting)=>`${m.title} — starts ${formatInTimezone(m.startAt,m.timezone)}\n${m.url}${m.joinUrl&&m.joinUrl!==m.url?'\n'+m.joinUrl:''}`
 
 async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarget|'ambiguous'|'busy'|null>{
   const {data,error}=await supabaseAdmin.from('reminders')
@@ -131,13 +132,22 @@ async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarg
     const lines=String(r.message||'').split('\n')
     const name=lines[0].split(' — starts ')[0]
     if(title(name)!==title(m.title))return false
-    if(day(r.remind_at)!==day(m.startAt))return false
+    // A pre-midnight reminder can belong to tomorrow's meeting. Recover the
+    // known ten-minute offset only when its stored start line verifies it.
+    const tenMinutesLater=new Date(Date.parse(r.remind_at)+600000).toISOString()
+    const recordedStart=`${name} — starts ${formatInTimezone(tenMinutesLater,r.timezone||m.timezone)}`
+    const start=lines[0]===recordedStart?tenMinutesLater:r.remind_at
+    if(day(start)!==day(m.startAt))return false
     const links=meetingLinks(r.message)
     // A recorded event link is authoritative. Title-only reminders additionally
     // need the same local day; repeated meetings cannot silently move dates.
     if(!links.length)return true
-    if(links.length!==1)return false
-    if(links[0]===m.url)return true
+    const calendars=links.filter(link=>new URL(link).hostname!=='meet.google.com')
+    const rooms=links.filter(link=>new URL(link).hostname==='meet.google.com')
+    if(calendars.length>1||rooms.length>1)return false
+    if(rooms[0]&&m.joinUrl&&rooms[0]!==m.joinUrl)return false
+    if(calendars[0]&&new URL(m.url).hostname!=='meet.google.com'&&calendars[0]!==m.url)return false
+    if(links.includes(m.url))return true
     // A revised Calendar card can replace a prior Meet invitation. A unique
     // exact title on the same local day supplies that cross-format context.
     // Distinct Calendar event IDs (or distinct Meet rooms) stay distinct.
@@ -199,7 +209,7 @@ async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
   const answer=/^(yes(?: please)?|no(?: thanks)?)[.!]*$/i.exec(text)
   // Avoid reads on unrelated turns. The current conversation owns short replies.
   if(!answer&&!meetingLinks(text).length)return null
-  if(!answer&&/\b(?:do not|don't|don’t|no)\s+(?:(?:set|offer|create)\s+)?remind|\b(?:just|only)\s+(?:save|read|extract|transcribe)\b/i.test(text))return null
+  if(!answer&&/\b(?:do not|don't|don’t|no)\s+(?:(?:set|offer|create|update|move|change)\s+)?(?:(?:a|any|the|my)\s+)?remind|\b(?:just|only)\s+(?:save|read|extract|transcribe)\b/i.test(text))return null
   if(!answer){
     const {data:user,error}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',tg).maybeSingle()
     if(error)throw new Error('meeting_timezone_read_failed')

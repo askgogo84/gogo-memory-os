@@ -439,10 +439,34 @@ console.log('PASS: Google Calendar "⋅" and month-first dates are read')
   assert.equal(store.reminders.length,1)
   assert.equal(store.reminders[0].id,'legacy-meet')
   assert.equal(store.reminders[0].remind_at,meeting.remindAt)
+  const stableTime=store.reminders[0].remind_at
+  for(const suffix of ["Don't set a reminder","Do not create a reminder","Don't update my reminder"]){
+    await worker().tryMeetingShareFollowup({actor,text:moved+'\n'+suffix,surface:'web'})
+    assert.equal(store.reminders[0].remind_at,stableTime,'explicit opt-out must prevent reconciliation: '+suffix)
+  }
+  const conflictingRoom=share+'\nJoin https://meet.google.com/xyz-uvwx-abc'
+  store.reminders[0].message=`${legacyMeet.title} — starts ${timezone.formatInTimezone(legacyMeet.startAt,legacyMeet.timezone)}\n${legacyMeet.url}`
+  store.reminders[0].remind_at=legacyMeet.remindAt
+  const conflict=await worker().tryMeetingShareFollowup({actor,text:conflictingRoom,surface:'web'})
+  assert.match(conflict.text,/Want a reminder/,'different observed Meet rooms remain separate events')
+  assert.equal(store.reminders[0].remind_at,legacyMeet.remindAt)
+  store.reminders[0].message=`${meeting.title} — starts ${timezone.formatInTimezone(meeting.startAt,meeting.timezone)}\n${meeting.url}`
+  store.reminders[0].remind_at=meeting.remindAt
   store.reminders[0].delivery_state='outcome_unknown'
   const blocked=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'whatsapp'})
   assert.match(blocked.text,/reconciliation/)
   assert.equal(store.reminders.length,1,'uncertain delivery cannot become another reminder')
   assert.equal(worker().parseSharedMeeting(share+'\nJoin https://meet.google.com/abc-defg-hij','Asia/Kolkata',new Date(clock)).url,meeting.url)
+  store.memories=[];store.conversations=[];store.reminders=[]
+  const early='Midnight Review\n24 Nov · 12:05 – 12:45 am\nhttps://calendar.app.google/midnight123'
+  const earlyOffer=await worker().tryMeetingShareFollowup({actor,text:early,surface:'whatsapp'})
+  await history(earlyOffer.text)
+  await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'whatsapp'})
+  const originalId=store.reminders[0].id
+  const afterMidnight=await worker().tryMeetingShareFollowup({actor,text:early.replace('12:05 – 12:45','12:30 – 1:00'),surface:'web'})
+  assert.match(afterMidnight.text,/now set/)
+  assert.equal(store.reminders.length,1,'moving a meeting across the reminder-day boundary must not duplicate it')
+  assert.equal(store.reminders[0].id,originalId)
+  assert.equal(store.reminders[0].remind_at,'2026-11-23T18:50:00.000Z')
 }
 console.log('PASS: Calendar event share reconciles its existing reminder with owner, permission, ambiguity, duplicate and failed-update protections')
