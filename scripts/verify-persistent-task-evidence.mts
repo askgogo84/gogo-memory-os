@@ -1,4 +1,5 @@
 // Actual persistent entry -> runtime -> existing canonical task executor, inert storage only.
+import { capabilityForSpecialist } from '../lib/agent/specialist-registry'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -63,7 +64,7 @@ function harness(instructions = ['List all open tasks','List all open tasks']) {
  const general=load('lib/agent/general-planner.ts')
  const runtime=load('lib/agent/autonomous-runtime.ts',{
   '@/lib/metering/core':{runMeteredTask:(_owner:any,_trace:any,fn:any)=>fn()},
-  './specialist-registry':{selectSpecialistRoute:()=>({primary:'tasks',supporting:[]})},
+  './specialist-registry':{capabilityForSpecialist,selectSpecialistRoute:()=>({primary:'tasks',supporting:[]})},
   './run-notify':{notifyRunOutcome:async()=>{}},
  })
  const driveRead=load('lib/agent/persistent-drive-read.ts')
