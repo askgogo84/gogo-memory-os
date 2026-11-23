@@ -198,7 +198,7 @@ async function readReminderQuery(actor: AgentActor, text: string) {
 function parseReminderMutation(text: string): { target: string | null; timeText: string; unresolved?: boolean; meetingStart?: string; zone?: string; meetingZone?: string } | null {
   const raw = String(text || '').trim().replace(/\s+/g, ' ')
   if (!/\breminder\b/i.test(raw)) return null // Generic verbs cannot establish a reminder identity.
-  if (!/\b(move|reschedule|change|update|make)\b/i.test(raw)) return null
+  if (!/^(?:please\s+)?(?:move|reschedule|change|update)\b/i.test(raw) && !/^(?:please\s+)?make\s+(?:my|the|existing|it|that|this)\b/i.test(raw)) return null
   const named = raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*["“]([^"”]+)["”]\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
     || raw.match(/^(?:please\s+)?(?:move|reschedule|change|update|make)\s+(?:(?:my|the|existing)\s+)*(.+?)\s+reminder(?:\s+(today|tomorrow))?\s+(?:to|for|at)(?=\s*\d)/i)
   let target = named?.[1] || null
@@ -220,11 +220,18 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
   const day=days[0]
   const meeting=afterTime.match(/\b(?:the\s+)?meeting\s+starts?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
   const meetingStart=meeting?.[1]
-  const meetingZone=meeting?afterTime.slice(meeting.index!+meeting[0].length).match(zonePattern)?.[1]:undefined
+  const meetingTail=meeting?afterTime.slice(meeting.index!+meeting[0].length):''
+  const meetingZoneMatch=meetingTail.match(zonePattern)
+  const meetingZone=meetingZoneMatch?.[1]
+  const meetingDateTail=(meetingZoneMatch?meetingTail.slice(meetingZoneMatch[0].length):meetingTail).split(/[.!?]/)[0]
+  // An explicitly different meeting date cannot be overwritten with the alert's
+  // date. This bounded correction supports a same-day start clock only.
+  const unsupportedMeetingDate=/\b(?:today|tomorrow|on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,4})\b/i.test(meetingDateTail)
   const remaining=afterZone.replace(/^\s+(?:today|tomorrow)\b/i,'')
   const unresolved = (!target && !generic) || new Set(days).size>1 || (!!generic && /\b(?:for|about|called|named)\b/i.test(afterTime))
     || /^\s+(?:on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|or)\b/i.test(remaining)
     || (/\bmeeting\s+starts?\b/i.test(afterTime) && !meetingStart)
+    || unsupportedMeetingDate
   return { target, timeText: `${time[1]}${day ? ` ${day}` : ''}`, unresolved, meetingStart, zone, meetingZone }
 }
 
