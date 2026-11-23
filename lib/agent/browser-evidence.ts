@@ -45,6 +45,97 @@ export function isLoginFormPage(page:{url?:string;title?:string;text?:string;for
 }
 
 /**
+ * A visible sign-up / registration page is an auth barrier, but NEVER a reason
+ * to submit a stored Vault login. Account creation requires its own approval.
+ * This classifier deliberately uses observed route/form/action, not prose from
+ * a public help article or an incidental "Sign up" navigation link.
+ */
+export function isBrowserRegistrationBarrier(page:{
+  url?:string;title?:string;text?:string;
+  forms?:Array<{action?:string;inputs?:Array<{name?:string;type?:string;label?:string;autocomplete?:string}>;submitLabels?:string[];formText?:string;synthetic?:boolean}>
+  controls?:Array<{tag?:string;role?:string;type?:string;label?:string;text?:string;inForm?:boolean}>
+}):boolean {
+  let path=''
+  try{path=new URL(page.url||'').pathname}catch{}
+  const registerPath=/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i
+  // A public help/article URL may end in /signup without being an active form.
+  // Auth routes can be under provider-specific prefixes, but content-guide routes
+  // need an observed form or registration title before they can block reads.
+  const publicGuidePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(path)
+  if(registerPath.test(path)&&!publicGuidePath)return true
+  const title=String(page.title||'').replace(/\s+/g,' ').trim()
+  const body=String(page.text||'').replace(/\s+/g,' ').trim()
+  const inputs=(page.forms||[]).flatMap(form=>form.inputs||[])
+  const password=inputs.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' ')))
+  const registrationTitle=/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title)
+  const formRegistration=(page.forms||[]).some(form=>{
+    try {
+      const actionPath=new URL(String(form.action||''),page.url||'https://invalid.example').pathname
+      return registerPath.test(actionPath)
+        &&!/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(actionPath)
+    } catch { return false }
+  })
+  if(registrationTitle||formRegistration)return true // multi-step signups may show only email first
+  const signupCopy=/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(body)
+  const existingAccountCopy=/\balready\s+have\s+an?\s+account\b/i.test(body)
+  const newsletterForm=(form:NonNullable<typeof page.forms>[number])=>{
+    const fields=form.inputs||[]
+    // A newsletter checkbox in a real account form is not permission to treat
+    // the entire account registration as a newsletter subscription.
+    if(fields.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))))return false
+    const fieldEvidence=[form.action||'',...fields.flatMap(input=>[input.name,input.label])].join(' ')
+    const formText=String(form.formText||'').replace(/\s+/g,' ').trim()
+    const explicitAccount=/\b(?:create\s+(?:an?\s+|your\s+)?account|register(?:\s+an?\s+account)?|already\s+have\s+an?\s+account)\b/i.test(formText)
+    if(explicitAccount)return false
+    const newsletterEvidence=/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence+' '+formText)
+    if(!newsletterEvidence)return false // Never exempt a form based on its URL alone.
+    const signupSubmit=(form.submitLabels||[]).some(label=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))
+    const newsletterHeading=/^(?:newsletter\b|subscribe\b|subscription\b|sign\s*up\s+(?:now\s+)?(?:for|to)\s+(?:our\s+)?(?:newsletter\b|email\s+updates\b))/i.test(formText)
+    return !signupSubmit||newsletterHeading
+  }
+  const credentialForms=(page.forms||[]).filter(form=>!newsletterForm(form))
+  const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
+    /email|phone|mobile|user|login|\btel\b/i.test([input.name,input.type,input.label,input.autocomplete].join(' '))))
+  // An email-first signup may use an ordinary Continue action, while navigation
+  // precedes the actual Create account heading. "Already have an account?"
+  // distinguishes its active signup content from a login page's Sign up link.
+  const activeSignupContext=hasAccountField&&signupCopy&&existingAccountCopy
+  if(activeSignupContext)return true
+  // Bind Sign up to its actual observed form (rather than a header control).
+  // A newsletter signup CTA on a public guide is not account registration.
+  const formSubmitRegistration=credentialForms.some(form=>{
+    const formHasAccountField=(form.inputs||[]).some(input=>
+      /password|email|phone|mobile|user|login|\btel\b/i.test([input.name,input.type,input.label,input.autocomplete].join(' ')))
+    // JavaScript account panels can live at any URL. Newsletter exemptions
+    // above require observed newsletter evidence, never a public-guide path.
+    return formHasAccountField&&(form.submitLabels||[]).some(label=>
+      /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')))
+  })
+  if(formSubmitRegistration)return true
+  // A public guide with a newsletter field remains readable unless we
+  // actually observed account-creation context or an active signup form.
+  if(publicGuidePath&&!password)return false
+  const registrationAction=(page.controls||[]).some(control=>{
+    const tag=String(control.tag||'').toLowerCase(),role=String(control.role||'').toLowerCase()
+    const label=String(control.label||control.text||'').replace(/\s+/g,' ').trim()
+    const clickTarget=tag==='button'||(tag==='input'&&control.type==='submit')||role==='button'
+    // An unrelated header Sign up navigation button must not disable real login.
+    // An explicit Create account / Register submit on an active account form
+    // remains a strict fail-closed signal even with a generic page title.
+    return clickTarget&&(password||hasAccountField)
+      &&/\b(?:register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label)
+  })
+  if(registrationAction)return true
+  const opening=body.replace(/^(?:instagram|meta)\s+/i,'').slice(0,260)
+  const activeRegistration=/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\s+(?:to|before|for)\b/i.test(opening)
+  let instagram=false
+  try{instagram=['instagram.com','www.instagram.com'].includes(new URL(page.url||'').hostname.toLowerCase())}catch{}
+  // Instagram sometimes exposes only a sign-up prompt, before any form loads.
+  if(instagram&&activeRegistration)return true
+  return activeRegistration&&(password||hasAccountField)
+}
+
+/**
  * Detect a signed-out content shell, not an ordinary page that merely links to Sign in.
  * A login/footer shell must never be treated as source evidence for the original task.
  * Only visible copy, a URL path, field metadata and narrow, fail-closed cues are used.

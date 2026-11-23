@@ -5,7 +5,7 @@ import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 import { obscuraPilotEligible, type ObscuraRequest } from './obscura-public-read'
 import { tryObscuraPublicRead } from './obscura-pilot-runtime'
 import {ensurePersistentCommerceBrowser, COMMERCE_CDP_URL} from './persistent-commerce-browser'
-import { isLoginDestination, isLoginUrl, isBrowserLoginShell, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
+import { isLoginDestination, isLoginUrl, isBrowserLoginShell, isBrowserRegistrationBarrier, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
 import { blockedHostsLogLine } from './browser-blocked-hosts'
 import { completeAgentPlanPrompt, completeVisionPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
@@ -230,6 +230,88 @@ async function readyLoginFields(page, selector){
   }
   return await visibleFields(page,selector);
 }
+// Fail closed after navigation and after any login panel transition. A saved
+// Vault password is NEVER consent to sign up, even on a redirected form.
+async function isActiveRegistrationPage(page){
+  // Use the same observed model as the existing Vault worker; never infer
+  // registration intent from a credential, or from a public article's links.
+  const observed=await model(page).catch(()=>null);
+  if(!observed||typeof observed!=='object')return true; // no snapshot => no write
+  let path='';
+  try{path=new URL(String(observed.url||'')).pathname}catch{}
+  const registerPath=/(?:^|\/)(?:sign-?up|register|registration|create-?account|emailsignup)(?:\/|$)/i;
+  const publicGuidePath=/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(path);
+  if(registerPath.test(path)&&!publicGuidePath)return true;
+  const title=String(observed.title||'').replace(/\s+/g,' ').trim();
+  if(/^(?:sign\s*up|register|registration|create\s+(?:an?\s+|your\s+)?account)(?:\s*[-–—|•:]\s*.*)?$/i.test(title))return true;
+  const forms=Array.isArray(observed.forms)?observed.forms:[];
+  if(forms.some(form=>{
+    try{
+      const actionPath=new URL(String(form.action||''),String(observed.url||'https://invalid.example')).pathname;
+      return registerPath.test(actionPath)
+        &&!/(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(actionPath);
+    }catch{return false}
+  }))return true;
+  const leading=String(observed.text||'').replace(/\s+/g,' ').trim().replace(/^(?:instagram|meta)\s+/i,'').slice(0,260);
+  const fullText=String(observed.text||'').replace(/\s+/g,' ').trim();
+  const newsletterForm=form=>{
+    const fields=form.inputs||[];
+    // Optional newsletter opt-ins within real signups cannot exempt a whole
+    // credential form. Article URLs alone are never newsletter evidence.
+    if(fields.some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))))return false;
+    const fieldEvidence=[form.action||'',...fields.flatMap(input=>[input.name,input.label])].join(' ');
+    const formText=String(form.formText||'').replace(/\s+/g,' ').trim();
+    const accountCue=/\b(?:create\s+(?:an?\s+|your\s+)?account|register(?:\s+an?\s+account)?|already\s+have\s+an?\s+account)\b/i.test(formText);
+    if(accountCue)return false;
+    const newsletterEvidence=/(?:newsletter|subscribe|subscription|mailing[-\s]?list|email[-\s]?updates)/i.test(fieldEvidence+' '+formText);
+    if(!newsletterEvidence)return false;
+    const signupSubmit=(form.submitLabels||[]).some(label=>/\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')));
+    const newsletterHeading=/^(?:newsletter\b|subscribe\b|subscription\b|sign\s*up\s+(?:now\s+)?(?:for|to)\s+(?:our\s+)?(?:newsletter\b|email\s+updates\b))/i.test(formText);
+    return !signupSubmit||newsletterHeading;
+  };
+  const credentialForms=forms.filter(form=>!newsletterForm(form));
+  const hasAccountField=credentialForms.some(form=>(form.inputs||[]).some(input=>
+    /password|email|phone|mobile|user|login|\btel\b/i.test([input.name,input.type,input.label,input.autocomplete].join(' '))));
+  const passwordField=credentialForms.some(form=>(form.inputs||[]).some(input=>/\bpassword\b/i.test([input.name,input.type,input.label].join(' '))));
+  // A public article's newsletter form is not an account creation form.
+
+  // Generic Continue on an email-first account creation form is consequential,
+  // even when the signup heading follows page navigation and other prose.
+  if(hasAccountField&&/\b(?:create\s+(?:an?\s+|your\s+)?account|register|sign\s*up)\b/i.test(fullText)
+     &&/\balready\s+have\s+an?\s+account\b/i.test(fullText))return true;
+
+  // A registration submit may appear on a login URL/modal with generic title.
+  const registrationSubmit=await page.evaluate(() => {
+    const buttons=Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]'))
+      .filter(el=>{
+        if(el.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
+        const rect=el.getBoundingClientRect(),style=getComputedStyle(el);
+        return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden';
+      });
+    return buttons.reduce((result,el)=>{
+      const label=String(el.textContent||el.value||el.getAttribute('aria-label')||'').replace(/\s+/g,' ').trim();
+      const explicit=/\b(?:register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(label);
+      const signUp=/\bsign\s*up\b/i.test(label);
+      const associated=!!(el.form||el.closest('form'));
+      // Unlike header navigation, a visible Sign up submit associated with an
+      // actual form is an active registration control even on a help URL.
+      return {associated:result.associated||(associated&&(explicit||signUp)),
+        explicit:result.explicit||explicit};
+    },{associated:false,explicit:false});
+  }).catch(()=>({associated:true,explicit:true}));
+  // A Sign up action must belong to the same non-newsletter credential
+  // form. An unrelated footer newsletter beside a login form is not a barrier.
+  if(credentialForms.some(form=>{
+    // A form-less account panel is still registration on /session or a guide
+    // URL. Only observed newsletter evidence may exempt its Sign up action.
+    return (form.submitLabels||[]).some(label=>
+      /\b(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(String(label||'')));
+  }))return true;
+  if(publicGuidePath&&!passwordField)return false;
+  if(registrationSubmit.explicit&&credentialForms.length>0)return true;
+  if(hasAccountField&&/^(?:please\s+)?(?:sign\s*up|register|create\s+(?:an?\s+|your\s+)?account)\b/i.test(leading))return true;
+  return false;
+}
 async function model(page){
   return await page.evaluate(() => {
     const clean = s => String(s||'').replace(/\s+/g,' ').trim();
@@ -239,13 +321,28 @@ async function model(page){
       const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
       let selector='';
       if(id) selector='#'+CSS.escape(id); else if(name) selector=el.tagName.toLowerCase()+'[name="'+CSS.escape(name)+'"]'; else selector=el.tagName.toLowerCase();
-      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
+      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||''),autocomplete:clean(el.getAttribute('autocomplete')||'')};
     };
     return {
       url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
-      forms:[...Array.from(document.forms).filter(visible),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&visible(el))?[document.body]:[])].slice(0,16).map(f=>({
+      forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&visible(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
-        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
+        formText:clean(f.innerText||'').slice(0,850),
+        synthetic:f===document.body,
+        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]')).filter(el=>{
+          if(!visible(el))return false;
+          const tag=el.tagName?.toLowerCase()||'',type=(el.getAttribute('type')||'').toLowerCase();
+          const actualSubmit=tag==='button'?(type!=='button'&&type!=='reset'):tag==='input'&&type==='submit';
+          // Do not treat a login mode-switch button as an account submit.
+          // The synthetic body form must still see its own unbound signup CTA.
+          if(f!==document.body)return el.form===f&&actualSubmit;
+          if(el.form||el.closest('form'))return false;
+          const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
+          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
+            const field=inputs(input);
+            return !input.form&&visible(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' ')); });
+        }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>visible(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
     };
   });
@@ -260,12 +357,18 @@ async function model(page){
   const page=context.pages()[0]||await context.newPage();
   let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false,openerLabel='',openerClicks=0;
   const ambiguous=[];
+  const refuseRegistration=async()=>{
+    const out=await model(page);
+    out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,registrationRefused:true};
+    console.log(JSON.stringify(out));
+  };
   try{
     for(let attempt=0;;attempt++){try{await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});break}catch(e){
       if(attempt>=3||!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET|ERR_TIMED_OUT/.test(String(e&&e.message||e)))throw e;
       await page.waitForTimeout([1500,4000,8000][attempt]);
     }}
     await page.waitForTimeout(800);
+    if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
     const USER_FIELDS='input[autocomplete~="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i], input[placeholder*="username" i], input[placeholder*="email" i]';
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
     if(!(await readyLoginFields(page,USER_FIELDS)).length){
@@ -289,6 +392,7 @@ async function model(page){
         }
       }
     }
+    if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
     const PASS_FIELDS='input[type="password"]';
     const userFields=await readyLoginFields(page,USER_FIELDS);
     if(userFields.length>1) ambiguous.push('username_fields');
@@ -301,7 +405,11 @@ async function model(page){
         'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
         'button:has-text("Log in")','button:has-text("Login")','a:has-text("Login")','button[type="submit"]','input[type="submit"]'
       ]);
-      if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
+      if(next){
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+        await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200);
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+      }
       passFields=await visibleFields(page,PASS_FIELDS);
     }
     let codeRequested=false;
@@ -312,7 +420,11 @@ async function model(page){
         'button:has-text("Send OTP")','button:has-text("Send One Time Password")','a:has-text("Send OTP")','button:has-text("Request OTP")','a:has-text("Sign in with OTP")',
         'button:has-text("Login with OTP")','a:has-text("Login with OTP")','button:has-text("Send code")','input[type="submit"][value*="OTP" i]'
       ]);
-      if(codeButton){ await codeButton.click({timeout:10000}); submitted=true; }
+      if(codeButton){
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+        await codeButton.click({timeout:10000}); submitted=true;
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+      }
       // 16 Oct live: Gogo told him "Swiggy sent a code" but no SMS came. Only say so when the site shows its code screen.
       let codeScreen=false,errorCue='';
       if(codeButton||!passFields.length){
@@ -338,11 +450,18 @@ async function model(page){
     if(passFields.length===1){
       const pass=passFields[0];
       await pass.fill(secret,{timeout:10000}); passwordFilled=true;
+      if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
       const submit=await firstVisible(page,[
         'button:has-text("Log in")','button:has-text("Sign in")','button:has-text("Login")',
         'button[type="submit"]','input[type="submit"]'
       ]);
-      if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
+      if(submit){
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+        await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800);
+        // Provider redirect after a real login submit can land on registration.
+        // Never let the caller interpret that page as successful authentication.
+        if(await isActiveRegistrationPage(page)){await refuseRegistration();return;}
+      }
     }
     const out=await model(page);
     out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked,...(phoneCode?{phoneCode:true}:{})};
@@ -697,6 +816,7 @@ async function model(page){
       const text=clean(el.innerText||el.textContent);
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:accessibleLabel(el).slice(0,180),
+      ...(el.form?{inForm:true}:{}),
       ...(el.tagName==='INPUT'?{type:String(el.getAttribute('type')||'text').toLowerCase().slice(0,20)}:{}),
       // What a field is for, from attributes a person never sees (adapted from Bops' form matching):
       // name, id, autocomplete ("tel", "one-time-code"), inputmode and maxlength.
@@ -730,7 +850,7 @@ async function model(page){
       const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
       let selector='';
       selector=selectorFor(el);
-      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
+      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||''),autocomplete:clean(el.getAttribute('autocomplete')||'')};
     };
     const flightEvidence=/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)&&!activeDialog ? {
       searchControls:allControls.filter(c=>/^where (?:from|to)\?|^change (?:ticket type|seating class)\.|^\d+ passengers?\b/i.test(c.label))
@@ -776,9 +896,24 @@ async function model(page){
       text:((openDialog?'[Open dialog] '+String(openDialog.innerText||'').trim()+'\n\n':'')+String(document.body?.innerText||'')).replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       links:Array.from(document.querySelectorAll('a[href]')).filter(actionable).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).sort((a,b)=>relevance(b.text)-relevance(a.text)).slice(0,100),
       controls,
-      forms:[...Array.from(document.forms).filter(visible),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
+      forms:[...Array.from(document.forms).filter(form=>visible(form)||Array.from(form.querySelectorAll('input,textarea,select')).some(visible)),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
-        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(actionable).slice(0,60).map(inputs)
+        formText:clean(f.innerText||'').slice(0,850),
+        synthetic:f===document.body,
+        submitLabels:Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]')).filter(el=>{
+          if(!actionable(el))return false;
+          const tag=el.tagName?.toLowerCase()||'',type=(el.getAttribute('type')||'').toLowerCase();
+          const actualSubmit=tag==='button'?(type!=='button'&&type!=='reset'):tag==='input'&&type==='submit';
+          // Do not treat a login mode-switch button as an account submit.
+          // The synthetic body form must still see its own unbound signup CTA.
+          if(f!==document.body)return el.form===f&&actualSubmit;
+          if(el.form||el.closest('form'))return false;
+          const navigation=el.closest('header,nav,footer,[role="navigation"],[role="banner"],[role="contentinfo"]');
+          return !navigation||Array.from(navigation.querySelectorAll('input,textarea,select')).some(input=>{
+            const field=inputs(input);
+            return !input.form&&actionable(input)&&/password|email|phone|mobile|user|login|\btel\b/i.test([field.name,field.type,field.label,field.autocomplete].join(' ')); });
+        }).slice(0,16).map(el=>clean(el.innerText||el.textContent||el.value||el.getAttribute('aria-label'))),
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(el=>actionable(el)&&(f!==document.body||!el.form)).slice(0,60).map(inputs)
       }))
     };
   });
@@ -2521,7 +2656,34 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // A sign-up page also has a password field; never try a saved login while creating an account.
       // A saved login is also tried once on a signed-out page that only offers a header "Log in" link.
       // With a code in hand the saved number is never re-sent (that would text a new code and void this one).
+      const registrationBarrier=isBrowserRegistrationBarrier(page)
+      // A public Instagram post may show a signup banner above its real caption.
+      // It can still be read, but must never be used as a reason to sign in.
+      const publicInstagramEvidence=params.mode==='read'&&!loginish&&(()=>{
+        try {
+          const url=new URL(String(page.url||''))
+          return ['instagram.com','www.instagram.com'].includes(url.hostname.toLowerCase())
+            &&/^\/(?:p|reel)\//i.test(url.pathname)
+            &&!(page.forms||[]).some((f:any)=>(f.inputs||[]).some((i:any)=>/password|email|phone|username/i.test([i.name,i.type,i.label].join(' '))))
+        } catch { return false }
+      })()
+      // A public documentation/news article can show a newsletter field and
+      // navigation to sign in, but this is not permission to autofill identity.
+      const publicGuideRead=params.mode==='read'&&!loginish&&(()=>{
+        try{
+          return /(?:^|\/)(?:guides?|docs?|articles?|blog|help|faq|tutorials?)(?:\/|$)/i.test(new URL(String(page.url||'')).pathname)
+        }catch{return false}
+      })()
+      if(registrationBarrier&&params.accountCreation!==true&&!publicInstagramEvidence){
+        const handoffReservation=params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,
+          title:safeText(page.title,300),summary:'This page asks to create an account. Gogo stopped; sign in to an existing account in Take Control, then resume the same task.',
+          pageText:'Gogo paused at account registration. No Vault credentials were entered or account created.',
+          forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
+          blockReason:'human_auth_required',authReason:'login_unavailable'}
+      }
       let signedOutEntry=!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      if(registrationBarrier||publicGuideRead)signedOutEntry=false
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
       // A human may just have completed sign-in in this same page. A stale session marker
@@ -2529,7 +2691,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 26 Oct live: a Swiggy menu read for a food comparison signed in with the saved login and stopped at a text code.
       // A comparison read is a public page: it never signs in (publicOnly); a real sign-in wall still pauses for the person.
       if(params.publicOnly)signedOutEntry=false
-      if(!params.publicOnly&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      if(!params.publicOnly&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!registrationBarrier&&!publicGuideRead&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
@@ -2540,7 +2702,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         }
       }
       if(signedOutEntry)vaultEntryChecked=true
-      if(!params.publicOnly && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
+      if(!params.publicOnly && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry))) && !registrationBarrier && !publicGuideRead){
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
@@ -2572,6 +2734,18 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
               managedEnv:first.managed?.env,
             })
             const vaultFill=page?.vaultLogin||{}
+            // The isolated browser worker may redirect to registration after
+            // the initial read. Never report an active session or resume a
+            // planner on a refused registration form.
+            if(vaultFill.registrationRefused===true){
+              actionLog.push({kind:'vault_login',detail:'Saved login refused an account-registration form; no account created.',status:'failed'})
+              const handoffReservation=params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+              return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,
+                title:safeText(page.title,300),summary:'This site redirected to account registration. Gogo stopped; sign in to an existing account in Take Control, then resume the original task.',
+                pageText:'Gogo stopped before account creation. The login attempt was not verified.',
+                forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
+                blockReason:'human_auth_required',authReason:'login_unavailable'}
+            }
             if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,openerLabel:vaultFill.openerLabel||null,openerClicks:vaultFill.openerClicks||0,headerCues:vaultFill.headerCues||null,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
             if(vaultFill.phoneCode&&vaultFill.codeRequested){vaultPhoneCodeRequested=true;if(credential.viaWhatsAppNumber)phoneLoginViaWhatsApp=true}
             const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||(vaultFill.phoneCode&&vaultFill.codeRequested)))
