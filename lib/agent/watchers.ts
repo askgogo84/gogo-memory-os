@@ -706,7 +706,7 @@ async function continueInboxOrderAlerts(watcher:any,condition:InboxTriageWatcher
 async function processMailAlerts(watcher:any,condition:InboxTriageWatcherCondition,actor:AgentActor,telegramId:string,fresh:any[],seen:string[],messages:any[],now:Date) {
   // The persisted watcher owner is signed BIGINT text; never round it before private context reads.
   const owner=exactWatcherOwner(telegramId)
-  if(!owner||BigInt(owner)<-9223372036854775808n||BigInt(owner)>9223372036854775807n)
+  if(!owner||owner!==telegramId||BigInt(owner)<-9223372036854775808n||BigInt(owner)>9223372036854775807n)
     throw new Error('mail_alert_context_owner_invalid')
   const ma=await import('@/lib/email/mail-alerts')
   const rules=ma.normalizeRules((watcher.condition_json as any)?.mailAlerts)
