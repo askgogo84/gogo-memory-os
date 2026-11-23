@@ -60,6 +60,33 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/contextual-meeting-re
   },
 })
 const invoke=(text=command,owner=-42)=>actual.tryContextualMeetingReschedule({telegramId:owner,phone,text,surface:'whatsapp'})
+const quotedSid = 'MM' + 'a'.repeat(32)
+function laterDelivery() {
+  reset()
+  now = Date.parse('2026-11-23T14:26:58Z')
+  rows[0].twilio_sid = quotedSid
+  receipt.provider_sid = quotedSid
+  rows.push({...original,id:'newer-ordinary',message:'Call Divya',sent_at:'2026-11-23T12:30:39Z',twilio_sid:'MM'+'b'.repeat(32)})
+  turns.push({telegram_id:-42,role:'user',created_at:'2026-11-23T13:00:00Z',content:'An unrelated message'})
+}
+const quoted = (sid=quotedSid) => actual.tryContextualMeetingReschedule({telegramId:-42,phone,text:command,surface:'whatsapp',replyToSid:sid})
+laterDelivery()
+assert.match(await quoted(),/24 Nov 2026, 4:20 pm/,'an exact quoted delivery wins over newer unrelated context')
+assert.equal(rows.filter(r=>!r.sent).length,1)
+assert.equal(rows[1].message,'Call Divya')
+assert.equal(await invoke(),null,'unquoted stale context cannot authorize a change')
+for (const invalidate of [
+  ()=>{rows[0].telegram_id=-43},
+  ()=>{rows[0].whatsapp_to='+919999999999'},
+  ()=>{receipt.receipt_verified=false},
+  ()=>{rows[0].sent_at='2026-11-22T10:50:37Z'},
+  ()=>{rows.push({...rows[0],id:'duplicated-sid'})},
+]) {
+  laterDelivery()
+  invalidate()
+  assert.doesNotMatch(String(await quoted()),/reminder is set/)
+  assert.equal(writes.length,0)
+}
 reset();assert.match(await invoke(),/already on your Calendar/);assert.match(await invoke(),/24 Nov 2026, 4:20 pm/)
 assert.equal(rows.length,2);assert.equal(writes.length,1);assert.deepEqual(rows[0],original,'delivered occurrence immutable')
 assert.equal(rows[1].remind_at,'2026-11-24T10:50:00.000Z');assert.match(rows[1].message,/starts 24 Nov 2026, 4:30 pm/);assert.match(rows[1].message,/calendar.app.google/)
@@ -120,11 +147,13 @@ for (const surface of ['web','whatsapp']) {
   assert.ok(start < source.indexOf(surface === 'web' ? 'const understoodReply' : 'const understoodReply'))
   assert.ok(end > start)
   const block = source.slice(start,end)
-  let saved:any[]=[],sent:any[]=[],preserve=false,importFailure=false
+  let saved:any[]=[],sent:any[]=[],preserve=false,importFailure=false,replyToSid='',signatureOutcome='valid'
   const api:any={}
   class ResponseFixture {constructor(public body:any,public options:any){}static json(data:any){return data}}
   runInNewContext(ts.transpileModule(`export async function run(text:string){${block};return 'fallback'}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports:api,NextResponse:ResponseFixture,user:{telegram_id:-42,whatsapp_id:phone},actor:{legacyTelegramId:-42},resolvedUser:{telegramId:-42},from:phone,
+    formData:{get:(key:string)=>key==='OriginalRepliedMessageSid'?replyToSid:null},
+    signatureAudit:{verdict:{get outcome(){return signatureOutcome}}},
     get preserveFriendFlow(){return preserve},detectFriendReminder:()=>false,isFriendReminderFollowupCandidate:()=>preserve,getPendingFriend:async()=>preserve,
     saveConversation:async(...args:any[])=>saved.push(args),sendWhatsAppMessage:async(...args:any[])=>sent.push(args),emptyTwiml:()=>'<Response/>',
     require(name:string){assert.equal(name,'@/lib/agent/contextual-meeting-reschedule');if(importFailure)throw Error('import failed');return actual},
@@ -136,5 +165,16 @@ for (const surface of ['web','whatsapp']) {
   reset();saved=[];sent=[];preserve=true;assert.equal(await api.run(command),'fallback');assert.equal(reads.length,0)
   reset();preserve=false;importFailure=true;const failed=await api.run(command);assert.notEqual(failed,'fallback');assert.equal(writes.length,0)
   reset();assert.equal(await api.run('Move it to 5 pm'),'fallback','unrelated clock-only commands never import this handler');assert.equal(reads.length,0)
+  if (surface === 'whatsapp') {
+    importFailure=false;laterDelivery();saved=[];sent=[]
+    assert.notEqual(await api.run(command),'fallback','an ungrounded move cannot fall through to a model rewrite')
+    assert.match(sent[0][1],/Which meeting or reminder/);assert.equal(writes.length,0)
+    replyToSid=quotedSid;laterDelivery();saved=[];sent=[]
+    await api.run(command)
+    assert.match(sent[0][1],/24 Nov 2026, 4:20 pm/);assert.equal(writes.length,1);assert.equal(sent.length,1)
+    signatureOutcome='invalid';laterDelivery();saved=[];sent=[]
+    await api.run(command)
+    assert.match(sent[0][1],/couldn’t match/);assert.equal(writes.length,0);assert.equal(reads.length,0)
+  }
 }
 console.log('verify-delivered-meeting-context-nov23: actual handler/router context, Calendar truth, stable successor, CAS and fail-closed controls PASS (offline)')
