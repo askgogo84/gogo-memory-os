@@ -5,9 +5,10 @@ import ts from 'typescript'
 const source=readFileSync('lib/agent/autonomy-status.ts','utf8')
 const queries:Array<{table:string;columns:string;owner:unknown}>=[]
 let fail=false
+let expectedOwner='123'
 const db={from:(table:string)=>{
  const entry={table,columns:'',owner:null as unknown};queries.push(entry)
- const q:any={select:(columns:string)=>{entry.columns=columns;assert.doesNotMatch(columns,/token|password|secret/);return q},eq:(key:string,value:unknown)=>{assert.ok(['telegram_id','capability','sender'].includes(key));if(key==='telegram_id'){assert.equal(String(value),'123');entry.owner=value}if(key==='sender')assert.equal(value,'fixture-owner');return q},gte:()=>q,maybeSingle:()=>q,then:(resolve:any)=>resolve(fail?{data:null,error:{message:'fixture-down'},count:null}:{error:null,count:table==='vault_credentials'?2:table==='travel_tickets'?1:null,data:table==='users'?{gmail_connected:true,gmail_send_connected:false,google_calendar_connected:true,whatsapp_id:'fixture-owner'}:table==='agent_permissions'?{level:'read'}:table==='user_consent_settings'?{gmail_enabled:false}:table==='wa_creditiq_links'?{consumer_user_id:'fixture-linked'}:null})}
+ const q:any={select:(columns:string)=>{entry.columns=columns;assert.doesNotMatch(columns,/token|password|secret/);return q},eq:(key:string,value:unknown)=>{assert.ok(['telegram_id','capability','sender'].includes(key));if(key==='telegram_id'){assert.equal(String(value),expectedOwner);entry.owner=value}if(key==='sender')assert.equal(value,'fixture-owner');return q},gte:()=>q,maybeSingle:()=>q,then:(resolve:any)=>resolve(fail?{data:null,error:{message:'fixture-down'},count:null}:{error:null,count:table==='vault_credentials'?2:table==='travel_tickets'?1:null,data:table==='users'?{gmail_connected:true,gmail_send_connected:false,google_calendar_connected:true,whatsapp_id:'fixture-owner'}:table==='agent_permissions'?{level:'read'}:table==='user_consent_settings'?{gmail_enabled:false}:table==='wa_creditiq_links'?{consumer_user_id:'fixture-linked'}:null})}
  return q
 }}
 const actual:any={}
@@ -25,6 +26,40 @@ await check('seven-service response reads owner-bound state without secrets or m
 })
 await check('read errors return unknown states without model fallback or false disconnection',async()=>{
  fail=true;try{const result=await actual.tryGetConnectionCapabilities({actor:{legacyTelegramId:123},text:prompt});assert.match(result.text,/unavailable|unknown/i);assert.doesNotMatch(result.text,/not connected|no saved logins|no upcoming tickets/i)}finally{fail=false}
+})
+const accountPrompt='Which email ID am I connected to?'
+await check('connected account status uses its actual deterministic private read',async()=>{
+ assert.equal(actual.isConnectionStatus(accountPrompt),true)
+ assert.equal(actual.isConnectionCapabilityQuery(accountPrompt),false)
+ const before=queries.length
+ const result=await actual.tryGetConnectionStatus({actor:{legacyTelegramId:123},text:accountPrompt})
+ assert.equal(result.handledBy,'connection-status')
+ assert.match(result.text,/Connected accounts/)
+ assert.deepEqual(queries.slice(before).map(q=>q.table),['users','user_consent_settings'])
+ assert.ok(queries.slice(before).every(q=>String(q.owner)==='123'))
+})
+await check('MANDATORY: rounded and malformed account owners never access service-role data',async()=>{
+ for(const owner of [0,-0,NaN,Infinity,-Infinity,42.5,Number.MAX_SAFE_INTEGER+1,Number.MIN_SAFE_INTEGER-1,'123',null,undefined,{},BigInt('9223372036854775807')]){
+  const before=queries.length
+  await assert.rejects(
+   actual.tryGetConnectionStatus({actor:{legacyTelegramId:owner},text:accountPrompt}),
+   /connection_status_owner_invalid/,
+   'reject unsafe owner before any account lookup: '+String(owner),
+  )
+  assert.equal(queries.length,before,'unsafe owner cannot query private accounts')
+ }
+})
+await check('safe negative WhatsApp and exact safe-boundary owners remain supported',async()=>{
+ for(const owner of [-42,Number.MAX_SAFE_INTEGER,Number.MIN_SAFE_INTEGER]){
+  expectedOwner=String(owner)
+  try{
+   const before=queries.length
+   const result=await actual.tryGetConnectionStatus({actor:{legacyTelegramId:owner},text:accountPrompt})
+   assert.equal(result.handledBy,'connection-status')
+   assert.deepEqual(queries.slice(before).map(q=>q.table),['users','user_consent_settings'])
+   assert.ok(queries.slice(before).every(q=>String(q.owner)===String(owner)))
+  }finally{expectedOwner='123'}
+ }
 })
 await check('connection commands and mixed changes cannot be claimed as a completed read',async()=>{
  for(const text of ['Connect my Gmail','Disconnect my services','Show my connected services and disconnect Gmail']){
