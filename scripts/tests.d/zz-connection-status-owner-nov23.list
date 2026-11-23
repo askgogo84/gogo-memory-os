@@ -1,0 +1,2 @@
+# Existing connected-services fixture unchanged. Real account-status handler in isolated VM.
+node scripts/verify-connection-status-owner-nov23.mjs
