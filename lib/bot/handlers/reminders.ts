@@ -693,7 +693,7 @@ export function reminderTimingProblem(text:string):string|null {
   if(getAmbiguousReminderTime(text))return null
   if(!hasNamedReminderDate(text)&&!/\btoday\b/i.test(text))return null
   const lead=reminderLeadTime(text)
-  const parsed=parseReminderBase(lead?`remind me ${text.replace(lead[0],'')}`:text)
+  const parsed=parseReminderBase(explicitReminderCountdown(text)?text:`remind me ${lead?text.replace(lead[0],''):text}`)
   if(!parsed)return hasNamedReminderDate(text)?'Please confirm a valid date and time, including a matching weekday if provided. Nothing has been saved.':null
   const offset=lead?Number(lead[1])*(/^(hour|hr)/i.test(lead[2])?3600000:60000):0
   if(Date.parse(parsed.remindAtIso)-offset<=Date.now())return 'That reminder time has already passed. I haven’t moved it to another day. Please give me a future date and time. Nothing has been saved.'

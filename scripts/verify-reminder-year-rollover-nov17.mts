@@ -63,6 +63,9 @@ for(const date of ['30 February','22 November']){
   eq(iso(`remind me on ${date} at 10am to test the phrase "remind me in 3 minutes to check the invoice"`),null,'a quoted inner reminder cannot bypass the invalid or past outer schedule')
 }
 eq(iso('remind me on 24 November at 10am to test the phrase "remind me in 3 minutes to check the invoice"'),'2026-11-24T04:30:00.000Z','a quoted inner countdown cannot replace the actual future schedule')
+eq(reminderTimingProblem('pay rent on 24 November at 5pm'),null,'task-only delegated reminder callers retain their scheduling prefix')
+eq(/already passed/.test(String(reminderTimingProblem('pay rent on 22 November at 5pm'))),true,'task-only past-date callers still refuse')
+eq(reminderTimingProblem('pay rent on 30 February at 5pm')!==null,true,'task-only invalid-date callers still refuse')
 
 fixed = RealDate.parse('2026-01-05T04:30:00Z') // 5 Jan 2026
 eq(iso('remind me on 9 January at 10am to renew insurance'), '2026-01-09T04:30:00.000Z', 'in early January it is this January')
