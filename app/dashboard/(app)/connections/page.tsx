@@ -84,7 +84,8 @@ export default async function ConnectionsPage(){
   const gmailReadOff=gmailConsent?.data?.gmail_enabled===false
   const gmailReadUnknown=Boolean(gmailConsent?.error)||typeof gmailConsent?.data?.gmail_enabled!=='boolean'
   const gmailCanRead=authKnown&&c.gmail&&!gmailReadUnknown&&!gmailReadOff
-  const gmailSettings=c.gmail?'/dashboard/settings/email':'/dashboard/you'
+  const needsReadStatus=c.gmail&&!gmailCanRead
+  const gmailSettings=needsReadStatus?'#gmail-read-status':'/dashboard/you'
   // Duet parity step 5: one tap to let Gogo send email for you. Every send still waits for your approval and is
   // confirmed from your Sent folder. The signed link only grants the Gmail Send scope.
   // Gmail's signed OAuth state currently accepts only safe numeric IDs. A large
@@ -94,6 +95,12 @@ export default async function ConnectionsPage(){
   const tgNum=canEncodeGmailOwner?Number(tg):null
   const sendUpgradeUrl=gmailCanRead&&!gmailSend&&tgNum!==null
     ?await import('@/lib/services/google-gmail').then(m=>m.buildGmailSendConnectUrl(tgNum)).catch(()=>null)
+    :null
+
+  // Reconnection is an explicit click. A failed check or an explicit opt-out never offers OAuth.
+  const missingReadConsent=c.gmail&&!gmailConsent.error&&gmailConsent.data?.gmail_enabled==null
+  const reconnectUrl=missingReadConsent&&tgNum!==null
+    ?await import('@/lib/services/google-gmail').then(m=>m.buildGmailConnectUrl(tgNum)).catch(()=>null)
     :null
 
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
@@ -112,7 +119,7 @@ export default async function ConnectionsPage(){
       <p className="mt-1 text-[15px] leading-5 text-[#a8a8a8]">What is saved for this account. The live check above is what a provider confirmed; these are not claimed as working until one does. Open a card for what Gogo can do and how it verifies results.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <ConnectionCard name="Gmail" state={!authKnown?'Connection status unavailable':!c.gmail?'Not connected':gmailReadUnknown?'Reading status unavailable':gmailReadOff?'Reading off':gmailSend?'Read and send connected':'Read only'}
-          detail={!authKnown?'Your saved connection could not be checked.':!c.gmail?'Connect Gmail in You.':gmailReadUnknown?'Open email settings to check your reading preference.':gmailReadOff?'Your saved preference disables reading.':'Reading does not authorize a send.'}
+          detail={!authKnown?'Your saved connection could not be checked.':!c.gmail?'Connect Gmail in You.':gmailReadUnknown?'See the saved reading permission below.':gmailReadOff?'Your saved preference disables reading.':'Reading does not authorize a send.'}
           available={gmailCanRead} href={gmailSettings}/>
         <ConnectionCard name="Google Calendar" state={!authKnown?'Connection status unavailable':c.googleCalendar?'Connected':'Not connected'}
           detail={!authKnown?'Your saved connection could not be checked.':c.googleCalendar?'Events can be read; changes keep their approval boundary.':'Connect Calendar in You.'}
@@ -125,6 +132,16 @@ export default async function ConnectionsPage(){
           available={vaultCount>0} href="/dashboard/you/vault"/>
       </div>
     </section>
+
+    {needsReadStatus&&<section id="gmail-read-status" className="final-dark-panel mt-5 p-4" aria-labelledby="gmail-read-title">
+      <h2 id="gmail-read-title" className="text-[16px] font-semibold text-[#f2efea]">Gmail reading permission</h2>
+      <p className="mt-1 text-[14px] text-[#a8a8a4]">{gmailReadOff
+        ? 'You turned Gmail reading off.'
+        : missingReadConsent
+          ? 'This account has no recorded permission to read Gmail.'
+          : 'Your reading preference could not be verified. Refresh this page to check again.'}</p>
+      {reconnectUrl&&<a className="mt-3 inline-flex min-h-11 items-center text-[#77d2c4]" href={reconnectUrl}>Reconnect the same Google account to allow reading</a>}
+    </section>}
 
     {sendUpgradeUrl&&<section className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#24433e] bg-[#101f1d] px-4 py-4" aria-labelledby="gmail-send-upgrade">
       <div className="min-w-0">
@@ -145,7 +162,7 @@ export default async function ConnectionsPage(){
           verification="Google Calendar read-back of the exact event/object after mutation."
           detail={c.googleCalendar?'Connection recorded on this account.':undefined} href="/dashboard/calendar"/>
         <ConnRow name="Gmail" state={!authKnown?'Connection status unavailable':c.gmail?(gmailReadUnknown?'Connected · Reading status unavailable':gmailReadOff?'Connected · Reading off':gmailSend?'Connected · Send enabled':'Connected · Read only'):'Not connected'} available={gmailCanRead}
-          operations={!authKnown?'Gmail connection and send permission could not be checked.':!c.gmail?'Connect Gmail to use mail tools.':gmailReadUnknown?'Reading permission is unverified. Check your email settings.':gmailReadOff?'Reading is off in email settings.':gmailSend?'Read/search mail, inspect attachments, draft and approved send.':'Read/search mail and attachments; drafts are safe. Gmail Send has not been granted.'}
+          operations={!authKnown?'Gmail connection and send permission could not be checked.':!c.gmail?'Connect Gmail to use mail tools.':gmailReadUnknown?'Reading permission is unverified.':gmailReadOff?'Your saved preference disables reading.':gmailSend?'Read/search mail, inspect attachments, draft and approved send.':'Read/search mail and attachments; drafts are safe. Gmail Send has not been granted.'}
           approval="Reading never authorizes sending. Every consequential send requires the existing bounded approval."
           verification="Gmail provider message/thread evidence; send success requires provider read-back."
           detail={gmailReadUnknown?'Could not verify your reading preference.':gmailReadOff?'Email reading is disabled in your saved privacy preference.':'Connecting Gmail alone does not start an inbox watch.'} href={gmailSettings}/>

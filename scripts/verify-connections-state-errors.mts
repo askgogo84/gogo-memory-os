@@ -8,6 +8,7 @@ import ts from 'typescript'
 let failures=new Set<string>(),throws=new Set<string>(),authenticated=true,emptyPermission=false,emptyCounts=false,emptyCredit=false,permissionLevel='ask'
 let consent: unknown = {gmail_enabled:true}
 const signedOwners: number[] = []
+const reconnectOwners: number[] = []
 const calls:Array<{table:string;filters:Array<[string,unknown]>}>=[]
 const user={name:'Fixture',whatsapp_id:'fixture-owner',gmail_connected:true,google_calendar_connected:true,gmail_send_connected:true}
 const db={from(table:string){
@@ -23,7 +24,7 @@ const db={from(table:string){
 }}
 const jsx=(type:unknown,props:unknown)=>({type:typeof type==='function'?type.name:type,props})
 const deps:Record<string,unknown>={
- '@/lib/services/google-gmail':{buildGmailSendConnectUrl:(owner:number)=>{signedOwners.push(owner);return '/synthetic-upgrade'}},
+ '@/lib/services/google-gmail':{buildGmailConnectUrl:(owner:number)=>{reconnectOwners.push(owner);return '/synthetic-reconnect'},buildGmailSendConnectUrl:(owner:number)=>{signedOwners.push(owner);return '/synthetic-upgrade'}},
  'next/link':{default:'a'},'react/jsx-runtime':{jsx,jsxs:jsx},
  '@/lib/dashboard/session':{getSession:async()=>authenticated?{telegramId:'123'}:null},
  '@/lib/supabase-admin':{supabaseAdmin:db},
@@ -79,7 +80,11 @@ assert.equal(good.get('CreditIQ').state,'Connected')
 user.gmail_send_connected=false
 for (const saved of [null, {}, {gmail_enabled:null}, {gmail_enabled:'true'}]) {
   consent=saved
-  const gmail=(await rows()).found.get('Gmail')
+  const result=await rows()
+  const gmail=result.found.get('Gmail')
+  assert.equal(gmail.href,'#gmail-read-status')
+  if (saved && saved.gmail_enabled === 'true') assert.doesNotMatch(JSON.stringify(result.tree),/synthetic-reconnect/)
+  else assert.match(JSON.stringify(result.tree),/synthetic-reconnect/)
   assert.match(gmail.state,/Reading status unavailable/)
   assert.equal(gmail.available,false)
   assert.doesNotMatch(gmail.operations,/Read\/search/)
@@ -89,6 +94,7 @@ assert.match((await rows()).found.get('Gmail').state,/Reading off/)
 consent={gmail_enabled:true}
 failures.add('user_consent_settings')
 assert.match((await rows()).found.get('Gmail').state,/Reading status unavailable/)
+assert.deepEqual(reconnectOwners,[123,123,123], 'only missing consent offers voluntary reconnection; failures, malformed consent and explicit off do not')
 assert.deepEqual(signedOwners, [], 'unknown, disabled and failed consent cannot generate an upgrade link')
 failures.clear()
 assert.match(JSON.stringify((await rows()).tree),/synthetic-upgrade/)
