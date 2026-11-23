@@ -535,16 +535,23 @@ async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPla
     const restricted = sourceBoundReport(params.missionText)
     if (!restricted) return executeVerifiedMissionWebSearch(step)
     const {searchWebResults} = await import('@/lib/web-search')
-    const pages = await Promise.allSettled(restricted.urls.map(url => searchWebResults(url,{
-      includeDomains:[new URL(url).hostname],pageTextOnly:true,timeoutMs:6000,
-    })))
+    const pages = await Promise.allSettled(restricted.urls.map(async url => {
+      const {hostname, pathname} = new URL(url)
+      const options = {includeDomains:[hostname],pageTextOnly:true,timeoutMs:6000}
+      const matches = (result: {url:string; snippet:string}) => result.snippet && researchSourceUrl(result.url) === url
+      const firstMatch = (await searchWebResults(url,options)).find(matches)
+      if (firstMatch) return firstMatch
+
+      // Some indexed pages are easier to find by their descriptive path than by a literal URL.
+      const pageName = (pathname.split('/').at(-1) || '').replace(/\.[a-z0-9]{1,8}$/i,'')
+      const words = pageName.match(/[a-z0-9]+/gi) || []
+      if (words.length < 3) return undefined
+      const query = words.slice(0,20).join(' ').slice(0,180)
+      return (await searchWebResults(query,{...options,timeoutMs:4000}).catch(() => [])).find(matches)
+    }))
     const unavailableSources = restricted.urls.filter((_,i) => pages[i].status === 'rejected')
     if (unavailableSources.length && unavailableSources.length === restricted.urls.length) throw new Error('named_source_search_unavailable')
-    const results = pages.flatMap((page,i) => {
-      if (page.status !== 'fulfilled') return []
-      const exact = page.value.find(result => result.snippet && researchSourceUrl(result.url) === restricted.urls[i])
-      return exact ? [exact] : []
-    })
+    const results = pages.flatMap(page => page.status === 'fulfilled' && page.value ? [page.value] : [])
     return {text:`Found search excerpts for ${results.length} of ${restricted.urls.length} named pages.`,output:{results,unavailableSources}}
   }
   if (step.tool === 'artifact') {
