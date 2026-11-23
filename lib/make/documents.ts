@@ -115,8 +115,9 @@ Return ONLY JSON: {"title":"…","slides":[{"kicker":"…","title":"…","points
 export function sheetPrompt(request: string, facts: string) {
   return `Create a spreadsheet as JSON for this request: ${JSON.stringify(request)}
 Use these public facts for prices where relevant (may be empty): ${facts ? JSON.stringify(facts.slice(0, 6000)) : '""'}
-Rules: 5-20 rows, plain words; for costs use exactly the columns "Item", "Basis", "Qty", "Unit price", "Amount" where Basis says what Qty counts (e.g. "2 rooms x 3 nights" with Qty 6) and Amount = Qty x Unit price; amounts as plain numbers without currency symbols or commas (Indian Rupees unless asked otherwise); mark rows that are your planning estimates (not from the facts) by listing their 0-based row numbers in "estimateRows"; do NOT add a total row (it is computed separately); put the amount column last and give its index in "totalColumn".
-Return ONLY JSON: {"title":"…","columns":["Item","Basis","Qty","Unit price","Amount"],"rows":[["Flights","4 people return",4,9000,36000]],"totalColumn":4,"estimateRows":[0],"notes":"one line on assumptions"}`
+Follow explicitly requested columns, row count and supplied values exactly. Never replace supplied rows with a template or add unrelated rows. If no row count is requested, choose 5-20 rows. Use plain words.
+For cost/budget sheets only, when columns are unspecified default to "Item", "Basis", "Qty", "Unit price", "Amount"; Basis explains Qty and Amount = Qty x Unit price. Amounts are plain numbers without currency symbols or commas (Indian Rupees unless asked otherwise). Mark planning estimates (not supplied facts) by their 0-based row numbers in "estimateRows". Never add a total row (computed separately). Give the amount column index in "totalColumn", or null for a non-cost sheet.
+Return ONLY JSON with the requested content in this shape: {"title":"…","columns":["Column","Value"],"rows":[["Entry","Value"]],"totalColumn":null,"estimateRows":[],"notes":""}`
 }
 
 export function editPrompt(doc: MakeDoc, instruction: string) {
