@@ -1,7 +1,9 @@
 // 21 Nov: five Sarvam switches (dialogue, web answer, planner, speech-to-text, text-to-speech) and the Prism shadow were
 // global: "on" meant every user. They now also need the person being served to be listed in GOGO_SARVAM_USERS.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
 const gate: any = await import('../lib/services/sarvam-gate')
 const meter: any = await import('../lib/metering/core')
@@ -68,8 +70,19 @@ for (const [file, from] of [['lib/agent/brain.ts', '../services/sarvam-gate'], [
   assert.ok(!/env\.GOGO_SARVAM_PRODUCTION/.test(src), `${file} does not re-implement the production check`)
 }
 // Every provider call in the app sits behind that gate.
-const { execSync } = await import('node:child_process')
-const callers = execSync(`grep -rlE "sarvam(Chat|PrismIntentShadow|Prism|TextToSpeech|SpeechToText)\\(" lib app --include=*.ts || true`, { cwd: new URL('..', import.meta.url).pathname }).toString().trim().split('\n').filter(f => f && !/lib\/services\/sarvam(-voice)?\.ts$/.test(f))
-for (const f of callers) assert.match(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'), /sarvam-gate'/, `${f} calls Sarvam and must import the gate`)
+const root = fileURLToPath(new URL('..', import.meta.url))
+const callers: string[] = []
+for (const scope of ['lib', 'app']) {
+  for (const entry of readdirSync(join(root, scope), { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.ts')) continue
+    const path = join(entry.parentPath, entry.name)
+    const file = relative(root, path).replaceAll('\\', '/')
+    if (file === 'lib/services/sarvam.ts' || file === 'lib/services/sarvam-voice.ts') continue
+    const source = readFileSync(path, 'utf8')
+    if (!/sarvam(Chat|PrismIntentShadow|Prism|TextToSpeech|SpeechToText)\(/.test(source)) continue
+    callers.push(file)
+    assert.match(source, /sarvam-gate'/, `${file} calls Sarvam and must import the gate`)
+  }
+}
 assert.ok(callers.length >= 5, callers.join())
 console.log('✓ six call sites share one gate, and every file that calls Sarvam imports it')
