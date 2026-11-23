@@ -42,7 +42,10 @@ function makeDb(users:Map<string,User>,consent:Map<string,Consent>){
         },
         async maybeSingle(){
           const rows=table==='users'?users:consent
-          return {data:(rows as Map<string,User|Consent>).get(String(queried))??null,error:null}
+          const matchedOwner=String(queried)
+          const row=(rows as Map<string,User|Consent>).get(matchedOwner)
+          // Model the selected telegram_id returned by Supabase, including adjacent BIGINT owners.
+          return {data:row?{...row,telegram_id:matchedOwner}:null,error:null}
         },
       }
     },
