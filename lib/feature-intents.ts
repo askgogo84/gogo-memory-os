@@ -370,6 +370,18 @@ export async function routeFeatureIntent(
     }
   }
 
+  // A delivered reminder is concrete context for "move this tmrw 4.30pm".
+  // Read the current Calendar state before a model can invent an action directive.
+  if(extra?.telegramId!==undefined && /^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)\b/i.test(text)) {
+    try {
+      const contextual=await import('@/lib/agent/contextual-meeting-reschedule')
+      if(contextual.isContextualMeetingMove(text)) {
+        const answer=await contextual.tryContextualMeetingReschedule({telegramId:extra.telegramId,phone,text,surface:extra.surface==='web'?'web':'whatsapp'})
+        if(answer){__trace.mark('contextualMeetingMove');return answer}
+      }
+    } catch {return 'I couldn’t verify that meeting reminder change. Please check your reminders; I haven’t retried the write.'}
+  }
+
   // A reminder's description may mention its meeting and forbid a duplicate.
   // Those words must not divert an explicit reminder edit into calendar prep.
   if(extra?.telegramId!==undefined && /^\s*(?:please\s+)?(?:move|reschedule|change|update|make)\b/i.test(text) && /\breminder\b/i.test(text)) {
