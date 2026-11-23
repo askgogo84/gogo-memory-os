@@ -11,7 +11,7 @@ Saturday, 3 Oct · 4:20–5 PM
 Google Meet joining info
 Video call link: https://meet.google.com/ghm-npbd-uar`
 const actor={userId:'fixture-user',legacyTelegramId:101,whatsappId:'fixture-phone',name:'Fixture'}
-let clock=Date.parse('2026-10-03T09:28:00Z'),seq=0,permission='auto',failInsert=false,writeAttempts=0
+let clock=Date.parse('2026-10-03T09:28:00Z'),seq=0,permission='auto',failInsert=false,writeAttempts=0,failUpdate=false,updateAttempts=0
 const store:Record<string,any[]>={users:[{telegram_id:101,whatsapp_id:'fixture-phone',timezone:'Asia/Kolkata'}],memories:[],conversations:[],reminders:[],links:[]}
 const db={from(table:string){
   store[table]||=[]
@@ -32,7 +32,13 @@ const db={from(table:string){
       const values=(Array.isArray(insert)?insert:[insert]).map(value=>({_seq:++seq,id:`fixture-${seq}`,created_at:new Date(clock).toISOString(),...structuredClone(value)}))
       store[table].push(...values);return {data:single?values[0]:values,error:null}
     }
-    if(changes)rows.forEach(r=>Object.assign(r,structuredClone(changes)))
+    if(changes){
+      if(table==='reminders'){
+        updateAttempts++
+        if(failUpdate)return {data:null,error:{message:'injected update failure'}}
+      }
+      rows.forEach(r=>Object.assign(r,structuredClone(changes)))
+    }
     return {data:single?structuredClone(rows[0]||null):structuredClone(rows),error:null}
   }).then(resolve,reject)}};return b
 }}
@@ -356,3 +362,75 @@ console.log('PASS: ordinary images keep existing note, association and document 
   assert.match(midnightText.text,/Want a reminder today at 11:55 pm IST for Midnight Session\? It starts tomorrow at 12:05 am\./)
   assert.equal(store.reminders.length,before,'no implicit reminder from a late share')
 console.log('PASS: Google Calendar "⋅" and month-first dates are read')
+
+// Owner's 23 Nov screenshot: this is a Calendar event share, without a Meet URL.
+{
+  clock=Date.parse('2026-11-23T05:00:00Z')
+  const share='Askgogo<>Fund Raise\n23 Nov · 4:30 – 5:45 pm\nView details and RSVP\nhttps://calendar.app.google/8KVz8h3xPM13FnJh9'
+  const meeting=worker().parseSharedMeeting(share,'Asia/Kolkata',new Date(clock))
+  assert.ok(meeting,'a dated Calendar event card must reach the meeting handler')
+  assert.equal(meeting.remindAt,'2026-11-23T10:50:00.000Z')
+  store.memories=[];store.conversations=[];store.reminders=[]
+  const shared=await worker().tryMeetingShareFollowup({actor,text:share,surface:'whatsapp'})
+  assert.ok(shared,'Calendar card must not fall through to generic link saving')
+  assert.match(shared.text,/4:20/)
+  assert.equal(store.reminders.length,0,'a new meeting still requires the existing reminder offer flow')
+  await history(shared.text)
+  const confirmed=await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'whatsapp'})
+  assert.match(confirmed.text,/Reminder set/)
+  const id=store.reminders[0].id
+  const moved=share.replace('4:30 – 5:45','5:00 – 6:15')
+  const changed=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'whatsapp'})
+  assert.match(changed.text,/4:50/,'shared revised event moves its existing ten-minute reminder')
+  assert.equal(store.reminders.length,1,'rescheduling must not create another reminder')
+  assert.equal(store.reminders[0].id,id,'rescheduling preserves the original reminder')
+  assert.equal(store.reminders[0].remind_at,'2026-11-23T11:20:00.000Z')
+  const updates=updateAttempts
+  await worker().tryMeetingShareFollowup({actor,text:moved,surface:'web'})
+  assert.equal(updateAttempts,updates,'repeated Calendar share does not write or duplicate the same reminder')
+  store.reminders.push({...store.reminders[0],id:'another-reminder'})
+  const ambiguous=await worker().tryMeetingShareFollowup({actor,text:share,surface:'web'})
+  assert.match(ambiguous.text,/more than one/)
+  assert.equal(updateAttempts,updates,'ambiguous matching reminders are never silently selected')
+  store.reminders.pop()
+  const other=await worker().tryMeetingShareFollowup({actor:{...actor,legacyTelegramId:202},text:share,surface:'web'})
+  assert.match(other.text,/Want a reminder/)
+  assert.equal(updateAttempts,updates,'another owner cannot update the first owner’s reminder')
+  permission='off'
+  const denied=await worker().tryMeetingShareFollowup({actor,text:share,surface:'web'})
+  assert.match(denied.text,/does not allow updating/)
+  assert.equal(updateAttempts,updates)
+  permission='ask'
+  const ask=await worker().tryMeetingShareFollowup({actor,text:share,surface:'web'})
+  assert.match(ask.text,/Move your existing reminder/)
+  assert.equal(updateAttempts,updates,'ask permission requires the existing confirmation flow')
+  await history(ask.text)
+  const yes=await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'whatsapp'})
+  assert.match(yes.text,/now set/)
+  assert.equal(store.reminders.length,1)
+  assert.equal(store.reminders[0].remind_at,meeting.remindAt)
+  await history(yes.text)
+  await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'whatsapp'})
+  assert.equal(updateAttempts,updates+1,'repeated confirmation cannot repeat the update')
+  const failureOffer=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'web'})
+  await history(failureOffer.text)
+  failUpdate=true
+  const unknown=await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'web'})
+  assert.match(unknown.text,/couldn’t verify/)
+  assert.doesNotMatch(unknown.text,/now set/)
+  const attempted=updateAttempts
+  await history(unknown.text)
+  failUpdate=false
+  await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'web'})
+  assert.equal(updateAttempts,attempted,'uncertain update is never blindly replayed')
+  permission='auto'
+  const unchanged=store.reminders[0].remind_at
+  await worker().tryMeetingShareFollowup({actor,text:'Only save this\n'+moved,surface:'web'})
+  assert.equal(store.reminders[0].remind_at,unchanged,'save-only request does not move a reminder')
+  store.reminders[0].is_recurring=true
+  const recurring=await worker().tryMeetingShareFollowup({actor,text:moved,surface:'web'})
+  assert.match(recurring.text,/Want a reminder/)
+  assert.equal(store.reminders[0].remind_at,unchanged,'a shared event cannot silently change a recurring series')
+  assert.equal(worker().parseSharedMeeting(share.replace('calendar.app.google/','calendar.app.google.evil.invalid/'),'Asia/Kolkata',new Date(clock)),null)
+}
+console.log('PASS: Calendar event share reconciles its existing reminder with owner, permission, ambiguity, duplicate and failed-update protections')

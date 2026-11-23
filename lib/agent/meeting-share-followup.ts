@@ -9,6 +9,19 @@ const KIND='meeting_reminder_offer'
 const reply=(text:string,status:'paused'|'completed'='paused')=>({text,handledBy:'meeting-share-followup',capability:'reminders',status,runId:''})
 type Meeting={title:string;url:string;startAt:string;endAt:string;remindAt:string;timezone:string}
 
+/** Read the invitation text supplied by the owner; never fetch an opaque share link. */
+function meetingLinks(text:string):string[]{
+  return [...new Set((text.match(/https:\/\/[^\s<>]+/gi)||[]).filter(raw=>{
+    try{
+      const u=new URL(raw)
+      if(u.username||u.password||u.port)return false
+      return (u.hostname==='meet.google.com'&&/^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(u.pathname))
+        ||(u.hostname==='calendar.app.google'&&/^\/[A-Za-z0-9_-]{6,100}$/.test(u.pathname))
+        ||(u.hostname==='calendar.google.com'&&/^\/calendar\/(?:event|u\/\d+\/r\/eventedit)(?:\/|$)/.test(u.pathname)&&!!u.searchParams.get('eid'))
+    }catch{return false}
+  }))]
+}
+
 const OWN_ZONE_WORDS:Record<string,RegExp>={'Asia/Kolkata':/\b(?:India|IST|Kolkata|Calcutta|Asia\/Kolkata|(?:GMT|UTC)\s*\+\s*0?5:?30)\b/i}
 const esc=(v:string)=>v.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
 /** True when the invitation names a time zone other than the owner's ("(Pacific Time - Los Angeles)", "EST"). */
@@ -33,7 +46,7 @@ export function parseSharedMeeting(raw:string, timezone:string, now=new Date()):
   // Review (PR #1570): an invitation that names another time zone ("(Pacific Time - Los Angeles)", "Time zone:
   // America/New_York") must not be read as the owner's local time. Refused here; the caller asks for the details.
   if(foreignZoneLabel(raw,timezone))return null
-  const links=[...new Set(text.match(/https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b/gi)||[])]
+  const links=meetingLinks(text)
   if(links.length!==1)return null
   const dateExpression=(/\b(?:(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+)?(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(20\d{2}))?\s*[·,]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
   const date=text.match(dateExpression)
@@ -97,6 +110,49 @@ function reminderId(tg:number,m:Meeting){
   return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`
 }
 
+type ReminderTarget={id:string;message:string;remind_at:string;timezone:string;sent:boolean}
+const meetingMessage=(m:Meeting)=>`${m.title} — starts ${formatInTimezone(m.startAt,m.timezone)}\n${m.url}`
+
+async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarget|'ambiguous'|null>{
+  const {data,error}=await supabaseAdmin.from('reminders')
+    .select('id,message,remind_at,timezone,sent,is_recurring,recurring_pattern')
+    .eq('telegram_id',tg).eq('sent',false).order('remind_at',{ascending:true}).limit(101)
+  if(error)throw new Error('meeting_reminder_context_read_failed')
+  // A truncated inventory cannot establish a unique target.
+  if((data||[]).length>100)return 'ambiguous'
+  const title=(s:string)=>s.replace(/\s+/g,' ').trim().toLowerCase()
+  const day=(at:string)=>{const p=getLocalParts(new Date(at),m.timezone);return `${p.year}-${p.month}-${p.day}`}
+  const matches=(data||[]).filter(r=>{
+    if(r.is_recurring||r.recurring_pattern||!Number.isFinite(Date.parse(r.remind_at))||Date.parse(r.remind_at)<=Date.now())return false
+    const lines=String(r.message||'').split('\n')
+    const name=lines[0].split(' — starts ')[0]
+    if(title(name)!==title(m.title))return false
+    if(day(r.remind_at)!==day(m.startAt))return false
+    const links=meetingLinks(r.message)
+    // A recorded event link is authoritative. Title-only reminders additionally
+    // need the same local day; repeated meetings cannot silently move dates.
+    return links.length?links.length===1&&links[0]===m.url:true
+  })
+  return matches.length>1?'ambiguous':matches[0]||null
+}
+
+async function moveMeetingReminder(tg:number,m:Meeting,target:ReminderTarget){
+  const message=meetingMessage(m)
+  if(target.message!==message||Date.parse(target.remind_at)!==Date.parse(m.remindAt)){
+    // Compare-and-set the exact owner, unsent reminder and old snapshot. A
+    // concurrent editor or delivery worker owns any changed record.
+    const {data,error}=await supabaseAdmin.from('reminders').update({message,remind_at:m.remindAt,timezone:m.timezone})
+      .eq('id',target.id).eq('telegram_id',tg).eq('sent',false)
+      .eq('message',target.message).eq('remind_at',target.remind_at).select('id').maybeSingle()
+    if(error||!data)return reply('I couldn’t verify the reminder update. Please check your reminders; I haven’t retried the change.')
+  }
+  const {data:stored,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,sent')
+    .eq('id',target.id).eq('telegram_id',tg).maybeSingle()
+  if(error||!stored||stored.sent||stored.message!==message||Date.parse(stored.remind_at)!==Date.parse(m.remindAt))
+    return reply('I couldn’t verify the reminder update. Please check your reminders; I haven’t retried the change.')
+  return reply(`Your reminder for ${m.title} is now set for ${formatInTimezone(stored.remind_at,stored.timezone)} — ten minutes before the meeting.\n${m.url}`,'completed')
+}
+
 type MeetingShareInput={actor:AgentActor;text:string;surface:'web'|'whatsapp'}
 
 // OCR is evidence, never an instruction or consent. Only invitation fields enter
@@ -125,9 +181,11 @@ export async function tryMeetingShareFollowup(p:MeetingShareInput){
 
 async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
   const text=p.text.trim(),tg=p.actor.legacyTelegramId
+  if(!Number.isSafeInteger(tg)||tg===0)return null
   const answer=/^(yes(?: please)?|no(?: thanks)?)[.!]*$/i.exec(text)
   // Avoid reads on unrelated turns. The current conversation owns short replies.
-  if(!answer&&!/https:\/\/meet\.google\.com\//i.test(text))return null
+  if(!answer&&!meetingLinks(text).length)return null
+  if(!answer&&/\b(?:do not|don't|don’t|no)\s+(?:(?:set|offer|create)\s+)?remind|\b(?:just|only)\s+(?:save|read|extract|transcribe)\b/i.test(text))return null
   if(!answer){
     const {data:user,error}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',tg).maybeSingle()
     if(error)throw new Error('meeting_timezone_read_failed')
@@ -142,7 +200,16 @@ async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
     const timeStatus=meetingTimeStatus(meeting)
     if(timeStatus)return reply(timeStatus,'completed')
     if(Date.parse(meeting.remindAt)<=Date.now())return reply(`Saved ${meeting.title} and its Meet link. The meeting starts ${formatInTimezone(meeting.startAt,meeting.timezone)} — too soon for a 10-minute reminder.\nJoin: ${meeting.url}`,'completed')
+    // OCR invitations use a generic title; they cannot identify an existing event.
+    const target=image?null:await matchingMeetingReminder(tg,meeting)
+    if(target==='ambiguous')return reply(`I found more than one possible reminder for ${meeting.title}. Which reminder should move? I haven’t changed any of them.`)
+    if(target){
+      const level=await capabilityPermissionLevel(tg,'reminders')
+      if(!['ask','auto'].includes(level))return reply('Your reminder permission does not allow updating this reminder. The meeting details and link remain saved.')
+      if(level==='auto')return moveMeetingReminder(tg,meeting,target)
+    }
     let question=textMeetingOffer(meeting)
+    if(target)question=`Move your existing reminder for ${meeting.title} to ${formatInTimezone(meeting.remindAt,meeting.timezone)}, ten minutes before the revised start? Reply Yes or No.`
     if(image){
       const day=(at:number)=>new Intl.DateTimeFormat('en-CA',{timeZone:meeting.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(at)
       const tomorrow=day(Date.now()+86400000)===day(Date.parse(meeting.startAt))?'tomorrow, ':''
@@ -151,7 +218,7 @@ async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
       const zone=meeting.timezone==='Asia/Kolkata'?'IST':meeting.timezone
       question=`This meeting is ${tomorrow}${date}, ${time(meeting.startAt)}–${time(meeting.endAt)} ${zone}. Want a reminder at ${time(meeting.remindAt)}?`
     }
-    const content=JSON.stringify({type:'followup_state',kind:KIND,payload:{meeting,question,status:'pending',linkId:saved.row.id,reminderId:reminderId(tg,meeting),surface:p.surface},created_at:new Date().toISOString()})
+    const content=JSON.stringify({type:'followup_state',kind:KIND,payload:{meeting,question,status:'pending',linkId:saved.row.id,reminderId:target?.id||reminderId(tg,meeting),replace:target||undefined,surface:p.surface},created_at:new Date().toISOString()})
     const {error:saveError}=await supabaseAdmin.from('memories').insert({telegram_id:tg,content})
     if(saveError)throw new Error('meeting_offer_save_failed')
     return reply(question)
@@ -186,7 +253,19 @@ async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
   }
   const level=await capabilityPermissionLevel(tg,'reminders')
   if(!['ask','auto'].includes(level))return reply('Your reminder permission does not allow creating this reminder. The meeting details and link remain saved.')
-  const message=`${m.title} — starts ${formatInTimezone(m.startAt,m.timezone)}\n${m.url}`
+  if(offer.replace){
+    if(offer.status==='pending'){
+      const {data:claimed,error}=await supabaseAdmin.from('memories').update({content:JSON.stringify({...state,payload:{...offer,status:'executing'}})})
+        .eq('id',row.id).eq('telegram_id',tg).eq('content',row.content).select('id').maybeSingle()
+      if(error)throw new Error('meeting_offer_claim_failed')
+      if(!claimed)return reply('That reminder update was already handled. Please check its current state.')
+      const result=await moveMeetingReminder(tg,m,offer.replace)
+      if(result.status==='completed')await update({...offer,status:'completed',confirmation:result.text})
+      return result
+    }
+    return reply(offer.confirmation||'I could not verify the earlier update. Please check your reminders; I haven’t repeated it.',offer.confirmation?'completed':'paused')
+  }
+  const message=meetingMessage(m)
   if(offer.status==='pending'){
     const {data:claimed,error}=await supabaseAdmin.from('memories').update({content:JSON.stringify({...state,payload:{...offer,status:'executing'}})}).eq('id',row.id).eq('telegram_id',tg).eq('content',row.content).select('id').maybeSingle()
     if(error)throw new Error('meeting_offer_claim_failed')
