@@ -40,6 +40,7 @@ for (const ask of [
   'Create a sheet for teams Alpha, Beta and Gamma with exactly two rows, for each team.',
   'Create a sheet for each team, exactly two rows.',
   'Create a sheet per team with exactly two rows.',
+  'For each team, create exactly two rows in a sheet for Alpha, Beta and Gamma.',
 ]) {
   let calls = 0
   const rows = ['Alpha', 'Beta', 'Gamma'].flatMap(team => [[team, 'One'], [team, 'Two']])
