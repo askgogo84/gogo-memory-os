@@ -58,7 +58,7 @@ console.log('✓ app commands never answer the area question')
 
 // "What's pending": finished runs are one line, not decisions.
 const ps = readFileSync('lib/bot/pending-summary.ts', 'utf8')
-assert.match(ps, /const decisions = feed\.need\.filter\(i => i\.state !== 'done'\)/)
+assert.match(ps, /const decisions = feed\.need\.filter\(i => i\.state === 'approval'\)/)
 assert.match(ps, /section\('Needs your yes', decisions\.slice\(0, 5\)/)
 assert.match(ps, /finished task\$\{finished\.length === 1 \? '' : 's'\} to check off on the dashboard/)
 console.log('✓ pending summary keeps "Needs your yes" for real decisions')
