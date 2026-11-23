@@ -8,17 +8,23 @@ export function isMakeDeliverableRequest(text: string): boolean {
 }
 
 /** Only accept explicit public citation URLs. These are searched, never fetched directly. */
-export function sourceBoundReport(text: string): {title: string; urls: string[]} | null {
-  if (!isMakeDeliverableRequest(text) || !/^.{0,75}\b(?:report|brief)\b/i.test(text)) return null
+export function sourceBoundReport(text: string): {title: string; urls: string[]; reportOnly: boolean} | null {
+  const command = MAKE_DELIVERABLE_RE.exec(text.trim())?.[0] || ''
+  if (!/\b(?:report|brief)$/i.test(command)) return null
   const marker = /(?:^|[.!?;]\s*)(?:please\s+)?use only (?:these|the following) (?:(?:official|public) )?sources\s*:\s*/i.exec(text)
   if (!marker) return null
   const before = text.slice(0, marker.index)
   const title = before.match(/\btitled\s+["“]?([^.!?"”\r\n]{1,120})/i)?.[1].trim() || 'Source-bound research brief'
   const list = text.slice(marker.index + marker[0].length)
-    .match(/^https?:\/\/[^\s<>]+(?:\s*(?:,|and)\s+https?:\/\/[^\s<>]+)*/i)?.[0] || ''
-  const links = [...list.matchAll(/https?:\/\/[^\s<>]+/gi)].map(match => match[0].replace(/[),.;!?]+$/, ''))
-  const urls = links.map(researchSourceUrl)
-  return {title,urls:text.length <= 1800 && urls.length <= 5 && urls.every(Boolean) ? [...new Set(urls)] : []}
+  const links = [...list.matchAll(/https?:\/\/[^\s<>,]+/gi)]
+  const separators = /^(?:[\s,;*•-]|and\b|\d+[.)])*$/i
+  const urls = links.map((link,i) => {
+    const prior = links[i-1]
+    const from = prior ? prior.index! + prior[0].length : 0
+    return separators.test(list.slice(from,link.index)) ? researchSourceUrl(link[0].replace(/[),.;!?]+$/, '')) : ''
+  })
+  const reportOnly = !/(?:[.!?;]\s*|\b(?:and|then|also|next)\s+)(?:please\s+)?(?:create|add|set|schedule|remind|send|email|text|call|reply|book|buy|pay|cancel|delete|publish|post|share|submit|upload|update|move|change|find|search|show|list|check|draft)\b/i.test(text.trim().slice(command.length))
+  return {title,reportOnly,urls:text.length <= 1800 && urls.length <= 5 && urls.every(Boolean) ? [...new Set(urls)] : []}
 }
 
 export function researchSourceUrl(link: string): string {

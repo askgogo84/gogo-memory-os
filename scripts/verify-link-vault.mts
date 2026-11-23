@@ -23,11 +23,14 @@ assert.equal(isLinkVaultSaveRequest('Save this link https://example.com/details 
 assert.equal(isLinkVaultSaveRequest('https://example.com/details'),true)
 assert.deepEqual(sourceBoundReport(sourceReport),{
   title:'Chandrayaan-3 evidence check',
+  reportOnly:true,
   urls:[
     'https://isro.gov.in/ISRO_EN/Release_of_Chandrayaan-3_science_data_to_the_Scientific_Community.html',
     'https://nasa.gov/image-article/nasas-lro-observes-chandrayaan-3-landing-site',
   ],
 })
+assert.equal(sourceBoundReport('Make a report. Use only these sources: https://nasa.gov/one and https://isro.gov.in/two. Also create a task: Review the report.').reportOnly,false)
+assert.deepEqual(sourceBoundReport('Make a report. Use only these sources:\n- https://nasa.gov/one\n- https://isro.gov.in/two').urls,['https://nasa.gov/one','https://isro.gov.in/two'])
 assert.deepEqual(sourceBoundReport('Make a brief. Use only these sources: https://127.0.0.1/example').urls,[])
 assert.deepEqual(sourceBoundReport('Make a brief. Use only these sources: https://a.example.net/report?token=private').urls,[])
 assert.equal(researchSourceUrl('https://www.nasa.gov/image-article/other/'),'https://nasa.gov/image-article/other')

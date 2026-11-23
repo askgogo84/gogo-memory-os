@@ -299,5 +299,14 @@ assert.match(restrictedReport.text,/four days after the Aug. 23 landing/)
 assert.ok(restrictedReport.text.includes(nasaSource))
 assert.doesNotMatch(restrictedReport.text,/Wrong observation date|Wrong source|Unrelated search result/)
 assert.match(rows.agent_artifacts.at(-1).content_json.sections[0].result.text,/1 of 2/)
+const compoundMission = restrictedMission + ' Also create a task: Review the report.'
+mocks['./planner-provider'].completeAgentPlanPrompt = async () => JSON.stringify({title:'Report and task',reason:'Both outcomes',steps:[...restrictedPlan.steps,{tool:'tasks',title:'Create task Review the report',instruction:'Create task: Review the report'}]})
+const compoundPlan = await numericPlanner.planGeneralAgentRequest(compoundMission)
+assert.deepEqual(Array.from(compoundPlan.steps,(s:any)=>s.tool),['web_search','artifact','tasks'])
+mocks['@/lib/web-search']={searchWebResults:async()=>{throw Error('search_unavailable')}}
+const savedReports = rows.agent_artifacts.length
+const outageResult = await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:restrictedMission,prepared:{...prepared,plan:restrictedPlan}})
+assert.equal(outageResult.status,'failed')
+assert.equal(rows.agent_artifacts.length,savedReports)
 console.log('PASS: source-bound report saves only matched excerpts with coverage and no generated dates')
 

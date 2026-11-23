@@ -261,7 +261,7 @@ export function shouldUseGeneralPlanner(text: string) {
 
 export async function planGeneralAgentRequest(text: string, onUsage?:(usage:ModelUsage)=>void, contextualBlock = ''): Promise<GeneralPlan | null> {
   const restricted = sourceBoundReport(text)
-  if (restricted) return {
+  if (restricted?.reportOnly) return {
     title:restricted.title,
     reason:'Collect public search excerpts from the named pages and save them in a private report.',
     steps:[
@@ -302,7 +302,7 @@ export async function prepareGeneralPlan(text:string,contextualBlock=''):Promise
 }
 
 export async function prepareGeneralPlanForActor(actor:AgentActor,text:string):Promise<PreparedGeneralPlan>{
-  if (sourceBoundReport(text)) return prepareGeneralPlan(text)
+  if (sourceBoundReport(text)?.reportOnly) return prepareGeneralPlan(text)
   const pack=await buildContextPack({actor,text,options:{includeSemantic:true,maxFacts:12,horizonDays:60}}).catch(()=>null)
   return prepareGeneralPlan(text,pack?renderContextBlock(pack,3200):'')
 }
@@ -411,12 +411,14 @@ async function createArtifact(tg:number, runId:string, step:GeneralPlanStep, mis
   // Counts are telemetry, not the research itself. Retain readable citations even
   // if report synthesis is unavailable, and never present snippets as live prices.
   if (restricted) {
-    sections.length = 0
     const matching = publicSources.filter(source => restricted.urls.includes(researchSourceUrl(source.url)))
     const seen = new Map(matching.map(source => [researchSourceUrl(source.url), source]))
-    const missing = restricted.urls.length - seen.size
+    const unavailable = new Set(sections.flatMap(section => Array.isArray(section.result?.unavailableSources)
+      ? section.result.unavailableSources.filter((url:string) => restricted.urls.includes(url) && !seen.has(url)) : []))
+    const missing = restricted.urls.length - seen.size - unavailable.size
+    sections.length = 0
     const readingNote = !restricted.urls.length ? 'Please provide one to five public HTTPS source pages without credentials or query parameters.'
-      : `Search excerpts were found for ${seen.size} of ${restricted.urls.length} named sources.${missing ? ' The remaining pages had no matching excerpt.' : ''} Excerpts are shown as returned by search. Publication dates do not establish event dates.`
+      : `Search excerpts were found for ${seen.size} of ${restricted.urls.length} named sources.${unavailable.size ? ` Search was unavailable for ${unavailable.size}.` : ''}${missing ? ` No matching excerpt was returned for ${missing}.` : ''} Excerpts are shown as returned by search. Publication dates do not establish event dates.`
     sections.push({title:'Source coverage',tool:'artifact',result:{text:readingNote}})
     for (const source of seen.values()) {
       sections.push({title:source.title,tool:'web_search',result:{text:`${source.snippet}\n\n${source.url}`,sourceUrls:[source.url]}})
@@ -533,12 +535,14 @@ async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPla
     const pages = await Promise.allSettled(restricted.urls.map(url => searchWebResults(url,{
       includeDomains:[new URL(url).hostname],pageTextOnly:true,timeoutMs:6000,
     })))
+    const unavailableSources = restricted.urls.filter((_,i) => pages[i].status === 'rejected')
+    if (unavailableSources.length && unavailableSources.length === restricted.urls.length) throw new Error('named_source_search_unavailable')
     const results = pages.flatMap((page,i) => {
       if (page.status !== 'fulfilled') return []
       const exact = page.value.find(result => result.snippet && researchSourceUrl(result.url) === restricted.urls[i])
       return exact ? [exact] : []
     })
-    return {text:`Found search excerpts for ${results.length} of ${restricted.urls.length} named pages.`,output:{results}}
+    return {text:`Found search excerpts for ${results.length} of ${restricted.urls.length} named pages.`,output:{results,unavailableSources}}
   }
   if (step.tool === 'artifact') {
     const artifact = await createArtifact(actor.legacyTelegramId, params.runId, step, params.missionText)
