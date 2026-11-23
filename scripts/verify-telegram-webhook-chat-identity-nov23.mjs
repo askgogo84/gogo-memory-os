@@ -22,6 +22,7 @@ const jsonReply = (body, init = {}) => ({ status: init.status ?? 200, body });
 
 async function exercise({ configured = FAKE_SECRET, header, body = FAKE_MESSAGE, duplicate = false } = {}) {
   const events = [];
+  const ids = { claimed: [], resolved: [], sent: [] };
   const fakeDeps = {
     'node:crypto': localRequire('node:crypto'),
     'next/server': { NextResponse: { json: jsonReply } },
@@ -29,14 +30,16 @@ async function exercise({ configured = FAKE_SECRET, header, body = FAKE_MESSAGE,
       processIncomingMessage: async () => { events.push('agent'); return { text: 'inert-fixture-reply' }; },
     },
     '@/lib/bot/resolve-user': {
-      resolveUser: async () => {
+      resolveUser: async (args) => {
         events.push('resolve_user');
+        ids.resolved.push(args.externalUserId);
         return { userId: 'fictional-owner', telegramId: 424242, name: 'Fixture', whatsappId: null };
       },
     },
     '@/lib/agent/brain-runtime-guard': {
-      claimInboundEvent: async () => {
+      claimInboundEvent: async (args) => {
         events.push('claim_inbound');
+        ids.claimed.push(args.externalUserId);
         return { id: 'fixture-claim', ownerToken: 'fixture-owner-token', duplicate, status: duplicate ? 'completed' : 'claimed' };
       },
       acquireBrainUserLease: async () => { events.push('brain_lease'); return { ownerToken: 'lease-fixture' }; },
@@ -48,7 +51,7 @@ async function exercise({ configured = FAKE_SECRET, header, body = FAKE_MESSAGE,
       deleteTelegramMessage: async () => { events.push('delete_send'); },
       sendTelegramAnimation: async () => { events.push('send_animation'); return { result: { message_id: 8 } }; },
       sendTelegramChatAction: async () => { events.push('send_chat_action'); },
-      sendTelegramMessage: async () => { events.push('send_message'); return { result: { message_id: 9 } }; },
+      sendTelegramMessage: async (chat) => { events.push('send_message'); ids.sent.push(chat); return { result: { message_id: 9 } }; },
     },
     '@/lib/whisper': {
       downloadTelegramFile: async () => { events.push('download_voice'); return new Uint8Array(); },
@@ -80,7 +83,7 @@ async function exercise({ configured = FAKE_SECRET, header, body = FAKE_MESSAGE,
     async json() { events.push('parse_body'); return body; },
   };
   const response = await mod.exports.POST(request);
-  return { events, response };
+  return { events, ids, response };
 }
 
 const tests = [];
@@ -125,6 +128,9 @@ for (const id of [
   test('control: exact compatible chat identity ' + String(id), async () => {
     const r = await exercise({ header: FAKE_SECRET, body: bodyFor(id) });
     assert.equal(r.response.status, 200, 'canonical owner must be allowed');
+    assert.deepEqual(r.ids.claimed, [String(id)], 'inbound ledger must receive exact canonical owner');
+    assert.deepEqual(r.ids.resolved, [String(id)], 'resolver must receive exact canonical owner');
+    assert.deepEqual(r.ids.sent, [Number(id)], 'send must target the same safe Telegram chat');
     assert.deepEqual(r.events, [
       'parse_body', 'claim_inbound', 'resolve_user', 'brain_lease',
       'agent', 'send_message', 'complete_inbound', 'release_lease',
@@ -154,6 +160,7 @@ for (const [label, id] of [
     assert.equal(r.response.body.error, 'invalid_telegram_chat_id');
     assert.deepEqual(r.events, ['parse_body'],
       'invalid owner must not claim, resolve, lease, create, process or send');
+    assert.deepEqual(r.ids, { claimed: [], resolved: [], sent: [] });
   });
 }
 
