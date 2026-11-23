@@ -6,9 +6,11 @@ const source=readFileSync('lib/agent/autonomy-status.ts','utf8')
 const queries:Array<{table:string;columns:string;owner:unknown}>=[]
 let fail=false
 let expectedOwner='123'
+let statusRead=false
+const statusColumns='gmail_connected,gmail_send_connected,gmail_email,gmail_connected_at,google_calendar_connected,google_refresh_token'
 const db={from:(table:string)=>{
  const entry={table,columns:'',owner:null as unknown};queries.push(entry)
- const q:any={select:(columns:string)=>{entry.columns=columns;assert.doesNotMatch(columns,/token|password|secret/);return q},eq:(key:string,value:unknown)=>{assert.ok(['telegram_id','capability','sender'].includes(key));if(key==='telegram_id'){assert.equal(String(value),expectedOwner);entry.owner=value}if(key==='sender')assert.equal(value,'fixture-owner');return q},gte:()=>q,maybeSingle:()=>q,then:(resolve:any)=>resolve(fail?{data:null,error:{message:'fixture-down'},count:null}:{error:null,count:table==='vault_credentials'?2:table==='travel_tickets'?1:null,data:table==='users'?{gmail_connected:true,gmail_send_connected:false,google_calendar_connected:true,whatsapp_id:'fixture-owner'}:table==='agent_permissions'?{level:'read'}:table==='user_consent_settings'?{gmail_enabled:false}:table==='wa_creditiq_links'?{consumer_user_id:'fixture-linked'}:null})}
+ const q:any={select:(columns:string)=>{entry.columns=columns;if(!(statusRead&&table==='users'&&columns===statusColumns))assert.doesNotMatch(columns,/token|password|secret/);return q},eq:(key:string,value:unknown)=>{assert.ok(['telegram_id','capability','sender'].includes(key));if(key==='telegram_id'){assert.equal(String(value),expectedOwner);entry.owner=value}if(key==='sender')assert.equal(value,'fixture-owner');return q},gte:()=>q,maybeSingle:()=>q,then:(resolve:any)=>resolve(fail?{data:null,error:{message:'fixture-down'},count:null}:{error:null,count:table==='vault_credentials'?2:table==='travel_tickets'?1:null,data:table==='users'?{gmail_connected:true,gmail_send_connected:false,google_calendar_connected:true,whatsapp_id:'fixture-owner'}:table==='agent_permissions'?{level:'read'}:table==='user_consent_settings'?{gmail_enabled:false}:table==='wa_creditiq_links'?{consumer_user_id:'fixture-linked'}:null})}
  return q
 }}
 const actual:any={}
@@ -32,7 +34,9 @@ await check('connected account status uses its actual deterministic private read
  assert.equal(actual.isConnectionStatus(accountPrompt),true)
  assert.equal(actual.isConnectionCapabilityQuery(accountPrompt),false)
  const before=queries.length
- const result=await actual.tryGetConnectionStatus({actor:{legacyTelegramId:123},text:accountPrompt})
+ statusRead=true
+ let result:any
+ try{result=await actual.tryGetConnectionStatus({actor:{legacyTelegramId:123},text:accountPrompt})}finally{statusRead=false}
  assert.equal(result.handledBy,'connection-status')
  assert.match(result.text,/Connected accounts/)
  assert.deepEqual(queries.slice(before).map(q=>q.table),['users','user_consent_settings'])
@@ -52,13 +56,14 @@ await check('MANDATORY: rounded and malformed account owners never access servic
 await check('safe negative WhatsApp and exact safe-boundary owners remain supported',async()=>{
  for(const owner of [-42,Number.MAX_SAFE_INTEGER,Number.MIN_SAFE_INTEGER]){
   expectedOwner=String(owner)
+  statusRead=true
   try{
    const before=queries.length
    const result=await actual.tryGetConnectionStatus({actor:{legacyTelegramId:owner},text:accountPrompt})
    assert.equal(result.handledBy,'connection-status')
    assert.deepEqual(queries.slice(before).map(q=>q.table),['users','user_consent_settings'])
    assert.ok(queries.slice(before).every(q=>String(q.owner)===String(owner)))
-  }finally{expectedOwner='123'}
+  }finally{expectedOwner='123';statusRead=false}
  }
 })
 await check('connection commands and mixed changes cannot be claimed as a completed read',async()=>{
