@@ -14,7 +14,7 @@ const MAX_AGE_MS = 48 * 3600_000
 
 function addr(from: string) { return (String(from || '').match(/<([^>]+)>/)?.[1] || String(from || '')).trim().toLowerCase() }
 // The shadow model must never see mail reached through an imprecise or noncanonical owner.
-const SIGNED64_MIN = -(1n << 63n), SIGNED64_MAX = (1n << 63n) - 1n
+const SIGNED64_MIN = BigInt('-9223372036854775808'), SIGNED64_MAX = BigInt('9223372036854775807')
 function exactSignedOwner(value: unknown): string | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
   if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
