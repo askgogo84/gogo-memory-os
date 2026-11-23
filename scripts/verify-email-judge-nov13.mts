@@ -152,6 +152,10 @@ function harness(over: any = {}) {
 
 // Code shape: no send, no task, no shown record; quiet-hours and consent checks run first.
 const src = readFileSync(new URL('../lib/agent/email-judge-shadow.ts', import.meta.url), 'utf8')
+// Regression for Codex P2: the real Supabase SELECT must return exact text, never a rounded JSON number.
+ok(/\.select\('telegram_id::text,whatsapp_id,timezone'\)\.eq\('telegram_id', ownerKey\(telegramId\)\)/.test(src), 'production user lookup selects canonical signed-64 identity as text')
+ok(/exactSignedOwner\(user\.telegram_id\) !== ownerId/.test(src), 'strict DB-returned owner equality remains before quiet-hours/mailbox reads')
+ok(!/\.select\('telegram_id,whatsapp_id,timezone'\)/.test(src), 'uncast numeric owner projection cannot regress into the shadow query')
 ok(!/sendWhatsApp|deliverNotification|upsertOpenLoop|agent_open_loops|email_attention_events|from\('conversations'\)|\.update\(|\.rpc\(/.test(src), 'the judge pass never sends, creates a task, marks shown or updates anything')
 ok(/gmailAccessForOwner/.test(src) && /Extra mailboxes count only while the primary Gmail consent holds/.test(src), 'mailboxes come only from the consented owner check')
 const pulse = readFileSync(new URL('../lib/agent/autonomy-pulse.ts', import.meta.url), 'utf8')
