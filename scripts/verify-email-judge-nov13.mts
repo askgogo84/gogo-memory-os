@@ -107,6 +107,49 @@ function harness(over: any = {}) {
 { const h = harness({ deps: { search: async (tok: string) => { if (tok === 'tok-b') throw new Error('403'); return [] } } }); const r: any = await h.go(); eq(r.reason, 'mailbox_read_failed', 'a failed mailbox read is reported, not shown as an empty inbox') }
 { const h = harness({ deps: { mailboxes: async () => [{ email: 'divya@example.com', accessToken: 'tok-a' }, { email: 'goverdhan@tipplr.example', accessToken: '' }] } }); await h.go(); eq(h.st.logs[0].mailbox_read_failed, ['goverdhan@tipplr.example'], 'a mailbox whose token refresh failed is logged as unread, the other is still judged') }
 
+// Shadow identity boundary: fail before any user/mailbox/model read for invalid owner text or rounded JS numbers.
+{ const invalid: unknown[] = ['0', '-0', '', ' 42', '42 ', '+42', '042', '-042', '42tail', '42.0', '9223372036854775808', '-9223372036854775809', 9007199254740992, -9007199254740992]
+  for (const id of invalid) {
+    let userReads = 0, mailboxReads = 0, modelCalls = 0
+    const outcome: any = await X.runEmailJudgeShadow(id as string, {
+      now: () => NOW,
+      user: async () => { userReads++; return { telegram_id: id, whatsapp_id: 'synthetic' } },
+      mailboxes: async () => { mailboxReads++; return [] },
+      create: async () => { modelCalls++; return {} },
+    } as any)
+    eq(outcome.reason, 'owner_invalid', `noncanonical owner ${String(id)} is refused`)
+    eq([userReads, mailboxReads, modelCalls], [0, 0, 0], `no private/model access for owner ${String(id)}`)
+  }
+}
+// Valid signed-64 text (including negative WhatsApp and extrema) and safe numeric legacy rows retain admission.
+{ const valid = ['-9223372036854775808', '9223372036854775807', '-9007199254740993', '9007199254740992', '-9000000001', '42']
+  for (const id of valid) {
+    let userReads = 0, quietChecks = 0, mailboxReads = 0
+    const outcome: any = await X.runEmailJudgeShadow(id, {
+      now: () => NOW,
+      user: async owner => { userReads++; eq(owner, id, 'exact user lookup owner'); return { telegram_id: id === '42' ? 42 : id, whatsapp_id: 'synthetic', timezone: 'Asia/Kolkata' } },
+      quiet: async owner => { quietChecks++; eq(owner, id, 'quiet-hour check uses exact owner'); return true },
+      mailboxes: async () => { mailboxReads++; return [] },
+    } as any)
+    eq(outcome.reason, 'quiet_hours', `canonical owner ${id} reaches existing policy`)
+    eq([userReads, quietChecks, mailboxReads], [1, 1, 0], 'quiet policy blocks all mailbox reads')
+  }
+}
+// A rounded database-returned owner cannot authorize private email reads even if String(row.telegram_id) aliases input.
+{ const requested = '9007199254740992'
+  for (const returned of [9007199254740992, -9007199254740992, '9007199254740993', ' 9007199254740992', '9223372036854775808']) {
+    let mailboxReads = 0, quietChecks = 0
+    const outcome: any = await X.runEmailJudgeShadow(requested, {
+      now: () => NOW,
+      user: async () => ({ telegram_id: returned, whatsapp_id: 'synthetic', timezone: 'Asia/Kolkata' }),
+      quiet: async () => { quietChecks++; return false },
+      mailboxes: async () => { mailboxReads++; return [] },
+    } as any)
+    eq(outcome.reason, 'user_unavailable', `unverified DB owner ${String(returned)} refused`)
+    eq([quietChecks, mailboxReads], [0, 0], 'no alert policy/mailbox access for ambiguous returned owner')
+  }
+}
+
 // Code shape: no send, no task, no shown record; quiet-hours and consent checks run first.
 const src = readFileSync(new URL('../lib/agent/email-judge-shadow.ts', import.meta.url), 'utf8')
 ok(!/sendWhatsApp|deliverNotification|upsertOpenLoop|agent_open_loops|email_attention_events|from\('conversations'\)|\.update\(|\.rpc\(/.test(src), 'the judge pass never sends, creates a task, marks shown or updates anything')
