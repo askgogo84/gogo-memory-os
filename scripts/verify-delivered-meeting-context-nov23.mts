@@ -17,7 +17,7 @@ function reset(){
   calendar={events:[structuredClone(event)],hasMore:false,accountsRead:2,accountsTotal:2};levels={reminders:'auto',calendar:'ask'};failure='';writes=[];reads=[];calendars=0;legacy=0
 }
 const db={from(table:string){
-  assert.ok(['reminders','delivery_receipts','conversations'].includes(table),'no model, provider write, other private or send tables')
+  assert.ok(['reminders','delivery_receipts','conversations','users'].includes(table),'no model, provider write, other private or send tables')
   let filters:((r:any)=>boolean)[]=[],op='',payload:any,single=false,max=Infinity,orderKey='',ascending=true
   const q:any={select:()=>q,eq(k:string,v:any){filters.push(r=>r[k]===v);return q},is(k:string,v:any){filters.push(r=>r[k]===v);return q},
     in(k:string,v:any[]){filters.push(r=>v.includes(r[k]));return q},gte(k:string,v:any){filters.push(r=>r[k]>=v);return q},
@@ -26,7 +26,9 @@ const db={from(table:string){
     then(resolve:any,reject:any){
       reads.push({table,op});let error:any=null
       if(op==='update' && failure==='race') rows.find(r=>!r.sent).claim_token='other-worker'
-      let data=(table==='reminders'?rows:table==='conversations'?turns:[receipt]).filter(r=>filters.every(f=>f(r)))
+      if(op==='update' && failure==='race-recipient') rows.find(r=>!r.sent).whatsapp_to='+919999999999'
+      if(!op&&table==='reminders'&&single&&failure==='readback-recipient') rows.find(r=>!r.sent).whatsapp_to='+919999999999'
+      let data=(table==='reminders'?rows:table==='conversations'?turns:table==='users'?[{telegram_id:-42,google_calendar_connected:true,google_refresh_token:failure==='missing-primary'?null:'inert-fixture'}]:[receipt]).filter(r=>filters.every(f=>f(r)))
       if(orderKey)data.sort((a,b)=>String(a[orderKey]).localeCompare(String(b[orderKey]))*(ascending?1:-1))
       data=data.slice(0,max)
       if(op){
@@ -51,7 +53,7 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/contextual-meeting-re
     if(name==='@/lib/timezone')return timezone
     if(name==='./adaptive-autonomy')return {capabilityPermissionLevel:async(owner:number,cap:string)=>{assert.equal(owner,-42);if(failure==='policy')throw Error('policy');if(failure==='permission-change'&&calendars&&cap==='reminders')return 'off';return levels[cap]}}
     if(name==='@/lib/services/google-calendar-accounts')return {
-      getAllCalendarAccountAccess:async(owner:number)=>{assert.equal(owner,-42);calendars++;if(failure==='provider')throw Error('provider');return [{primary:true}]},
+      getCalendarAccountAccess:async(owner:number,_token:unknown,onUnavailable:()=>void)=>{assert.equal(owner,-42);calendars++;if(failure==='provider')throw Error('provider');if(failure==='discovery')onUnavailable();return [{primary:true}]},
       fetchMergedCalendarEventsPage:async()=>calendar,describeEventRange:()=> 'Tue, 24 Nov, 4:30–5:45 pm IST',
     }
     throw Error('forbidden effectful import: '+name)
@@ -69,6 +71,8 @@ for(const cap of ['reminders','calendar']){reset();levels[cap]='off';assert.matc
 for(const scenario of ['policy','provider','readback','write-lost']){reset();failure=scenario;assert.match(await invoke(),/couldn’t verify/);assert.ok(writes.length<=1);assert.doesNotMatch(await invoke('Move this tomorrow 25pm'),/reminder is set/)}
 reset();failure='write-committed';assert.match(await invoke(),/reminder is set/);assert.equal(writes.length,1,'unknown insert only succeeds after exact readback')
 reset();failure='permission-change';assert.match(await invoke(),/permission changed/);assert.equal(writes.length,0)
+for(const scenario of ['discovery','missing-primary']){reset();failure=scenario;assert.match(await invoke(),/every connected Calendar/);assert.equal(writes.length,0)}
+reset();failure='readback-recipient';assert.match(await invoke(),/couldn’t verify/);assert.equal(writes.length,1)
 for(const change of [()=>receipt.receipt_verified=false,()=>calendar.hasMore=true,()=>calendar.accountsRead=1,()=>calendar.events.push(structuredClone(event)),()=>calendar.events[0].hangoutLink='https://meet.google.com/aaa-bbbb-ccc']){
   reset();change();assert.doesNotMatch(String(await invoke()),/reminder is set/);assert.equal(writes.length,0)
 }
@@ -80,6 +84,8 @@ for(const change of [()=>rows[0].whatsapp_to='+919999999999',()=>rows[0].sent_at
 function future(){return {...original,id:'future',sent:false,sent_at:null,delivery_state:'pending',remind_at:'2026-11-24T11:00:00.000Z',message:original.message.replace('23 Nov','24 Nov')}}
 reset();rows.push(future());assert.match(await invoke(),/reminder is set/);assert.equal(rows.length,2);assert.equal(writes[0].op,'update');assert.equal(rows[1].remind_at,'2026-11-24T10:50:00.000Z')
 reset();rows.push(future());failure='race';assert.match(await invoke(),/couldn’t verify/);assert.equal(rows[1].remind_at,'2026-11-24T11:00:00.000Z')
+reset();rows.push({...future(),whatsapp_to:'+919999999999'});assert.match(await invoke(),/different recipient/);assert.equal(writes.length,0)
+reset();rows.push(future());failure='race-recipient';assert.match(await invoke(),/couldn’t verify/);assert.equal(rows[1].remind_at,'2026-11-24T11:00:00.000Z')
 reset();rows.push(future(),{...future(),id:'second'});assert.match(await invoke(),/More than one/);assert.equal(writes.length,0)
 
 // Exercise the actual router before Calendar/legacy/LLM dispatch.

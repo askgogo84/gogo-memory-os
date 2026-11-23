@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {formatInTimezone, getLocalParts, isValidTimezone, zonedLocalTimeToUtc} from '@/lib/timezone'
-import {getAllCalendarAccountAccess, fetchMergedCalendarEventsPage, describeEventRange} from '@/lib/services/google-calendar-accounts'
+import {getCalendarAccountAccess, fetchMergedCalendarEventsPage, describeEventRange} from '@/lib/services/google-calendar-accounts'
 import {capabilityPermissionLevel} from './adaptive-autonomy'
 
 const UNKNOWN = 'I couldn’t verify that meeting reminder change. Please check your reminders; I haven’t retried the write.'
@@ -88,7 +88,12 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
     if (!target || target.getTime() <= now) return 'That meeting time is invalid or ambiguous in your timezone. Nothing was changed.'
     const lead = meeting.start.getTime() - Date.parse(source.remind_at)
     if (!Number.isFinite(lead) || lead < 0 || lead > 24 * 60 * 60_000) return UNKNOWN
-    const accounts = await getAllCalendarAccountAccess(owner)
+    const {data:user,error:userError} = await supabaseAdmin.from('users').select('google_calendar_connected,google_refresh_token').eq('telegram_id',owner).maybeSingle()
+    if (userError || !user) return UNKNOWN
+    let incomplete = Boolean(user.google_calendar_connected && !user.google_refresh_token)
+    if (incomplete) return 'I couldn’t verify every connected Calendar account. Nothing was changed.'
+    const accounts = await getCalendarAccountAccess(owner,user.google_calendar_connected ? user.google_refresh_token : null,() => {incomplete = true})
+    if (incomplete) return 'I couldn’t verify every connected Calendar account. Nothing was changed.'
     if (!accounts.length) return 'I found your delivered meeting reminder, but couldn’t read its Calendar account. Nothing was changed.'
     const calendar = await fetchMergedCalendarEventsPage(accounts,new Date(now - 5 * 60_000).toISOString(),new Date(now + 8 * 86400_000).toISOString(),'CONTEXTUAL_MEETING_CALENDAR_READ',100)
     if (calendar.hasMore || calendar.accountsRead !== calendar.accountsTotal) return 'I couldn’t verify the complete Calendar result for this meeting. Nothing was changed.'
@@ -103,7 +108,7 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
     if (Date.parse(due) <= now) return 'The Calendar event matches, but its reminder time is already past. I haven’t created a late reminder.'
     const message = source.message.replace(/ — starts [^\n]+/,` — starts ${formatInTimezone(new Date(start),source.timezone)}`)
     const {data:inventory,error:inventoryError} = await supabaseAdmin.from('reminders')
-      .select('id,message,remind_at,timezone,sent,is_recurring,recurring_pattern,delivery_state,claim_token,send_started_at')
+      .select('id,message,remind_at,timezone,sent,is_recurring,recurring_pattern,delivery_state,claim_token,send_started_at,whatsapp_to,chat_id')
       .eq('telegram_id',owner).eq('sent',false).order('remind_at',{ascending:true}).limit(101)
     if (inventoryError || !Array.isArray(inventory) || inventory.length > 100) return UNKNOWN
     const dayKey = (at:Date|string) => {const x = getLocalParts(at,source.timezone); return `${x.year}-${x.month}-${x.day}`}
@@ -114,6 +119,7 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
     })
     if (candidates.length > 1) return 'More than one future reminder matches that meeting. Nothing was changed; please choose the reminder.'
     const existing = candidates[0]
+    if (existing && (phoneKey(existing.whatsapp_to) !== phoneKey(p.phone) || String(existing.chat_id) !== String(owner))) return 'A matching reminder has a different recipient. I haven’t changed it or created another.'
     if (existing && (existing.is_recurring || existing.recurring_pattern || existing.delivery_state !== 'pending' || existing.claim_token || existing.send_started_at || meetLinks(existing.message).some(link => link !== meeting.meet))) return 'That future reminder has a different meeting link or a delivery in progress. Nothing was changed.'
     const hash = createHash('sha256').update(JSON.stringify(['contextual-meeting',String(owner),event.iCalUID || [event._account,event.id],new Date(start).toISOString()])).digest('hex')
     const id = existing?.id || `${hash.slice(0,8)}-${hash.slice(8,12)}-5${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20,32)}`
@@ -122,7 +128,8 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
       if (existing.message !== message || Date.parse(existing.remind_at) !== Date.parse(due)) {
         const {data:changed,error:changeError} = await supabaseAdmin.from('reminders').update({message,remind_at:due,timezone:source.timezone})
           .eq('id',id).eq('telegram_id',owner).eq('sent',false).eq('delivery_state','pending').is('claim_token',null).is('send_started_at',null)
-          .eq('message',existing.message).eq('remind_at',existing.remind_at).eq('timezone',existing.timezone).eq('is_recurring',false).is('recurring_pattern',null).select('id').maybeSingle()
+          .eq('message',existing.message).eq('remind_at',existing.remind_at).eq('timezone',existing.timezone).eq('is_recurring',false).is('recurring_pattern',null)
+          .eq('whatsapp_to',existing.whatsapp_to).eq('chat_id',existing.chat_id).select('id').maybeSingle()
         if (changeError || !changed) return UNKNOWN
       }
     } else {
@@ -130,9 +137,9 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
       // retry an uncertain insert; verify its exact owner/object below instead.
       await supabaseAdmin.from('reminders').insert({id,telegram_id:owner,chat_id:owner,whatsapp_to:phoneKey(p.phone),message,remind_at:due,timezone:source.timezone,sent:false,is_recurring:false,recurring_pattern:null}).then(() => {}, () => {})
     }
-    const {data:saved,error:savedError} = await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,sent,delivery_state')
+    const {data:saved,error:savedError} = await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,sent,delivery_state,whatsapp_to,chat_id')
       .eq('id',id).eq('telegram_id',owner).maybeSingle()
-    if (savedError || !saved || saved.sent || saved.delivery_state !== 'pending' || saved.message !== message || saved.timezone !== source.timezone || Date.parse(saved.remind_at) !== Date.parse(due)) return UNKNOWN
+    if (savedError || !saved || saved.sent || saved.delivery_state !== 'pending' || saved.message !== message || saved.timezone !== source.timezone || Date.parse(saved.remind_at) !== Date.parse(due) || phoneKey(saved.whatsapp_to) !== phoneKey(p.phone) || String(saved.chat_id) !== String(owner)) return UNKNOWN
     return `${meeting.title} is already on your Calendar ${describeEventRange(event)}, with the same Meet link.\nYour reminder is set for ${formatInTimezone(saved.remind_at,saved.timezone)}.\n${meeting.meet}`
   } catch { return UNKNOWN }
 }
