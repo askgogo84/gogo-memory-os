@@ -107,7 +107,7 @@ for(const owner of ['9223372036854775806','9223372036854775807','-92233720368547
   assert.deepEqual(attentionOwners,[owner],'attention rules get exact text only')
   assert.deepEqual(tripKeys,[owner],'travel tickets get exact owner text only')
 }
-for(const owner of ['9223372036854775808','-9223372036854775809','42tail','0']){
+for(const owner of ['9223372036854775808','-9223372036854775809','42tail',' 42','42 ','0']){
   attentionOwners.length=0;tripKeys.length=0
   await assert.rejects(contextRead({condition_json:{}},{},{},owner,[],[],[],now),/mail_alert_context_owner_invalid/)
   assert.equal(attentionOwners.length+tripKeys.length,0,'no private reads for invalid owner')
