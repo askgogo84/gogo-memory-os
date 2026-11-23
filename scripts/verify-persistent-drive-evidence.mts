@@ -1,4 +1,5 @@
 // Actual persistent entry -> runtime -> existing Workspace client, inert owner DB and HTTP only.
+import { capabilityForSpecialist } from '../lib/agent/specialist-registry'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -77,7 +78,7 @@ function harness(steps = [drive('Read \"Budget\" from my Google Drive'),task('Li
  const general=load('lib/agent/general-planner.ts')
  const runtime=load('lib/agent/autonomous-runtime.ts',{
   '@/lib/metering/core':{runMeteredTask:(_owner:any,_trace:any,fn:any)=>fn()},
-  './specialist-registry':{selectSpecialistRoute:()=>({primary:'tasks',supporting:[]})},
+  './specialist-registry':{capabilityForSpecialist,selectSpecialistRoute:()=>({primary:'tasks',supporting:[]})},
   './run-notify':{notifyRunOutcome:async()=>{}},
  })
  const workspace=load('lib/agent/google-workspace-read.ts')
