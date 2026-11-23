@@ -14,15 +14,15 @@ export async function POST(request: Request) {
     const text = await request.text()
     if (text.length > 2048) return NextResponse.json({error:'invalid_request'}, {status:400, headers})
     const input = JSON.parse(text)
-    if (!input || typeof input.runId !== 'string' || Object.keys(input).some(key => key !== 'runId')) {
+    if (!input || typeof input.runId !== 'string' || Object.keys(input).some(key => !['runId','budgetPaise'].includes(key))) {
       return NextResponse.json({error:'invalid_request'}, {status:400, headers})
     }
-    const result = await createPurchase(session.telegramId, input.runId)
+    const result = await createPurchase(session.telegramId, input.runId, input.budgetPaise)
     return NextResponse.json(result, {headers})
   } catch (err) {
     const code = err instanceof PurchaseBoundaryError ? err.code : 'purchase_unavailable'
     const status = code === 'purchase_feature_disabled' ? 404
-      : code === 'invalid_commerce_task' || code === 'invalid_request' ? 400
+      : ['invalid_commerce_task','invalid_request','invalid_purchase_budget'].includes(code) ? 400
       : code === 'purchase_store_unavailable' || code === 'purchase_unavailable' ? 503 : 409
     return NextResponse.json({error:code}, {status, headers})
   }

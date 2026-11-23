@@ -13,6 +13,7 @@ import * as reads from '../lib/commerce/swiggy-read'
 import * as evidence from '../lib/commerce/evidence'
 
 process.env.NEXT_PUBLIC_APP_URL = 'https://app.askgogo.in'
+delete process.env.COMMERCE_PURCHASES_ENABLED
 
 // ---- In-memory supabase over the two tables this flow touches ----
 type Row = Record<string, any>
@@ -30,7 +31,7 @@ const db = {from(table: string) {
   }
   const run = (): {data: any; error: any} => {
     if (insertRows) {
-      const made = insertRows.map(r => ({id: 'run-' + (++seq), created_at: stamp(), ...structuredClone(r), ...(r.updated_at ? {updated_at: stamp()} : {})}))
+      const made = insertRows.map(r => ({id: '00000000-0000-4000-8000-' + String(++seq).padStart(12, '0'), created_at: stamp(), ...structuredClone(r), ...(r.updated_at ? {updated_at: stamp()} : {})}))
       tables[table].push(...made)
       return {data: structuredClone(made), error: null}
     }
@@ -116,6 +117,7 @@ const chat = load('lib/commerce/instamart-chat.ts', {
   './connection-store': {readCommerceConnection: async (owner: string) => { assert.equal(owner, '42'); return connected ? {accessToken: 'fixture-token', expiresAt: Date.now() + 3600_000} : null }},
   './mcp': {CommerceMcpClient, CommerceMcpError},
   './addresses': addresses, './swiggy-read': reads, './evidence': evidence, './task': tasks, './instamart-cart': executor, './swiggy-attribution': await import('../lib/commerce/swiggy-attribution.ts'),
+  './purchase-contract': await import('../lib/commerce/purchase-contract.ts'),
 })
 
 const say = async (text: string) => {
@@ -269,6 +271,20 @@ tables.agent_runs.at(-1)!.metadata_json.commerce.address = {id: 'home', label: '
 reply = await say('order milk on instamart')
 assert.match(reply.text, /delivering to Home/)
 assert.equal(writes.length, 2)
+
+// The enabled pilot links the fresh verified cart into checkout review without
+// a new provider action or a payment claim.
+process.env.COMMERCE_PURCHASES_ENABLED = 'true'
+resetCart()
+reply = await say('1')
+assert.equal(reply.status,'completed')
+assert.match(reply.text, /Review this basket and set a spending limit:/)
+assert.ok(reply.text.includes('/dashboard/commerce/checkout?run=' + reply.runId))
+assert.match(reply.text,/Checkout requires your separate approval/)
+assert.match(reply.text,/Review and pay in the Swiggy app: https:\/\/www\.swiggy\.com\/instamart/)
+assert.equal(writes.length,3)
+assert.equal(calls.at(-1),'get_cart')
+delete process.env.COMMERCE_PURCHASES_ENABLED
 
 // 9. Wiring: both chat surfaces call it, lazily, after the sign-in-code boundary.
 const dashboard = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')

@@ -91,7 +91,15 @@ async function code(fn,expected){
   const cart=source.metadata_json.commerce.cartReceipt
   cart.providerUrl='https://www.swiggy.com/checkout'
   cart.phoneVerified=true
-  const ready=await service.createPurchase('owner-a',source.id)
+  const beforeBudgetCheck=writes
+  await code(()=>service.createPurchase('owner-a',source.id,42499),'purchase_budget_exceeded')
+  await code(()=>service.createPurchase('owner-a',source.id,'42500'),'invalid_purchase_budget')
+  assert.equal(writes,beforeBudgetCheck,'an invalid or insufficient limit creates no purchase')
+  const ready=await service.createPurchase('owner-a',source.id,42500)
+  assert.equal(ready.budgetPaise,42500)
+  assert.equal((await service.createPurchase('owner-a',source.id,42500)).purchaseId,ready.purchaseId)
+  await code(()=>service.createPurchase('owner-a',source.id,42501),'purchase_snapshot_changed_new_task_required')
+  await code(()=>service.createPurchase('owner-a',source.id),'purchase_snapshot_changed_new_task_required')
   assert.equal(ready.state,'pending_approval')
   assert.equal(ready.checkoutUrl,null)
   const id=ready.purchaseId
@@ -100,6 +108,10 @@ async function code(fn,expected){
   await code(()=>service.approvePurchase('owner-a',id,{...payload,merchant:'zepto'}),'approval_snapshot_mismatch')
   await code(()=>service.approvePurchase('owner-a',id,{...payload,acknowledge:false}),'approval_snapshot_mismatch')
   await code(()=>service.openPurchaseHandoff('owner-a',id,ready.snapshotSha256),'purchase_not_approved')
+  const saved=rows.find(row=>row.id===id)
+  saved.budget_paise=null
+  await code(()=>service.approvePurchase('owner-a',id,payload),'purchase_snapshot_changed_new_task_required')
+  saved.budget_paise=42500
   assert.equal((await service.approvePurchase('owner-a',id,payload)).state,'approved')
   await code(()=>service.approvePurchase('owner-a',id,payload),'purchase_not_ready')
   await code(()=>service.openPurchaseHandoff('owner-a',id,'bad-sha'),'approval_snapshot_mismatch')
