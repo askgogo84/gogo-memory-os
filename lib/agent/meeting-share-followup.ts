@@ -162,7 +162,14 @@ async function matchingMeetingReminder(tg:number,m:Meeting):Promise<ReminderTarg
 }
 
 async function moveMeetingReminder(tg:number,m:Meeting,target:ReminderTarget){
-  const message=meetingMessage(m)
+  // A share may omit a known event or joining link. Keep both identities so
+  // later cross-format shares still encounter the conflicting-room/event guard.
+  const priorLinks=meetingLinks(target.message)
+  const priorCalendar=priorLinks.find(link=>new URL(link).hostname!=='meet.google.com')
+  const joinUrl=m.joinUrl||priorLinks.find(link=>new URL(link).hostname==='meet.google.com')
+  const message=meetingMessage({...m,
+    url:new URL(m.url).hostname==='meet.google.com'&&priorCalendar?priorCalendar:m.url,
+    ...(joinUrl?{joinUrl}:{})})
   if(target.message!==message||Date.parse(target.remind_at)!==Date.parse(m.remindAt)){
     // Compare-and-set the exact owner, unsent reminder and old snapshot. A
     // concurrent editor or delivery worker owns any changed record.
