@@ -109,8 +109,8 @@ function startedText(subject: string, providers: ComparisonProvider[], looks: Re
   const isPhone = /\biPhone\b/i.test(subject)
   const plainModel = isPhone && !/\b(?:pro|max|plus|mini|air|e)\b/i.test(subject)
   const base = isPhone && (plainModel || !/\d\s*(?:gb|tb)\b/i.test(subject))
-    ? ` (${plainModel ? 'the standard model, not Pro/Pro Max/Air' : 'this model'}${/\d\s*(?:gb|tb)\b/i.test(subject) ? '' : ', 128GB'}, any colour; to change it, send the full name like “compare iPhone 17 Pro 256GB”)` : ''
-  const why = remembered ? ` (${remembered} like your price watch, any colour; say a different size to change it)` : base
+    ? ` (${plainModel ? 'the standard model, not Pro/Pro Max/Air' : 'this model'}${/\d\s*(?:gb|tb)\b/i.test(subject) ? '' : ', 128GB'}; to change it, send the full name like “compare iPhone 17 Pro 256GB”)` : ''
+  const why = remembered ? ` (${remembered} like your price watch; say a different size to change it)` : base
   return [`Checking *${subject}*${why} on ${list}${pin} now. I’ll send the confirmed prices here in about 2 minutes.`,
     ...(quick.length ? ['', 'Quick look from a web search (not yet confirmed on the store pages):', ...quick] : [])].join('\n')
 }
