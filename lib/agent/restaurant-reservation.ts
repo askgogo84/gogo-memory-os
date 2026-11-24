@@ -141,10 +141,22 @@ function relativeDate(raw:string,now:Date){
   return at(ahead)
 }
 
-function explicitDate(text:string,now=new Date()){
+// Date.UTC normalizes impossible dates (e.g. 31 Nov -> 1 Dec). Require a round trip.
+function validCalendarDate(value:string){
+  const m=value.match(/^(20\d{2})-(\d{2})-(\d{2})$/)
+  if(!m)return false
+  const year=Number(m[1]),month=Number(m[2]),day=Number(m[3])
+  const date=new Date(Date.UTC(year,month-1,day))
+  return date.getUTCFullYear()===year&&date.getUTCMonth()+1===month&&date.getUTCDate()===day
+}
+
+function explicitDate(text:string,now=new Date()):string|null{
   const raw=String(text||'')
   const iso=raw.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
-  if(iso)return ymd(Number(iso[1]),Number(iso[2]),Number(iso[3]))
+  if(iso){
+    const date=ymd(Number(iso[1]),Number(iso[2]),Number(iso[3]))
+    return validCalendarDate(date)?date:null
+  }
   const dm=raw.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[ ,]+(20\d{2}))?\b/i)
   if(!dm)return relativeDate(raw,now)
   const month=MONTHS[String(dm[2]).toLowerCase()]
@@ -154,7 +166,8 @@ function explicitDate(text:string,now=new Date()){
     const candidate=Date.UTC(year,month-1,day)
     if(candidate<now.getTime()-24*3600_000)year++
   }
-  return ymd(year,month,day)
+  const date=ymd(year,month,day)
+  return validCalendarDate(date)?date:null
 }
 
 export type RestaurantReservationIntent={
@@ -164,6 +177,7 @@ export type RestaurantReservationIntent={
   preferredEnd:string
   timeClarificationNeeded?:boolean
   requestedDate:string
+  dateClarificationNeeded?:boolean
   nextAvailable:boolean
   sourceUrl:string
 }
@@ -192,13 +206,15 @@ export function isRestaurantReservationRequest(raw:string){
 export function parseRestaurantReservationIntent(raw:string):RestaurantReservationIntent|null{
   if(!isRestaurantReservationRequest(raw))return null
   const window=preferredWindow(raw)
+  const date=explicitDate(raw)
   return{
     restaurant:restaurantName(raw),
     partySize:partySize(raw),
     preferredStart:window.start,
     preferredEnd:window.end,
     timeClarificationNeeded:window.clarify,
-    requestedDate:explicitDate(raw),
+    requestedDate:date??'',
+    ...(date===null?{dateClarificationNeeded:true}:{}),
     nextAvailable:/\bnext\s+available\b|\bearliest\s+available\b|\bfirst\s+available\b/i.test(raw),
     sourceUrl:firstUrl(raw),
   }
@@ -642,6 +658,11 @@ function reservationTimeQuestion(intent:RestaurantReservationIntent,verb:'queued
   return `What time should I book${place} for? (e.g. 8 pm) Please give one time with am/pm, or one time window. Nothing was ${verb} or booked.`
 }
 
+// Do not reinterpret an impossible explicit dining date as an undated release watch.
+function invalidReservationDateReply(){
+  return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'That dining date is not a valid calendar date. Please resend the restaurant, party size, correct date and preferred time. Nothing was queued or booked.'}
+}
+
 export async function queueRestaurantReservationResearch(params:{
   actor:AgentActor
   text:string
@@ -649,6 +670,7 @@ export async function queueRestaurantReservationResearch(params:{
 }){
   const intent=parseRestaurantReservationIntent(params.text)
   if(!intent)return null
+  if(intent.dateClarificationNeeded)return invalidReservationDateReply()
   if(intent.timeClarificationNeeded)return askReservationDetail(params.actor,params.text,intent,'time',reservationTimeQuestion(intent,'queued'))
   if(params.text.length>1800)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please shorten the reservation request to the restaurant, party, dining date and exact time or time window. I cannot queue a shortened copy that might lose a restriction.'}
   if(!intent.restaurant){
@@ -741,7 +763,7 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
   const text=String(meta.request_text||'').trim()
   if(!text)throw new Error('restaurant_research_request_missing')
   const intent=parseRestaurantReservationIntent(text)
-  const complete=meta.request_schema_version===2&&meta.request_complete===true&&text.length<=1800&&safe(text,1800)===text&&meta.request_hash===reservationResearchHash(params.actor,text)&&intent&&!intent.timeClarificationNeeded&&
+  const complete=meta.request_schema_version===2&&meta.request_complete===true&&text.length<=1800&&safe(text,1800)===text&&meta.request_hash===reservationResearchHash(params.actor,text)&&intent&&!intent.timeClarificationNeeded&&!intent.dateClarificationNeeded&&
     meta.restaurant===intent.restaurant&&meta.party_size===intent.partySize&&String(meta.preferred_start||'')===intent.preferredStart&&String(meta.preferred_end||'')===intent.preferredEnd&&String(meta.requested_date||'')===intent.requestedDate&&meta.next_available===intent.nextAvailable&&meta.max_booking_fee_paise===0&&validRestaurantTimeConstraint(meta.timeConstraint,intent.preferredStart,intent.preferredEnd)
   if(!complete){
     const {data:paused,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',error:'restaurant_research_request_review_required',summary:'This saved request needs a complete current dining-time review before provider research.',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg).eq('status',run.status).select('id').maybeSingle()
@@ -857,6 +879,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   // every surface (WhatsApp, dashboard, agent API) and resumes continueRestaurantReservationGuestReply only while
   // that question is Gogo's latest message. One owner, so a stale step can never claim "Divya" or "7pm".
   if(!intent)return null
+  if(intent.dateClarificationNeeded)return invalidReservationDateReply()
   if(intent.timeClarificationNeeded)return askReservationDetail(params.actor,params.text,intent,'time',reservationTimeQuestion(intent,'prepared'))
   const timeConstraint=reservationTimeConstraint(intent)
   if(!intent.restaurant){
@@ -1245,7 +1268,7 @@ export async function continueRestaurantReservationGuestReply(params:{actor:Agen
   const provider=meta.provider&&typeof meta.provider.url==='string'?{url:String(meta.provider.url),title:String(meta.provider.title||meta.restaurant||''),source:String(meta.provider.source||'web_search'),location:meta.provider.location||null,firstParty:meta.provider.firstParty===true}:null
   const parsed=parseRestaurantReservationIntent(String(meta.request_text||''))
   // The saved dining date wins over a re-parse ("tomorrow" must not move if the reply lands after midnight).
-  const base=parsed&&/^\d{4}-\d{2}-\d{2}$/.test(String(meta.requested_date||''))?{...parsed,requestedDate:String(meta.requested_date)}:null
+  const base=parsed&&!parsed.dateClarificationNeeded&&validCalendarDate(String(meta.requested_date||''))?{...parsed,requestedDate:String(meta.requested_date)}:null
   if(!provider||!base||base.restaurant!==meta.restaurant||base.partySize!==meta.party_size)return null
   const paused=(text:string)=>({runId:String(pending.id),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text})
 
