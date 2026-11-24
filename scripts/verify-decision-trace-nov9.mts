@@ -15,6 +15,20 @@ const at = '2026-11-09T10:00:00Z'
   assert.equal(evidenceClassOfRun([{ at, node: 'x', type: 'REASON', outcome: 'ok', evidenceClass: 'inferred' }]), 'inferred')
   ok('evidence class: weakest decisive step; reason-only runs are inferred')
 }
+{ // Approval is permission, not execution evidence; absent decisive evidence fails closed.
+  const approval = { at, node: 'a', type: 'APPROVAL' as const, outcome: 'approved', evidenceClass: 'verified' as const }
+  const read = { at, node: 'r', type: 'READ' as const, outcome: 'ok', evidenceClass: 'verified' as const }
+  const uncertain = { at, node: 'e', type: 'EXECUTE' as const, outcome: 'outcome_unknown' }
+  const missingVerify = { at, node: 'v', type: 'VERIFY' as const, outcome: 'timeout' }
+  for (const trace of [[approval], [approval, uncertain], [read, uncertain], [read, missingVerify], [read, { at, node: 'r2', type: 'PARALLEL_READ' as const, outcome: 'failed' }]]) {
+    const result = buildDecisionTrace({ decisionId: 'missing-proof', status: 'completed', trace, now: at })
+    assert.equal(result.evidence_class, 'inferred')
+    assert.deepEqual(learningSignalFrom(result), { outcome: 'success', verified: false })
+  }
+  assert.equal(evidenceClassOfRun([approval, read]), 'verified', 'actual verified read remains evidence')
+  assert.equal(evidenceClassOfRun([read, { at, node: 'x', type: 'REASON', outcome: 'ok', evidenceClass: 'inferred' }]), 'verified', 'reasoning does not erase actual read proof')
+  ok('approval-only and missing decisive evidence never teach verified completion')
+}
 { // trace shape and learning signal
   const t = buildDecisionTrace({ decisionId: 'd1', procedureId: 'email.follow_up', procedureVersion: 1, procedureRunId: 'run-9', contextPackRef: 'pack-1', objectiveKind: 'action', status: 'completed', now: at, trace: [{ at, node: 'v', type: 'VERIFY', outcome: 'verified', evidenceClass: 'verified' }] })
   assert.equal(t.schema, DECISION_TRACE_SCHEMA); assert.equal(t.outcome, 'completed'); assert.equal(t.evidence_class, 'verified')
