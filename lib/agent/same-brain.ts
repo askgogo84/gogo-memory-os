@@ -133,13 +133,13 @@ export function isGeneralInboxDigest(text:string){
   return !/\bfrom\s+[a-z0-9]|\babout\s+\w|\bregarding\b|\bsubject\b|\battach|\bbrief\b|\bpdf\b|\blatest (?:e-?mail|mail) from\b|\bpromo|\bnewsletter|\bsocial\b/.test(t)
 }
 
-async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string):Promise<string|null> {
+async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string,explicitMail?:{ includeLinks:boolean; retryQuery?:string }):Promise<string|null> {
   try {
     if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
-    if(isEmailRead(text)) {
+    if(explicitMail || isEmailRead(text)) {
       // 24 Oct live: "Summarise my unread emails today" listed raw emails with signatures. A general inbox
       // digest (no sender/topic/attachment named) gets the attention card: only what needs the person, and why.
-      if(isGeneralInboxDigest(text)){
+      if(!explicitMail && isGeneralInboxDigest(text)){
         const store:any=await import('@/lib/email/attention-store').catch(()=>null)
         if(store?.buildAttentionCard){
           try{const card=await store.buildAttentionCard({legacyTelegramId:actor.legacyTelegramId,timezone:actor.timezone});if(card?.text){
@@ -149,7 +149,11 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
           catch(err:any){console.error('ATTENTION_DIGEST_FAILED:',String(err?.message||err).slice(0,160))}
         }
       }
-      const result=await searchWorkspaceEmails(actor,text,{missionText})
+      const searchOptions = { missionText, ...(explicitMail?.includeLinks ? { includeMailbox: true } : {}) }
+      let result=await searchWorkspaceEmails(actor,text,searchOptions)
+      if(!result.audit && !result.messages.length && explicitMail?.retryQuery){
+        result=await searchWorkspaceEmails(actor,explicitMail.retryQuery,searchOptions)
+      }
       await rememberTypedObjects(actor.legacyTelegramId,'email',result.messages.slice(0,5).map((m:any)=>({id:String(m.id),title:String(m.subject||'Email')}))).catch(()=>{})
       if(result.audit)return formatWorkspaceEmailAudit(result)
       if(!result.messages.length)return 'I searched your connected Gmail and did not find a matching recent message. I did not invent one.'
@@ -174,7 +178,14 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
       const shown=single?byNewest.slice(0,1):result.messages.slice(0,5)
       const lines=shown.map((m:any,index:number)=>{
         const date=formatEmailDateIST(m.date),snippet=cleanEmailSnippet(m.snippet)
-        return `${single?'':`${index+1}. `}${m.subject}\nFrom: ${m.from}${date?`\nReceived: ${date}`:''}${snippet?`\n${snippet}`:''}`
+        const mailbox = String(m.mailbox || '')
+        const threadId = String(m.threadId || '')
+        const threadLink = explicitMail?.includeLinks
+          ? /^[a-f0-9]{6,64}$/i.test(threadId) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mailbox)
+            ? `\nOpen in Gmail: https://mail.google.com/mail/u/?authuser=${encodeURIComponent(mailbox)}#all/${threadId}`
+            : '\nSource link unavailable for this message.'
+          : ''
+        return `${single?'':`${index+1}. `}${m.subject}\nFrom: ${m.from}${date?`\nReceived: ${date}`:''}${snippet?`\n${snippet}`:''}${threadLink}`
       })
       await clearFollowupState(actor.legacyTelegramId,'gmail_search_results')
       await saveFollowupState(actor.legacyTelegramId,'gmail_search_results',{messages:result.messages.slice(0,6),created_at:new Date().toISOString()})
@@ -216,6 +227,28 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
     return 'I could not read that Google Workspace context just now. I did not guess or fall back to another account.'
   }
   return null
+}
+
+/** Standalone inbox searches may ask for display fields or explicitly rule out delivery. */
+export async function tryExplicitGmailSearch(actor: AgentActor, text: string): Promise<string | null> {
+  const qualifierBoundary = /(?:(?<=[.!?;])\s+|(?:\s*,\s*(?:(?:and|then|also)\s+)?|\s+(?:and|then|also)\s+)(?=(?:give|show|include|return|read[- ]only|do not send|don['’]t send|never send)\b))(?=(?:[^"“”]*["“][^"“”]*["”])*[^"“”]*$)/i
+  const [query, ...qualifiers] = text.trim().split(qualifierBoundary)
+  const search = /^(?:please\s+)?(?:search\s+(?:my\s+)?(?:gmail|inbox)\s+for|find\s+(?:my\s+)?e-?mails?\s+(?:from|about))\s+\S/i
+  const action = /(?:\b(?:and|then|also)\b|[;,\n])\s*(?:(?:and|then|also|please)\s*,?\s+)*(?:send|forward|compose|reply|draft|create|share|publish|open|browse|order|book|delete|cancel|remove|remind|schedule|add|set|update|edit|move|call|buy|pay|submit)\b/i
+  const display = /^(?:give|show|include|return)(?: me)? (?:the |a )?(?:sender|date|subject|summary|short status|status|link|source thread)\b/i
+  const readOnly = /^(?:read[ -]only|(?:do not|don['’]t|never) (?:send(?: anything| (?:any )?(?:e-?mails?|mail))?|create a draft)(?: or create a draft)?)[.!?]*$/i
+  if (!search.test(query) || action.test(query.replace(/["“][^"“”]*["”]/g, '')) ||
+      qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
+  const utterance = query.replace(/[.!?;]+$/, '')
+  const searchText = utterance
+    .replace(/^(?:please\s+)?(search\s+(?:my\s+)?(?:gmail|inbox))\s+for\s+/i, '$1 ')
+    .replace(/^((?:please\s+)?find\s+(?:my\s+)?)e-mails?\b/i, '$1emails')
+  // If a detailed search treats “update” as an extra keyword, retry the same subject without that generic suffix.
+  const retryQuery = !/["“]/.test(utterance) && /\b(?:for|about)(?:\s+\S+){3,}\s+update$/i.test(utterance)
+    ? searchText.replace(/\s+update$/i, '') : undefined
+  const includeLinks = qualifiers.some(clause => /\b(?:link|source thread)\b/i.test(clause))
+  const reply = await tryWorkspaceRead(actor, searchText, undefined, { includeLinks, retryQuery })
+  return redactSecretShapedText(reply ?? 'I could not complete that search in your connected Gmail.')
 }
 
 /**
