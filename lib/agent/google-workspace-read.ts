@@ -111,7 +111,7 @@ async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promi
   }catch(err:any){console.error('COMPOSIO_DRIVE_LOOKUP_FAILED:',String(err?.message||err).slice(0,160));return null}
 }
 
-async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}, account?: ExtraAccount | null) {
+async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}, account?: ExtraAccount | null, onMailbox?: (address: string) => void) {
   if (!Number.isSafeInteger(actor.legacyTelegramId) || actor.legacyTelegramId === 0) throw new Error('workspace_owner_invalid')
   // OAuth reach and the user's read preference are separate. Check before even
   // loading credentials; Drive/Contacts retain their independent Workspace access.
@@ -157,6 +157,7 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
     console.error('WORKSPACE_403:', JSON.stringify(await google403Reason(response, url)))
     throw new Error('workspace_scope_required')
   }
+  if(response.ok && onMailbox)onMailbox(String(creds.gmail_email || '').trim().toLowerCase())
   return response
 }
 
@@ -192,9 +193,10 @@ export function gmailClassifierFields(data:any) {
   }
 }
 
-async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null) {
+async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null, includeMailbox=false) {
   const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
-  const response=await workspaceFetch(actor,url,{},account)
+  let mailbox = ''
+  const response=await workspaceFetch(actor,url,{},account,includeMailbox ? address => {mailbox=address} : undefined)
   if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
   const headers=data?.payload?.headers||[]
@@ -214,6 +216,7 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, accou
     snippet:formatEmailSnippet(data?.snippet||''),
     ...gmailClassifierFields(data),
     ...(account?{account:account.email}:{}),
+    ...(includeMailbox && mailbox ? { mailbox } : {}),
     ...(auditBody?{evidence:formatEmailSnippet(body||data?.snippet||'',5000)}:{}),
   }
 }
@@ -345,7 +348,7 @@ export function gmailFiltersFor(input:string):{operators:string[];consumed:Set<s
   return {operators,consumed}
 }
 
-export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string;topic?:'meeting'}={}) {
+export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string;topic?:'meeting';includeMailbox?:boolean}={}) {
   const stepAudit=workspaceEmailAuditScope(input)
   const audit=stepAudit?(workspaceEmailAuditScope(options.missionText||'')||stepAudit):null
   const exactSubject=String(input||'').match(/subject\s+["“]([^"”]{2,240})["”]/i)?.[1]?.trim()
@@ -376,7 +379,7 @@ export async function searchWorkspaceEmails(actor:AgentActor, input:string, opti
   if(!response.ok)throw new Error(`workspace_email_search_failed:${response.status}`)
   const data:any=await response.json()
   const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,maxEmails).map((x:any)=>String(x?.id||'')).filter(Boolean)
-  const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,Boolean(audit))))
+  const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,Boolean(audit),undefined,options.includeMailbox)))
   const failed=settled.find(x=>x.status==='rejected')
   if(failed?.status==='rejected')throw failed.reason
   const candidates=settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
