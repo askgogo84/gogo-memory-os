@@ -210,7 +210,10 @@ function mergeNotes(existing:any[],note:string){
 function indexContent(row:any){
   return clean('Saved link. '+row.title+'. '+row.description+'. Notes: '+row.user_note+'. Tags: '+(row.tags||[]).join(', ')+'. Platform: '+row.platform+'. Source: '+row.source+'. '+(row.topic?'Topic: '+row.topic+'.':''),1900)
 }
+const EXPLICIT_SITE_NAVIGATION = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|navigate\s+to|go\s+to)\s+https?:\/\//i
+
 export function isLinkVaultSaveRequest(text:string){
+  if(EXPLICIT_SITE_NAVIGATION.test(String(text||'').trim()))return false
   const url=extractLinkUrl(text);if(!url)return false
   if(isLinkVaultQuery(text))return false
   // "Login to <link> and create the account" is an account request, not a link to save.
@@ -235,6 +238,7 @@ export function isLinkVaultSaveRequest(text:string){
 }
 export function isLinkVaultQuery(text:string){
   const t=String(text||'').trim().toLowerCase()
+  if(EXPLICIT_SITE_NAVIGATION.test(t))return false
   if(/^(?:please\s+)?(?:save|remember|keep|store|bookmark|file)\b/i.test(t))return false
   return /\b(?:saved|my)\s+(?:links?|reels?|repos?|repositories|bookmarks?)\b/.test(t)
     ||/^(?:retrieve|find|show|open|read|get)\b[\s\S]*\b(?:saved|stored|bookmarked)\b[\s\S]*\b(?:link|url|repo|reel|page)\b/i.test(t)
