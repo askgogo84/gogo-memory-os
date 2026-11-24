@@ -5,6 +5,9 @@
 import { watchName, watchRule } from './watch-command'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { describeCadence } from '@/lib/services/reminder-series'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
+import { getLocalParts, normalizeTimezone, zonedLocalTimeToUtc } from '@/lib/timezone'
+import { isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
 import type { AgentActor } from './actor'
 
 /** Cut at a word boundary with an ellipsis, never mid-word. */
@@ -16,8 +19,15 @@ function shortTitle(v: string, max: number) {
 }
 const clean = (v: unknown, max = 80) => String(v ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim().slice(0, max)
 
+function requestedReminderDay(text: string) {
+  const request = String(text || '').trim().toLowerCase().replace(/\s+/g, ' ')
+  const match = request.match(/^(?:please )?(?:(?:show(?: me)?|list|display|what are) (?:all )?(?:my )?(?:(?:current|pending|active|upcoming) )?reminders|what reminders do i have)(?: for)? (today|tomorrow)[.!?]*(?: read[- ]only[.!?]*)?$/)
+  return match?.[1] === 'today' ? 'today' : match?.[1] === 'tomorrow' ? 'tomorrow' : null
+}
+
 /** "what's scheduled", "show my scheduled tasks", "what have you scheduled for me". Never "my schedule today" (calendar). */
 export function isScheduledListQuery(text: string) {
+  if (requestedReminderDay(text)) return true
   const t = String(text || '').trim().toLowerCase().replace(/[?.!]+$/, '').replace(/\s+/g, ' ')
   if (/\b(?:today|tonight|tomorrow|this week|next week|on (?:mon|tue|wed|thu|fri|sat|sun)|calendar|meetings?)\b/.test(t)) return false
   return /^(?:what(?:'s| is| all is)?|show(?: me)?|list|see|view)?\s*(?:all\s+)?(?:my\s+)?(?:scheduled(?: (?:tasks|things|jobs|items|stuff|work|reminders))?|schedules|recurring (?:tasks|reminders|jobs)|repeating (?:tasks|reminders))(?: (?:with|in|on|for) (?:you|gogo|askgogo|me))?$/.test(t)
@@ -125,6 +135,42 @@ export async function loadScheduledList(telegramId: string | number, now = Date.
 }
 
 export async function tryGetScheduledList(params: { actor: Pick<AgentActor, 'legacyTelegramId'>; text: string }) {
+  const day = requestedReminderDay(params.text)
+  if (day) {
+    const result = { runId: 'scheduled-list', capability: 'reminders' as const, risk: 'low' as const, handledBy: 'scheduled-list' }
+    try {
+      const owner = exactSessionOwnerId(params.actor.legacyTelegramId)
+      if (!owner) throw new Error('scheduled_owner_invalid')
+      const { data: user, error: userError } = await supabaseAdmin.from('users').select('telegram_id,timezone').eq('telegram_id', owner).maybeSingle()
+      if (userError || !user || exactSessionOwnerId(user.telegram_id) !== owner) throw new Error('scheduled_owner_unavailable')
+      const timezone = normalizeTimezone(user.timezone)
+      const { year, month, day: date } = getLocalParts(new Date(), timezone)
+      const requestedDate = date + (day === 'tomorrow' ? 1 : 0)
+      const start = zonedLocalTimeToUtc({ year, month, day: requestedDate, hour: 0, minute: 0, timezone })
+      const end = zonedLocalTimeToUtc({ year, month, day: requestedDate + 1, hour: 0, minute: 0, timezone })
+      const { data, error } = await supabaseAdmin.from('reminders').select('telegram_id,message,remind_at,sent,recurring_pattern')
+        .eq('telegram_id', owner).eq('sent', false).gte('remind_at', start.toISOString()).lt('remind_at', end.toISOString())
+        .order('remind_at', { ascending: true }).limit(21)
+      if (error || !Array.isArray(data)) throw new Error('reminders_unavailable')
+      const rows = data.filter(row => {
+        const timestamp = Date.parse(row.remind_at)
+        if (exactSessionOwnerId(row.telegram_id) !== owner || row.sent !== false || !(timestamp >= start.getTime() && timestamp < end.getTime())) {
+          throw new Error('reminder_result_out_of_scope')
+        }
+        return !isInternalPlanStepReminder(row.message) && !String(row.recurring_pattern || '').startsWith('followup:')
+      })
+      const lines = rows.slice(0, 10).map(row => '• ' + when(row.remind_at, timezone) + ' · ' + shortTitle(row.message, 100))
+      const text = [
+        '⏰ *Pending reminders for ' + day + '* (' + timezone + ')',
+        ...lines,
+        ...(rows.length > 10 || data.length === 21 ? ['Some results are outside this list.'] : []),
+        ...(!lines.length && data.length < 21 ? ['No pending reminders for ' + day + '.'] : []),
+      ].join('\n')
+      return { ...result, status: 'completed' as const, text }
+    } catch {
+      return { ...result, status: 'failed' as const, text: "I couldn't read your pending reminders for " + day + ' just now.' }
+    }
+  }
   if (!isScheduledListQuery(params.text)) return null
   try {
     const { timezone, input } = await loadScheduledList(params.actor.legacyTelegramId)
