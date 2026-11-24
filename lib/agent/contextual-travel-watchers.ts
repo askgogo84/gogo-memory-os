@@ -297,7 +297,7 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     .eq('condition_json->>contextualKind','travel')
     .limit(30)
   if(oldError)throw new Error(`context_watch_old_read_failed:${oldError.message}`)
-  const retire=(old||[]).filter((row:any)=>String(row.condition_json?.contextRoot||'')!==root || Date.parse(String(row.condition_json?.expiresAt||''))<=now)
+  const retire=(old||[]).filter((row:any)=>String(row.condition_json?.contextRoot||'')!==root || !contextualWatchStillLive(row.condition_json?.expiresAt,now))
   if(retire.length){
     const {error:retireError}=await supabaseAdmin.from('agent_watchers').update({
       active:false,next_check_at:null,updated_at:new Date().toISOString(),
