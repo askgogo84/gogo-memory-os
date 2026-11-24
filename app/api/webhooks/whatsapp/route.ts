@@ -1007,7 +1007,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     }
 
     // Delivered meeting context precedes model/goal clarification on this surface.
-    if (!preserveFriendFlow && /^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(?:tomorrow|tmrw|tmw)\s*(?:at\s+)?\d/i.test(text)) {
+    if (!preserveFriendFlow && /^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(?:today|tomorrow|tmrw|tmw)\s*(?:at\s+)?\d/i.test(text)) {
       let reply: string | null = null
       try {
         const contextual = await import('@/lib/agent/contextual-meeting-reschedule')
