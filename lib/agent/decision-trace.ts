@@ -29,11 +29,15 @@ const RANK: Record<EvidenceClass, number> = { verified: 3, reported: 2, inferred
 
 /** Weakest evidence class on the path that produced the outcome; a run with no evidence is 'inferred'. */
 export function evidenceClassOfRun(trace: TraceEntry[]): EvidenceClass {
-  const classes = trace.map(t => t.evidenceClass).filter((c): c is EvidenceClass => !!c)
-  if (!classes.length) return 'inferred'
-  // Only EXECUTE/VERIFY/READ outcomes decide; a REASON step is inferred by nature and would otherwise drag everything down.
-  const decisive = trace.filter(t => t.type !== 'REASON' && t.type !== 'DECIDE' && t.type !== 'CONDITION' && t.evidenceClass).map(t => t.evidenceClass as EvidenceClass)
-  const pool = decisive.length ? decisive : classes
+  // Approval is permission, not proof of execution. Reasoning and control
+  // flow alone cannot establish verified completion either.
+  const decisive = trace.filter(t => t.type === 'READ' || t.type === 'PARALLEL_READ' || t.type === 'EXECUTE' || t.type === 'VERIFY')
+  // A missing decisive evidence class (including a failed or uncertain
+  // attempt) must not disappear and let an unrelated verified step win.
+  if (!decisive.length || decisive.some(t => !t.evidenceClass)) return 'inferred'
+  // Preserve the weakest evidence across the remaining non-reasoning steps,
+  // including reported user input. Never promote an existing weaker result.
+  const pool = trace.filter(t => t.type !== 'REASON' && t.type !== 'DECIDE' && t.type !== 'CONDITION' && t.evidenceClass).map(t => t.evidenceClass as EvidenceClass)
   return pool.reduce((w, c) => (RANK[c] < RANK[w] ? c : w), 'verified' as EvidenceClass)
 }
 
