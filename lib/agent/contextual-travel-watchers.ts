@@ -306,11 +306,12 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
   }
 
   let created=0,reused=0,stopped=0,skipped=0
-  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,telegram_id,content').eq('telegram_id',owner)
+  // PostgreSQL BIGINT must cross PostgREST as decimal text, not rounded JSON numbers.
+  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,telegram_id::text,content').eq('telegram_id',owner)
     .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
   if(homeError)throw new Error('context_home_lookup_failed')
   if((homeMemories||[]).some((row:any)=>exactTravelOwnerId(row.telegram_id)!==owner))throw new Error('context_home_owner_mismatch')
-  const {data:user,error:userError}=await supabaseAdmin.from('users').select('telegram_id,name,gmail_connected').eq('telegram_id',owner).maybeSingle()
+  const {data:user,error:userError}=await supabaseAdmin.from('users').select('telegram_id::text,name,gmail_connected').eq('telegram_id',owner).maybeSingle()
   if(userError||!user)throw new Error('context_owner_profile_lookup_failed')
   if(exactTravelOwnerId(user.telegram_id)!==owner)throw new Error('context_profile_owner_mismatch')
   const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
@@ -376,12 +377,13 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
   return {created,reused,stopped,skipped}
 }
 
+// Keep the exact signed-64 ticket owner in every compiler batch.
 export async function compileUpcomingTravelWatchers(limit=200){
   const now=new Date()
   const lower=new Date(now.getTime()-72*3600_000).toISOString()
   const upper=new Date(now.getTime()+14*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
-    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
+    .select('id,telegram_id::text,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
     .eq('type','flight').or(`depart_at.gte.${lower},arrive_at.gte.${lower}`).lt('depart_at',upper)
     .order('depart_at',{ascending:true}).limit(Math.max(1,Math.min(500,limit)))
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
@@ -412,7 +414,7 @@ export async function compileTravelWatchersForUser(telegramId:string|number){
   if(!owner)throw new Error('context_travel_owner_invalid')
   const now=Date.now()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
-    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
+    .select('id,telegram_id::text,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
     .eq('telegram_id',owner).eq('type','flight')
     .or(`depart_at.gte.${new Date(now-72*3600_000).toISOString()},arrive_at.gte.${new Date(now-72*3600_000).toISOString()}`).lt('depart_at',new Date(now+14*86400_000).toISOString())
     .order('depart_at',{ascending:true}).limit(20)

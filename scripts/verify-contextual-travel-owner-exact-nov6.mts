@@ -41,9 +41,9 @@ function harness(config:Config={}){
       function resolve(single:boolean){
         if(table==='agent_watchers')return {data:[],error:null}
         if(table==='memories')return config.failRead?{data:null,error:{message:'synthetic error'}}
-          :{data:[{telegram_id:config.memoryOwner??owner,content:'My home city is Bengaluru'}],error:null}
+          :{data:[{telegram_id:config.memoryOwner??(columns.includes('telegram_id::text')?owner:Number(owner)),content:'My home city is Bengaluru'}],error:null}
         if(table==='users')return {data:config.missingProfile?null:{
-          telegram_id:config.profileOwner??owner,name:'Synthetic Traveller',gmail_connected:false},error:null}
+          telegram_id:config.profileOwner??(columns.includes('telegram_id::text')?owner:Number(owner)),name:'Synthetic Traveller',gmail_connected:false},error:null}
         throw Error('unexpected table '+table)
       }
       return q
@@ -65,12 +65,25 @@ const result=await good.compile(OWNER,[flight(OWNER)])
 assert.equal(result.created,0)
 assert.deepEqual(good.reads.filter(x=>x.table==='memories'||x.table==='users').map(x=>[x.table,x.owner]),
   [['memories',OWNER],['users',OWNER]],'private context reads must never round the BIGINT')
-assert.ok(good.reads.find(x=>x.table==='memories')?.columns.includes('telegram_id'))
-assert.ok(good.reads.find(x=>x.table==='users')?.columns.includes('telegram_id'))
+// Emulate actual PostgREST decoding: an uncast BIGINT becomes a rounded JS number.
+ // Querying the stored owner as ::text must preserve both distinct >2^53 owners.
+assert.ok(good.reads.find(x=>x.table==='memories')?.columns.includes('telegram_id::text'),
+  'home-memory owner must be projected as exact database text')
+assert.ok(good.reads.find(x=>x.table==='users')?.columns.includes('telegram_id::text'),
+  'owner profile must be projected as exact database text')
+assert.equal(source.split(".select('id,telegram_id::text,booking_group,leg_index").length-1,2,
+  'both scheduled and direct travel-ticket reads must project full signed-64 owner text')
+assert.equal(source.split(".select('id,telegram_id,booking_group,leg_index").length-1,0,
+  'no travel ticket JSON numeric owner projection may remain')
 assert.deepEqual(good.homes,['Bengaluru'])
 assert.deepEqual(good.writes,['agent_activity'])
 console.log('PASS exact high-BIGINT owner, correct context and no provider send')
 
+// The neighbouring BIGINT must remain separate; a wrong but valid cast string fails
+// before watcher creation, even when the database returned a response.
+const distinct=harness({profileOwner:OTHER})
+await assert.rejects(distinct.compile(OWNER,[flight(OWNER)]),/context_profile_owner_mismatch/)
+assert.equal(distinct.writes.length,0)
 const neg=harness()
 await neg.compile('-42',[flight('-42')])
 assert.deepEqual(neg.reads.filter(x=>['memories','users'].includes(x.table)).map(x=>x.owner),['-42','-42'])
