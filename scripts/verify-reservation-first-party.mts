@@ -83,6 +83,28 @@ const widgetPage=(times:string[])=>async()=>({status:'completed',url:WIDGET,titl
 const failures:string[]=[]
 async function check(label:string,fn:()=>Promise<void>){try{await fn();console.log('PASS '+label)}catch(e){failures.push(label+': '+(e instanceof Error?e.stack||e.message:String(e)))}}
 
+await check('impossible explicit dining dates pause both entry points before queue, research or booking',async()=>{
+  const h=loadReservation({search:()=>{throw Error('unexpected search')},browser:async()=>{throw Error('unexpected browser')}})
+  for(const date of ['2026-11-31','2026-13-01','2027-02-29','2026-10-00','31 November 2026']){
+    const text='Book a table for 2 at Toit Indiranagar on '+date+' at 7pm'
+    const parsed=h.mod.parseRestaurantReservationIntent(text)
+    assert.equal(parsed.dateClarificationNeeded,true,date)
+    assert.equal(parsed.requestedDate,'',date)
+    for(const result of [await h.mod.queueRestaurantReservationResearch({actor,text}),await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text})]){
+      assert.equal(result.status,'paused')
+      assert.match(result.text,/not a valid calendar date/)
+    }
+  }
+  assert.equal(h.searches.length,0)
+  assert.equal(h.browserCalls.length,0)
+  assert.equal(h.db.writes.length,0)
+  for(const [date,expected] of [['2028-02-29','2028-02-29'],['30 November 2026','2026-11-30'],['tomorrow','2026-10-20']]){
+    const parsed=h.mod.parseRestaurantReservationIntent('Book a table for 2 at Toit Indiranagar on '+date+' at 7pm')
+    assert.equal(parsed.requestedDate,expected)
+    assert.notEqual(parsed.dateClarificationNeeded,true)
+  }
+})
+
 await check('ranking: widget.reservego.com outranks EazyDiner; aggregators only as fallback',async()=>{
   const {mod}=loadReservation({search:searchBoth,browser:async()=>{throw Error('unused')}})
   const ranked=mod.rankReservationCandidates([EAZY,RESERVEGO,{title:'Toit - Reserve',url:'https://toit.in/reservations',snippet:'Toit Indiranagar Bengaluru reservations'}],'Toit Indiranagar')
