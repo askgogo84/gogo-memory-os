@@ -32,7 +32,12 @@ function harness(expiredTrip=false,gmailConnected=true,capacity?:CapacityFixture
   const root='travel:synthetic'
   const calls:Array<{type:string;condition:any}>=[]
   const retired:string[]=[]
-  const old={id:'expired-flight-watcher',condition_json:{contextRoot:root,contextClass:'flight_status',expiresAt:past}}
+  const old=[
+    {id:'expired-flight-watcher',condition_json:{contextRoot:root,contextClass:'flight_status',expiresAt:past}},
+    {id:'malformed-news-watcher',condition_json:{contextRoot:root,contextClass:'airline_news',expiresAt:'not-a-time'}},
+    {id:'missing-ground-expiry',condition_json:{contextRoot:root,contextClass:'connection_ground'}},
+    {id:'live-weather-watcher',condition_json:{contextRoot:root,contextClass:'destination_weather',contextKey:root+':destination_weather',expiresAt:future}},
+  ]
   const owner='-123'
   const scope:any={
     exports:{},console,Date,Number,BigInt,Set,Map,Object,
@@ -60,7 +65,7 @@ function harness(expiredTrip=false,gmailConnected=true,capacity?:CapacityFixture
         then(resolve:any,reject:any){
           let result:any={data:[],error:null}
           if(operation!=='select')result={error:null}
-          else if(table==='agent_watchers'&&hasContextualFilter)result={data:[old],error:null}
+          else if(table==='agent_watchers'&&hasContextualFilter)result={data:old,error:null}
           else if(table==='memories')result={data:[],error:null}
           else if(table==='agent_watchers'&&selectCols==='id,condition_json'){
             const data=(capacity?.activeKeys||[]).map(key=>({id:key,condition_json:key==='manual'?{}:{contextRoot:root,contextKey:root+':'+key}}))
@@ -89,7 +94,8 @@ for(const invalid of ['',null,undefined,'invalid','2035-99-99T99:99:99Z'])
   assert.equal(fixture.live(invalid,fixture.now),false,'malformed/no expiry fails closed')
 assert.equal(fixture.live(fixture.future,Number.NaN),false,'invalid clock fails closed')
 const result=await fixture.execute()
-assert.deepEqual(fixture.retired,['expired-flight-watcher'],'previous expired monitor is retired')
+assert.deepEqual(fixture.retired,['expired-flight-watcher','malformed-news-watcher','missing-ground-expiry'],
+  'expired, malformed and missing persisted expiry retire; the live same-trip weather monitor is untouched')
 assert.deepEqual(fixture.calls.map(x=>x.condition.contextClass),['destination_weather','travel_email'],
   'expired flight and malformed news monitor must not be re-created; live weather and consent-bound email retained')
 assert.equal(result.created,2)
