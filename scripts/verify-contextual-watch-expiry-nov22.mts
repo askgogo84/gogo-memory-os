@@ -25,19 +25,21 @@ type CapacityFixture={
   reactivated?:string[]
   userStopped?:string[]
 }
-function harness(expiredTrip=false,gmailConnected=true,capacity?:CapacityFixture){
+function harness(expiredTrip=false,gmailConnected=true,capacity?:CapacityFixture,existingTravelEmail=false){
   const now=Date.now()
   const past=new Date(now-60_000).toISOString()
   const future=new Date(now+60_000).toISOString()
   const root='travel:synthetic'
   const calls:Array<{type:string;condition:any}>=[]
   const retired:string[]=[]
+  const retireFilters:Array<{field:string;value:unknown}>=[]
   const old=[
     {id:'expired-flight-watcher',condition_json:{contextRoot:root,contextClass:'flight_status',expiresAt:past}},
     {id:'malformed-news-watcher',condition_json:{contextRoot:root,contextClass:'airline_news',expiresAt:'not-a-time'}},
     {id:'missing-ground-expiry',condition_json:{contextRoot:root,contextClass:'connection_ground'}},
     {id:'live-weather-watcher',condition_json:{contextRoot:root,contextClass:'destination_weather',contextKey:root+':destination_weather',expiresAt:future}},
   ]
+  if(existingTravelEmail)old.push({id:'live-travel-email-watcher',condition_json:{contextRoot:root,contextClass:'travel_email',contextKey:root+':travel_email',expiresAt:future}})
   const owner='-123'
   const scope:any={
     exports:{},console,Date,Number,BigInt,Set,Map,Object,
@@ -56,7 +58,7 @@ function harness(expiredTrip=false,gmailConnected=true,capacity?:CapacityFixture
       let operation='select',selectCols='',hasContextualFilter=false
       const q:any={
         select(v:string){selectCols=v;return q},
-        eq(field:string){if(field==='condition_json->>contextualKind')hasContextualFilter=true;return q},
+        eq(field:string,value:unknown){if(field==='condition_json->>contextualKind')hasContextualFilter=true;if(operation==='update')retireFilters.push({field,value});return q},
         in(field:string,value:string[]){if(operation==='update'&&field==='id')retired.push(...value);return q},
         order(){return q},limit(){return q},or(){return q},gte(){return q},
         update(){operation='update';return q},
@@ -83,7 +85,7 @@ function harness(expiredTrip=false,gmailConnected=true,capacity?:CapacityFixture
   assert.equal(typeof compile,'function')
   const trip=[{id:'synthetic-leg',telegram_id:owner,booking_group:null,leg_index:1,from_city:'Bengaluru',
     to_city:'Delhi',depart_at:new Date(now+60_000).toISOString(),arrive_at:future,passengers:[],raw:{}}]
-  return {now,past,future,calls,retired,live,execute:()=>compile(owner,trip)}
+  return {now,past,future,calls,retired,retireFilters,live,execute:()=>compile(owner,trip)}
 }
 
 const fixture=harness()
@@ -130,3 +132,18 @@ assert.equal(stoppedResult.stopped,1)
 assert.equal(stoppedResult.skipped,0,'a user-stopped candidate consumes no capacity')
 assert.match(source,/\.eq\('condition_json->>contextKey',`\$\{rootFor\(group\)\}:flight_status`\)/,'tracking readback belongs to this exact trip')
 console.log('PASS: active and reactivated contextual watches respect per-pass capacity; readback is trip-bound.')
+
+// A disconnected mailbox must not leave a previously live contextual email watch armed.
+const disconnected=harness(false,false,undefined,true)
+await disconnected.execute()
+assert.deepEqual(disconnected.retired,['expired-flight-watcher','malformed-news-watcher','missing-ground-expiry','live-travel-email-watcher'],
+  'retire existing same-trip email monitoring after Gmail disconnect, but keep live weather')
+assert.deepEqual(disconnected.calls.map(x=>x.condition.contextClass),['destination_weather'])
+for(const [field,value] of [['telegram_id','-123'],['condition_json->>contextualKind','travel'],['condition_json->>contextClass','travel_email'],['active',true]]){
+  assert.ok(disconnected.retireFilters.some(f=>f.field===field&&f.value===value),'email retirement must bind '+field)
+}
+const connected=harness(false,true,undefined,true)
+await connected.execute()
+assert.ok(!connected.retired.includes('live-travel-email-watcher'),'connected owner keeps live contextual email watch')
+assert.ok(connected.calls.some(x=>x.condition.contextClass==='travel_email'))
+console.log('PASS: contextual email reconciliation retires disconnected watch only, preserving other live watches')
