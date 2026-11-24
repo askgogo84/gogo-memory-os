@@ -149,9 +149,10 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
           catch(err:any){console.error('ATTENTION_DIGEST_FAILED:',String(err?.message||err).slice(0,160))}
         }
       }
-      let result=await searchWorkspaceEmails(actor,text,{missionText})
+      const searchOptions = { missionText, ...(explicitMail?.includeLinks ? { includeMailbox: true } : {}) }
+      let result=await searchWorkspaceEmails(actor,text,searchOptions)
       if(!result.audit && !result.messages.length && explicitMail?.retryQuery){
-        result=await searchWorkspaceEmails(actor,explicitMail.retryQuery,{missionText})
+        result=await searchWorkspaceEmails(actor,explicitMail.retryQuery,searchOptions)
       }
       await rememberTypedObjects(actor.legacyTelegramId,'email',result.messages.slice(0,5).map((m:any)=>({id:String(m.id),title:String(m.subject||'Email')}))).catch(()=>{})
       if(result.audit)return formatWorkspaceEmailAudit(result)
@@ -177,8 +178,13 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
       const shown=single?byNewest.slice(0,1):result.messages.slice(0,5)
       const lines=shown.map((m:any,index:number)=>{
         const date=formatEmailDateIST(m.date),snippet=cleanEmailSnippet(m.snippet)
-        const threadLink = explicitMail?.includeLinks && /^[a-f0-9]{6,64}$/i.test(String(m.threadId || ''))
-          ? `\nOpen in Gmail: https://mail.google.com/mail/u/0/#all/${m.threadId}` : ''
+        const mailbox = String(m.mailbox || '')
+        const threadId = String(m.threadId || '')
+        const threadLink = explicitMail?.includeLinks
+          ? /^[a-f0-9]{6,64}$/i.test(threadId) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mailbox)
+            ? `\nOpen in Gmail: https://mail.google.com/mail/u/?authuser=${encodeURIComponent(mailbox)}#all/${threadId}`
+            : '\nSource link unavailable for this message.'
+          : ''
         return `${single?'':`${index+1}. `}${m.subject}\nFrom: ${m.from}${date?`\nReceived: ${date}`:''}${snippet?`\n${snippet}`:''}${threadLink}`
       })
       await clearFollowupState(actor.legacyTelegramId,'gmail_search_results')

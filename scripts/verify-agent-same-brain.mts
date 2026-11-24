@@ -73,12 +73,12 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
     '@/lib/email/attention-store': { buildAttentionCard: async () => ({ text: 'Unrelated digest' }) },
     '@/lib/bot/handlers/followup-state': { clearFollowupState: async () => {}, saveFollowupState: async () => {} },
     './google-workspace-read': {
-      searchWorkspaceEmails: async (receivedActor: typeof actor, query: string) => {
+      searchWorkspaceEmails: async (receivedActor: typeof actor, query: string, options: { includeMailbox?: boolean }) => {
         assert.equal(receivedActor, actor)
         searches.push(query)
         if (!readingAllowed) throw new Error('workspace_email_reading_disabled')
         if (query.endsWith(' update')) return { messages: [] }
-        return { messages: [{ id: 'msg', threadId: '1ab234cd567ef890', from: 'Fixture vendor', date: '13 Nov 2026', subject: 'Developer onboarding', snippet: 'Fixture evidence' }] }
+        return { messages: [{ id: 'msg', threadId: '1ab234cd567ef890', mailbox: options.includeMailbox ? 'second@example.test' : undefined, from: 'Fixture vendor', date: '13 Nov 2026', subject: 'Developer onboarding', snippet: 'Fixture evidence' }] }
       },
     },
   }
@@ -88,7 +88,7 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   const reply = await exports.tryExplicitGmailSearch(actor, explicit + ' Give the sender organization, date and a short status, plus a link to the source thread. Read only. Do not send or create a draft.')
   assert.deepEqual(searches, [explicit.slice(0, -1), explicit.replace(' update.', '')])
   assert.match(reply, /From: Fixture vendor\nReceived: 13 Nov 2026/)
-  assert.match(reply, /https:\/\/mail\.google\.com\/mail\/u\/0\/#all\/1ab234cd567ef890/)
+  assert.match(reply, /https:\/\/mail\.google\.com\/mail\/u\/\?authuser=second%40example\.test#all\/1ab234cd567ef890/)
   const alternative = 'Find emails from Swiggy about MCP developer onboarding.'
   assert.match(await exports.tryExplicitGmailSearch(actor, alternative + ' Show the date and sender. Do not send anything.'), /Fixture evidence/)
   assert.equal(searches.at(-1), alternative.slice(0, -1))
@@ -114,6 +114,47 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') > dashboard.indexOf('await resolveAgentActor('))
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') < dashboard.indexOf('await tryAccountSiteAnswer(actor, text)'))
   assert.match(dashboard, /return NextResponse\.json\(\{ text: mail, handledBy: 'explicit-gmail-search' \}\)/)
+}
+
+// The actual Workspace adapter binds mailbox metadata to the credentials used for that read.
+{
+  const exports: any = {}
+  const dependencies: Record<string, unknown> = {
+    '@/lib/security/email-redaction': { formatEmailSnippet: (value: string) => value, decodeHtmlEntities: (value: string) => value },
+    '@/lib/security/google-token-crypto': { decryptGoogleToken: (value: string) => value, hasGoogleTokenEncryptionKey: () => false },
+    '@/lib/bot/memory-redaction': { redactSecretShapedText: (value: string) => value },
+    '@/lib/supabase-admin': { supabaseAdmin: {
+      from(table: string) {
+        assert.ok(table === 'users' || table === 'user_consent_settings')
+        return {
+          select() { return this },
+          eq(key: string, owner: number) { assert.equal(key, 'telegram_id'); assert.equal(owner, 123); return this },
+          async maybeSingle() {
+            return { data: table === 'users'
+              ? { gmail_connected: true, gmail_access_token: 'fixture-account', gmail_email: 'Second@Example.Test' }
+              : { gmail_enabled: true } }
+          },
+        }
+      },
+    } },
+  }
+  const code = ts.transpileModule(workspace, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+  runInNewContext(code, {
+    exports, console, URL, URLSearchParams, require: (name: string) => dependencies[name] || {},
+    fetch: async (url: string, init: RequestInit) => {
+      assert.equal((init.headers as Record<string, string>).Authorization, 'Bearer fixture-account')
+      const path = new URL(url).pathname
+      assert.match(path, /^\/gmail\/v1\/users\/me\/messages(?:\/fixture-entry)?$/)
+      return { ok: true, status: 200, json: async () => path.endsWith('/fixture-entry')
+        ? { id: 'fixture-entry', threadId: '1ab234cd567ef890', payload: { headers: [] } }
+        : { messages: [{ id: 'fixture-entry' }] } }
+    },
+  })
+  const actor = { userId: 'user-fixture', legacyTelegramId: 123 }
+  const withLink = await exports.searchWorkspaceEmails(actor, 'Search my Gmail for demo readiness', { includeMailbox: true })
+  assert.equal(withLink.messages[0].mailbox, 'second@example.test')
+  const normal = await exports.searchWorkspaceEmails(actor, 'Search my Gmail for demo readiness')
+  assert.equal(Object.hasOwn(normal.messages[0], 'mailbox'), false)
 }
 
 
