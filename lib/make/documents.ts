@@ -147,10 +147,12 @@ export function sheetCsv(sheet: Sheet) {
   return lines.join('\n')
 }
 
+export const STANDARD_MAKE_BRIEF_LENGTH = 500
+
 /** "Make a pitch deck for …", "Create a budget sheet for a Goa trip for 4". Explicit make verbs only. */
 export function makeDocRequest(text: string): { format: 'deck' | 'sheet'; request: string } | null {
   const t = String(text || '').trim()
-  if (!t || t.length > 500) return null
+  if (!t || t.length > 2000) return null
   // Asked in a connected app's format (Google Sheets, Drive, Notion): that flow handles it.
   if (/\b(?:google\s+(?:sheets?|slides|docs?|drive)|in (?:my )?drive|notion|gsheet)\b/i.test(t)) return null
   const m = t.match(/^(?:hey\s+gogo[,!]?\s+)?(?:please\s+)?(?:can you\s+|could you\s+|pls\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\s+(?:me\s+|us\s+)?(?:a|an|the|my|one)?\s*([\s\S]{0,80}?)\b(pitch\s+deck|deck|slides|slide deck|presentation|powerpoint|ppt|spreadsheet|excel sheet|sheet|excel|budget|expense tracker|cost breakdown)\b/i)
@@ -158,6 +160,14 @@ export function makeDocRequest(text: string): { format: 'deck' | 'sheet'; reques
   // "Create a reminder to review the budget sheet": what is being made comes before the format word. Only that part
   // is checked, so a deck ABOUT a WhatsApp product is still a deck (24 Oct live).
   if (/\b(?:remind(?:er)?s?|tasks?|to-?dos?|events?|meetings?|calendar|e-?mails?|messages?|note|alarm|list)\b/i.test(m[1])) return null
+  if (t.length > STANDARD_MAKE_BRIEF_LENGTH) {
+    // Detailed briefs need an explicit private artifact or a Make destination.
+    const privateArtifact = /\bprivate\s*$/i.test(m[1])
+    const makeDestination = /\b(?:save|store|keep) (?:it|(?:the|this) (?:sheet|spreadsheet|deck|presentation)) in Make\b/i.test(t)
+    if (!privateArtifact && !makeDestination) return null
+    // Let the general router handle distinct delivery, booking or scheduling requests.
+    if (/(?:[.!?;\n]\s*|\b(?:and|then|also)\s+)(?:please\s+)?(?:send|e-?mail|share|publish|post|upload|notify|remind|schedule|book|buy|order|call)\b/i.test(t.slice(m[0].length))) return null
+  }
   const format = makeFormatOf(m[2]) || (/budget|expense|cost/i.test(m[2]) ? 'sheet' : null)
   if (!format) return null
   return { format, request: t }

@@ -25,6 +25,16 @@ await check('make requests are recognised; reminders, Google apps and plain chat
   assert.equal(D.makeDocRequest('Add a task: send the deck to Ravi'), null)
 })
 
+await check('Make keeps all of a detailed private brief and leaves mixed actions to the general router', () => {
+  const brief = 'Make a private sheet titled Dinner for Six - Source Limit Replay. Use three columns named Section, Item and Details. Plan an egg-free vegetarian dinner for six with a Menu row, ordered prep within 45 minutes, and shopping quantities in grams. The menu is egg-free pasta with garlic and greens and hard cheese labelled non-animal rennet. Shopping quantities: 500 g labelled egg-free pasta, 400 g greens, 20 g garlic and 100 g labelled vegetarian hard cheese. We already have rice, salt and cooking oil. Place these in Pantry only. Use only the information in this request. Save the sheet in Make.'
+  assert.ok(brief.length > 500)
+  assert.deepEqual(D.makeDocRequest(brief), { format: 'sheet', request: brief })
+  assert.equal(D.makeDocRequest(brief + ' Then send the sheet to Ravi on WhatsApp.'), null)
+  assert.equal(D.makeDocRequest(brief.replace('Save the sheet in Make.', 'Save the sheet in Google Drive.')), null)
+  assert.equal(D.makeDocRequest(brief.replace('private ', '').replace(' Save the sheet in Make.', '')), null)
+  assert.equal(D.makeDocRequest(brief + ' More details.'.repeat(180)), null)
+})
+
 await check('edits bind only to the last Make reply', () => {
   const reply = D.chatReply({ format: 'deck', title: 'T', theme: 'light', slides: [{ kicker: '', title: 'A', points: [], notes: '' }, { kicker: '', title: 'B', points: [], notes: '' }] }, '11111111-2222-3333-4444-555555555555')
   assert.equal(D.madeIdFromReply(reply), '11111111-2222-3333-4444-555555555555')
@@ -258,6 +268,22 @@ await check('actual private edits fail closed without a primary key or on primar
   assert.equal(made?.doc.format, 'sheet'); assert.equal(creation.cheapCalls.length, 1); assert.equal(creation.primaryCalls.length, 0)
   assert.equal(creation.cheapCalls[0].taskClass, 'make_draft_nonpersonal')
   assert.equal(creation.cheapCalls[0].scanText, 'Make a spreadsheet of public park names')
+})
+
+await check('detailed private creation sends the full brief only to the primary model on both attempts', async () => {
+  const marker = 'SYNTHETIC LAST ROW'
+  const request = 'Make a private sheet. ' + 'Supplied details. '.repeat(35) + marker
+  const ask = D.makeDocRequest(request)!
+  const doc = D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [[marker, 30000]] })!
+  const fixture = actualMakeModelBoundary(doc, { replies: ['invalid', JSON.stringify(doc)] })
+  let searches = 0
+  const made = await fixture.api.generateDoc(ask.format, ask.request, { search: async () => { searches++; return [] } })
+  assert.equal(made?.doc.rows[0][0], marker)
+  assert.equal(made?.sources.length, 0)
+  assert.equal(searches, 0)
+  assert.equal(fixture.cheapCalls.length, 0)
+  assert.equal(fixture.primaryCalls.length, 2)
+  for (const call of fixture.primaryCalls) assert.ok(call.messages[0].content.includes(marker))
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }

@@ -1,7 +1,7 @@
 // Make: deck and sheet generation and edits. Non-personal requests go to the cheapest configured provider
 // (make_draft_nonpersonal: the policy router never sends drafts to a provider that trains on inputs), Claude is the
 // backstop. Public web snippets give the model real prices and facts; it never invents numbers.
-import { deckPrompt, editPrompt, firstJson, scrubInventedNumbers, sheetPrompt, validDeck, validSheet, type MakeDoc } from './documents'
+import { deckPrompt, editPrompt, firstJson, scrubInventedNumbers, sheetPrompt, STANDARD_MAKE_BRIEF_LENGTH, validDeck, validSheet, type MakeDoc } from './documents'
 
 // The person's own data never leaves the primary model.
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|salary|income|bank|account|expenses?|bills?|card)\b/i
@@ -66,11 +66,12 @@ function explicitSheetRowCount(request: string): number | null {
 
 export async function generateDoc(format: 'deck' | 'sheet', request: string, deps: { model?: Model; search?: (q: string) => Promise<any[]> } = {}) {
   const model = deps.model || defaultModel
-  const { facts, sources } = await publicFacts(request, deps.search)
+  const detailedPrivateBrief = request.length > STANDARD_MAKE_BRIEF_LENGTH
+  const { facts, sources } = detailedPrivateBrief ? { facts: '', sources: [] } : await publicFacts(request, deps.search)
   const prompt = format === 'deck' ? deckPrompt(request, facts) : sheetPrompt(request, facts)
   const expectedRows = format === 'sheet' ? explicitSheetRowCount(request) : null
   for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = unwrap(firstJson(await model(prompt, request, { strong: attempt > 0 }).catch(() => '')))
+    const raw = unwrap(firstJson(await model(prompt, request, { strong: detailedPrivateBrief || attempt > 0 }).catch(() => '')))
     const valid = format === 'deck' ? validDeck(raw) : validSheet(raw)
     const doc = valid && valid.format === 'deck' ? scrubInventedNumbers(valid, facts, request) : valid
     if (doc && !(doc.format === 'sheet' && expectedRows !== null && doc.rows.length !== expectedRows)) return { doc, sources }
