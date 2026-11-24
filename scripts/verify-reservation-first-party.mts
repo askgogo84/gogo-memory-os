@@ -201,6 +201,26 @@ await check('unavailable slot: up to 3 nearest times in one line, then a picked 
   assert.deepEqual(h.questions.map((q:any)=>[q.kind,q.expects[0],q.askedText]),[['reservation_live_slot','time',r.text],['reservation_live_slot','guest_name',picked.text]])
 })
 
+await check('slot reply rejects ambiguity and negation, and respects exact 24-hour replies',async()=>{
+  const h=loadReservation({search:searchBoth,browser:widgetPage(['5:30 PM','6:00 PM','6:30 PM','9:00 PM'])})
+  await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  const pending=h.db.tables.agent_runs.find((row:any)=>row.type==='restaurant_reservation_slot')
+  assert.equal(pending.error,'awaiting_slot_choice')
+  // Synthetic offered alternatives containing both AM and PM.
+  pending.metadata_json.alternatives=['06:30','18:30','19:00']
+  for(const reply of ['6:30','not 6:30pm','6:30pm or 7pm','24:30','18:99']){
+    assert.equal(await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:reply}),null,reply)
+    assert.equal(pending.error,'awaiting_slot_choice')
+    assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  }
+  const picked=await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'18:30'})
+  assert.match(picked.text,/6:30pm tomorrow is available/)
+  const updated=h.db.tables.agent_runs.find((row:any)=>row.id===pending.id)
+  assert.equal(updated.metadata_json.slot_time,'18:30')
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  assert.equal(h.browserCalls.length,1,'no additional provider interaction')
+})
+
 await check('slot extraction ignores opening hours and sold-out slots; needs the requested date on the page',async()=>{
   const {mod}=loadReservation({search:searchBoth,browser:async()=>({})})
   assert.deepEqual([...mod.extractReservationSlots('Open 12:00 PM - 1:00 AM. Slots: 6:30 PM 7:00 PM 7.30 pm 10:00 PM Sold out 21:15')],['18:30','19:00','19:30','21:15'])
