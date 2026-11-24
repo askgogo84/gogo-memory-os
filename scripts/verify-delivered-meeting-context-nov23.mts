@@ -78,6 +78,22 @@ assert.equal(rows.filter(r=>!r.sent).length,1)
 assert.equal(rows[1].message,'Call Divya')
 assert.equal(await invoke(),null,'unquoted stale context cannot authorize a change')
 laterDelivery()
+now = Date.parse('2026-11-24T03:45:00Z')
+const todayCommand = 'Move this today 4.30pm'
+function quotedToday() {
+  return actual.tryContextualMeetingReschedule({telegramId:-42,phone,text:todayCommand,surface:'whatsapp',replyToSid:quotedSid})
+}
+assert.match(await quotedToday(),/24 Nov 2026, 4:20 pm/,'verified quoted today command uses current date and original lead time')
+assert.equal(rows.filter(r=>!r.sent).length,1)
+assert.match(await quotedToday(),/24 Nov 2026, 4:20 pm/)
+assert.equal(writes.length,1)
+assert.equal(await invoke(todayCommand),null,'today requires an exact quote')
+laterDelivery()
+now = Date.parse('2026-11-24T03:45:00Z')
+calendar.events[0].start.dateTime = '2026-11-24T17:00:00+05:30'
+assert.match(await quotedToday(),/not at the requested time/)
+assert.equal(writes.length,0)
+laterDelivery()
 const metaReplyId = 'wamid.fixture_b7bn-eg='
 rows[0].twilio_sid = receipt.provider_sid = metaReplyId
 assert.match(await quoted(metaReplyId),/24 Nov 2026, 4:20 pm/,'a signed Meta quote uses the same exact delivered reminder')
@@ -178,6 +194,11 @@ for (const surface of ['web','whatsapp']) {
     replyToSid=quotedSid;laterDelivery();saved=[];sent=[]
     await api.run(command)
     assert.match(sent[0][1],/24 Nov 2026, 4:20 pm/);assert.equal(writes.length,1);assert.equal(sent.length,1)
+    laterDelivery();now=Date.parse('2026-11-24T03:45:00Z');rows.push(future());saved=[];sent=[]
+    await api.run(todayCommand)
+    assert.match(sent[0][1],/24 Nov 2026, 4:20 pm/)
+    assert.equal(writes[0].op,'update');assert.equal(rows.filter(r=>!r.sent).length,1)
+    assert.equal(rows[2].remind_at,'2026-11-24T10:50:00.000Z')
     signatureOutcome='invalid';laterDelivery();saved=[];sent=[]
     await api.run(command)
     assert.match(sent[0][1],/couldn’t match/);assert.equal(writes.length,0);assert.equal(reads.length,0)
