@@ -1252,7 +1252,20 @@ export async function continueRestaurantReservationGuestReply(params:{actor:Agen
   if(meta.stage==='choose_time'&&pending.error==='awaiting_slot_choice'){
     const raw=String(params.text||'').trim().replace(/^(?:the|at)\s+/i,'').replace(/\s+(?:one|slot|please)$/i,'')
     const alternatives:string[]=Array.isArray(meta.alternatives)?meta.alternatives.map(String):[]
-    const said=explicitClock(raw.replace(/(\d)\.(\d{2})/,'$1:$2'))||(/^\d{1,2}(?::\d{2})?$/.test(raw)?alternatives.find(t=>{const[h,m]=raw.split(':');return Number(t.slice(0,2))%12===Number(h)%12&&t.slice(3)===(m||'00')}):'')||''
+    // A reply must name one offered time, never merely mention a clock in a sentence.
+    const normalized=raw.replace(/(\d)\.(\d{2})/,'$1:$2')
+    let said=''
+    if(/^\d{1,2}(?::\d{2})?\s*(?:am|pm)$/i.test(normalized)){
+      said=explicitClock(normalized)
+    }else if(/^\d{1,2}(?::\d{2})?$/.test(normalized)){
+      const [h,m='00']=normalized.split(':')
+      const hour=Number(h)
+      if(hour<=23&&Number(m)<=59){
+        const matches=[...new Set(alternatives.filter(t=>/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(t)
+          &&t.slice(3)===m&&(hour===0||hour>12?Number(t.slice(0,2))===hour:Number(t.slice(0,2))%12===hour%12)))]
+        if(matches.length===1)said=matches[0]
+      }
+    }
     if(!said||!alternatives.includes(said))return null
     const{data:moved}=await supabaseAdmin.from('agent_runs').update({error:'awaiting_guest_name',updated_at:new Date().toISOString(),metadata_json:{...meta,stage:'guest_name',slot_time:said}})
       .eq('id',pending.id).eq('telegram_id',tg).eq('status','paused').eq('error','awaiting_slot_choice').select('id').maybeSingle()
