@@ -139,7 +139,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
     if(isEmailRead(text)) {
       // 24 Oct live: "Summarise my unread emails today" listed raw emails with signatures. A general inbox
       // digest (no sender/topic/attachment named) gets the attention card: only what needs the person, and why.
-      if(isGeneralInboxDigest(text)){
+      if(!explicitMail && isGeneralInboxDigest(text)){
         const store:any=await import('@/lib/email/attention-store').catch(()=>null)
         if(store?.buildAttentionCard){
           try{const card=await store.buildAttentionCard({legacyTelegramId:actor.legacyTelegramId,timezone:actor.timezone});if(card?.text){
@@ -227,7 +227,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
 export async function tryExplicitGmailSearch(actor: AgentActor, text: string): Promise<string | null> {
   const [query, ...qualifiers] = text.trim().split(/(?<=[.!?])\s+/)
   const search = /^(?:please\s+)?(?:search\s+(?:my\s+)?(?:gmail|inbox)\s+for|find\s+(?:my\s+)?e-?mails?\s+(?:from|about))\s+\S/i
-  const action = /(?:\b(?:and|then|also)\s+|[;,\n]\s*)(?:please\s+)?(?:send|forward|compose|reply|draft|create|share|publish|open|browse|order|book|delete|cancel|remove)\b/i
+  const action = /(?:\b(?:and|then|also)\b|[;,\n])\s*(?:(?:and|then|also|please)\s*,?\s+)*(?:send|forward|compose|reply|draft|create|share|publish|open|browse|order|book|delete|cancel|remove|remind|schedule|add|set|update|edit|move|call|buy|pay|submit)\b/i
   const display = /^(?:give|show|include|return)(?: me)? (?:the |a )?(?:sender|date|subject|summary|short status|status|link|source thread)\b/i
   const readOnly = /^(?:read[ -]only|(?:do not|don['’]t|never) (?:send(?: anything| (?:any )?(?:e-?mails?|mail))?|create a draft)(?: or create a draft)?)[.!?]*$/i
   if (!search.test(query) || action.test(query) || qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
