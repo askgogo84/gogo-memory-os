@@ -101,6 +101,8 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   assert.equal(searches.at(-1), 'Search my Gmail invoices')
   await exports.tryExplicitGmailSearch(actor, 'Search my Gmail for "trade show, include session" and read only')
   assert.equal(searches.at(-1), 'Search my Gmail "trade show, include session"')
+  assert.match(await exports.tryExplicitGmailSearch(actor, 'Find e-mails about invoices'), /Fixture evidence/)
+  assert.equal(searches.at(-1), 'Find emails about invoices')
   for (const query of [
     explicit + ' Then send it to Ravi.',
     explicit + ' Give the sender and forward the thread.',
@@ -112,10 +114,10 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   ]) {
     assert.equal(await exports.tryExplicitGmailSearch(actor, query), null, query)
   }
-  assert.equal(searches.length, 6, 'mixed actions never enter the private search handler')
+  assert.equal(searches.length, 7, 'mixed actions never enter the private search handler')
   readingAllowed = false
   assert.match(await exports.tryExplicitGmailSearch(actor, explicit), /reading is disabled/)
-  assert.equal(searches.length, 7, 'a consent error never retries the read')
+  assert.equal(searches.length, 8, 'a consent error never retries the read')
   const dashboard = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') > dashboard.indexOf('await resolveAgentActor('))
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') < dashboard.indexOf('await tryAccountSiteAnswer(actor, text)'))

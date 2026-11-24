@@ -136,7 +136,7 @@ export function isGeneralInboxDigest(text:string){
 async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string,explicitMail?:{ includeLinks:boolean; retryQuery?:string }):Promise<string|null> {
   try {
     if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
-    if(isEmailRead(text)) {
+    if(explicitMail || isEmailRead(text)) {
       // 24 Oct live: "Summarise my unread emails today" listed raw emails with signatures. A general inbox
       // digest (no sender/topic/attachment named) gets the attention card: only what needs the person, and why.
       if(!explicitMail && isGeneralInboxDigest(text)){
@@ -240,7 +240,9 @@ export async function tryExplicitGmailSearch(actor: AgentActor, text: string): P
   if (!search.test(query) || action.test(query.replace(/["“][^"“”]*["”]/g, '')) ||
       qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
   const utterance = query.replace(/[.!?;]+$/, '')
-  const searchText = utterance.replace(/^(?:please\s+)?(search\s+(?:my\s+)?(?:gmail|inbox))\s+for\s+/i, '$1 ')
+  const searchText = utterance
+    .replace(/^(?:please\s+)?(search\s+(?:my\s+)?(?:gmail|inbox))\s+for\s+/i, '$1 ')
+    .replace(/^((?:please\s+)?find\s+(?:my\s+)?)e-mails?\b/i, '$1emails')
   // If a detailed search treats “update” as an extra keyword, retry the same subject without that generic suffix.
   const retryQuery = !/["“]/.test(utterance) && /\b(?:for|about)(?:\s+\S+){3,}\s+update$/i.test(utterance)
     ? searchText.replace(/\s+update$/i, '') : undefined
