@@ -40,6 +40,12 @@ assert.deepEqual(sourceBoundReport('Make a brief. Use only these sources: https:
 assert.deepEqual(sourceBoundReport('Make a brief. Use only these sources: https://a.example.net/report?token=private').urls,[])
 assert.equal(researchSourceUrl('https://www.nasa.gov/image-article/other/'),'https://nasa.gov/image-article/other')
 assert.equal(researchSourceUrl('https://nasa.gov.example.org/private/'),'')
+const externalSavedReel = 'Open https://www.instagram.com/ and find my most recent saved reel. Read only. If sign-in is needed, give me Take Control so I can sign in there. Do not change anything else.'
+assert.equal(isLinkVaultQuery(externalSavedReel),false,'explicit site navigation must reach the browser rather than local saved links')
+assert.equal(isLinkVaultSaveRequest(externalSavedReel),false)
+assert.equal(isLinkVaultQuery('Could you navigate to https://www.instagram.com/ and read my saved reels?'),false)
+assert.equal(isLinkVaultSaveRequest('Navigate to https://www.instagram.com/ and read my saved reels.'),false)
+assert.equal(isLinkVaultQuery('Open the second saved reel from Instagram'),true)
 assert.equal(isLinkVaultQuery('Find that Instagram reel I saved about marketing'),true)
 assert.equal(isLinkVaultQuery('Show all links I saved about agent memory last month'),true)
 assert.equal(isLinkVaultQuery('What was that GitHub repo for saving links?'),true)

@@ -1,14 +1,71 @@
 // Dots parity slice 1 (2 Nov): "what's scheduled" lists everything Gogo will do on its own, read-only.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-const { isScheduledListQuery, composeScheduledList } = await import('../lib/agent/scheduled-list')
+import { mock } from 'node:test'
+const { supabaseAdmin } = await import('../lib/supabase-admin')
+const { isScheduledListQuery, composeScheduledList, tryGetScheduledList } = await import('../lib/agent/scheduled-list')
 
 // Asked naturally on either surface; calendar questions stay calendar questions.
 for (const q of ["what's scheduled", 'What is scheduled?', 'show my scheduled tasks', 'list scheduled', 'what have you scheduled for me', 'my recurring reminders', 'what will you do on your own', 'show me all my schedules'])
   assert.equal(isScheduledListQuery(q), true, q)
+for (const q of ['Show my current reminders for today. Read only.', 'What reminders do I have tomorrow?', 'List pending reminders today'])
+  assert.equal(isScheduledListQuery(q), true, q)
 for (const q of ["what's on my schedule today", 'my schedule tomorrow', 'what is scheduled tomorrow', 'schedule a meeting with Divya', 'scheduled meetings this week', 'remind me every Monday at 9 am to pay rent', 'what are you working on'])
   assert.equal(isScheduledListQuery(q), false, q)
+for (const q of ['Show my reminders today and then cancel one.', 'Show my reminders for tomorrow and send them. Read only.', 'Show reminders today and tomorrow', 'Show reminders for next Monday'])
+  assert.equal(isScheduledListQuery(q), false, q)
 console.log('✓ recognises schedule-list questions; calendar and create requests are untouched')
+
+// Replay the actual handler across a month rollover and an adjacent BIGINT owner.
+{
+  const owner = '9007199254740993'
+  const actor = { legacyTelegramId: owner as unknown as number }
+  const neighbor = '9007199254740994'
+  const filters: any[][] = []
+  let reminderOwner = owner
+  let databaseError = false
+  const query = 'Show my current reminders for today. Read only.'
+  const originalFrom = supabaseAdmin.from
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-30T18:45:00Z') })
+  supabaseAdmin.from = ((table: string) => {
+    assert.ok(table === 'users' || table === 'reminders', 'no unrelated tables or data providers')
+    const builder: any = {}
+    for (const method of ['select', 'eq', 'gte', 'lt', 'order']) builder[method] = (...args: unknown[]) => {
+      filters.push([table, method, ...args]); return builder
+    }
+    if (table === 'users') builder.maybeSingle = async () => ({ data: { telegram_id: owner, timezone: 'Asia/Kolkata' } })
+    else builder.limit = async () => ({
+      error: databaseError ? { message: 'fixture read error' } : null,
+      data: [{ telegram_id: reminderOwner, message: 'Only the requested reminder', remind_at: '2026-12-01T10:50:00Z', sent: false }],
+    })
+    return builder
+  }) as typeof supabaseAdmin.from
+  try {
+    assert.equal(await tryGetScheduledList({ actor, text: 'Show reminders today and cancel one' }), null)
+    assert.deepEqual(filters, [])
+    const result = await tryGetScheduledList({ actor, text: query })
+    assert.equal(result?.status, 'completed')
+    assert.equal(result?.capability, 'reminders')
+    assert.match(result!.text, /Pending reminders for today.*Asia\/Kolkata/)
+    assert.match(result!.text, /4:20 pm · Only the requested reminder/i)
+    assert.ok(filters.some(row => row[0] === 'users' && row[1] === 'eq' && row[2] === 'telegram_id' && row[3] === owner))
+    assert.deepEqual(filters.filter(row => row[0] === 'reminders' && ['eq', 'gte', 'lt'].includes(row[1])), [
+      ['reminders', 'eq', 'telegram_id', owner],
+      ['reminders', 'eq', 'sent', false],
+      ['reminders', 'gte', 'remind_at', '2026-11-30T18:30:00.000Z'],
+      ['reminders', 'lt', 'remind_at', '2026-12-01T18:30:00.000Z'],
+    ])
+    reminderOwner = neighbor
+    const neighborReply = await tryGetScheduledList({ actor, text: query })
+    assert.equal(neighborReply?.status, 'failed')
+    assert.doesNotMatch(neighborReply!.text, /Only the requested reminder|No pending reminders/)
+    databaseError = true
+    assert.equal((await tryGetScheduledList({ actor, text: query }))?.status, 'failed')
+  } finally {
+    supabaseAdmin.from = originalFrom
+    mock.timers.reset()
+  }
+}
 
 const NOW = Date.parse('2026-11-02T06:30:00Z') // 12:00 pm IST
 const at = (h: number) => new Date(NOW + h * 3600_000).toISOString()

@@ -461,7 +461,7 @@ async function handleChatPost(req: NextRequest) {
       return NextResponse.json(voice)
     }
     // Make: real slides and sheets ("make a pitch deck for …", "create a budget sheet for …") and edits to the one just made.
-    if(text.length<=500&&(/^(?:hey\s+gogo[,!]?\s+)?(?:please\s+)?(?:can you\s+|could you\s+|pls\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\b[\s\S]{0,100}\b(?:deck|slides|presentation|powerpoint|ppt|spreadsheet|sheet|excel|budget|expense tracker|cost breakdown)\b/i.test(text)||text.length<=240&&/^(?:please\s+)?(?:can you\s+)?(?:make|change|set|add|remove|delete|drop|rename|shorten|replace|update|move|swap|increase|reduce|cut|put|use|merge|split|reword|rewrite|fix|turn|convert)\b/i.test(text)&&await makeDocWasLastReply(user.telegram_id))){
+    if(/^(?:hey\s+gogo[,!]?\s+)?(?:please\s+)?(?:can you\s+|could you\s+|pls\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\b[\s\S]{0,100}\b(?:deck|slides|presentation|powerpoint|ppt|spreadsheet|sheet|excel|budget|expense tracker|cost breakdown)\b/i.test(text)||text.length<=240&&/^(?:please\s+)?(?:can you\s+)?(?:make|change|set|add|remove|delete|drop|rename|shorten|replace|update|move|swap|increase|reduce|cut|put|use|merge|split|reword|rewrite|fix|turn|convert)\b/i.test(text)&&await makeDocWasLastReply(user.telegram_id)){
       const mk:any=await import('@/lib/make/store').catch(()=>null)
       const out=mk?.handleMakeDoc?await Promise.resolve().then(()=>mk.handleMakeDoc({actor,text})).catch((err:any)=>{console.error('MAKE_DOC_FAILED:',String(err?.message||err).slice(0,160));return null}):null
       if(out?.text){
