@@ -86,7 +86,8 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   runInNewContext(code, { exports, console, require: (name: string) => dependencies[name] || {} })
   const explicit = 'Search my Gmail for the Swiggy MCP developer onboarding update.'
   const reply = await exports.tryExplicitGmailSearch(actor, explicit + ' Give the sender organization, date and a short status, plus a link to the source thread. Read only. Do not send or create a draft.')
-  assert.deepEqual(searches, [explicit.slice(0, -1), explicit.replace(' update.', '')])
+  const exactQuery = 'Search my Gmail the Swiggy MCP developer onboarding update'
+  assert.deepEqual(searches, [exactQuery, exactQuery.replace(/ update$/, '')])
   assert.match(reply, /From: Fixture vendor\nReceived: 13 Nov 2026/)
   assert.match(reply, /https:\/\/mail\.google\.com\/mail\/u\/\?authuser=second%40example\.test#all\/1ab234cd567ef890/)
   const alternative = 'Find emails from Swiggy about MCP developer onboarding.'
@@ -94,7 +95,7 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   assert.equal(searches.at(-1), alternative.slice(0, -1))
   const inbox = 'Search my inbox for Swiggy MCP developer onboarding'
   assert.match(await exports.tryExplicitGmailSearch(actor, inbox), /Fixture evidence/)
-  assert.equal(searches.at(-1), inbox, 'a targeted inbox search does not read the general digest')
+  assert.equal(searches.at(-1), 'Search my inbox Swiggy MCP developer onboarding', 'the targeted inbox query omits its routing preposition')
   for (const query of [
     explicit + ' Then send it to Ravi.',
     explicit + ' Give the sender and forward the thread.',
@@ -143,17 +144,19 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
     exports, console, URL, URLSearchParams, require: (name: string) => dependencies[name] || {},
     fetch: async (url: string, init: RequestInit) => {
       assert.equal((init.headers as Record<string, string>).Authorization, 'Bearer fixture-account')
-      const path = new URL(url).pathname
+      const endpoint = new URL(url)
+      const path = endpoint.pathname
       assert.match(path, /^\/gmail\/v1\/users\/me\/messages(?:\/fixture-entry)?$/)
+      if (!path.endsWith('/fixture-entry')) assert.equal(endpoint.searchParams.get('q'), 'demo readiness newer_than:2y')
       return { ok: true, status: 200, json: async () => path.endsWith('/fixture-entry')
         ? { id: 'fixture-entry', threadId: '1ab234cd567ef890', payload: { headers: [] } }
         : { messages: [{ id: 'fixture-entry' }] } }
     },
   })
   const actor = { userId: 'user-fixture', legacyTelegramId: 123 }
-  const withLink = await exports.searchWorkspaceEmails(actor, 'Search my Gmail for demo readiness', { includeMailbox: true })
+  const withLink = await exports.searchWorkspaceEmails(actor, 'Search my Gmail demo readiness', { includeMailbox: true })
   assert.equal(withLink.messages[0].mailbox, 'second@example.test')
-  const normal = await exports.searchWorkspaceEmails(actor, 'Search my Gmail for demo readiness')
+  const normal = await exports.searchWorkspaceEmails(actor, 'Search my Gmail demo readiness')
   assert.equal(Object.hasOwn(normal.messages[0], 'mailbox'), false)
 }
 

@@ -237,9 +237,10 @@ export async function tryExplicitGmailSearch(actor: AgentActor, text: string): P
   const display = /^(?:give|show|include|return)(?: me)? (?:the |a )?(?:sender|date|subject|summary|short status|status|link|source thread)\b/i
   const readOnly = /^(?:read[ -]only|(?:do not|don['’]t|never) (?:send(?: anything| (?:any )?(?:e-?mails?|mail))?|create a draft)(?: or create a draft)?)[.!?]*$/i
   if (!search.test(query) || action.test(query) || qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
-  const searchText = query.replace(/[.!?]+$/, '')
+  const utterance = query.replace(/[.!?]+$/, '')
+  const searchText = utterance.replace(/^(?:please\s+)?(search\s+(?:my\s+)?(?:gmail|inbox))\s+for\s+/i, '$1 ')
   // If a detailed search treats “update” as an extra keyword, retry the same subject without that generic suffix.
-  const retryQuery = !/["“]/.test(searchText) && /\b(?:for|about)(?:\s+\S+){3,}\s+update$/i.test(searchText)
+  const retryQuery = !/["“]/.test(utterance) && /\b(?:for|about)(?:\s+\S+){3,}\s+update$/i.test(utterance)
     ? searchText.replace(/\s+update$/i, '') : undefined
   const includeLinks = qualifiers.some(clause => /\b(?:link|source thread)\b/i.test(clause))
   const reply = await tryWorkspaceRead(actor, searchText, undefined, { includeLinks, retryQuery })
