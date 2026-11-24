@@ -165,8 +165,10 @@ export function makeDocRequest(text: string): { format: 'deck' | 'sheet'; reques
     const privateArtifact = /\bprivate\s*$/i.test(m[1])
     const makeDestination = /\b(?:save|store|keep) (?:it|(?:the|this) (?:sheet|spreadsheet|deck|presentation)) in Make\b/i.test(t)
     if (!privateArtifact && !makeDestination) return null
-    // Let the general router handle distinct delivery, booking or scheduling requests.
-    if (/(?:[.!?;\n]\s*|\b(?:and|then|also)\s+)(?:please\s+)?(?:send|e-?mail|share|publish|post|upload|notify|remind|schedule|book|buy|order|call)\b/i.test(t.slice(m[0].length))) return null
+    // Let the general router handle separate actions alongside the artifact.
+    const remainingBrief = t.slice(m[0].length)
+    const actionClause = /(?:^|[.!?;,\n]|\b(?:and|then|also)\b)\s*(?:(?:and|then|also|please)\s*,?\s+)*(?:(?:send|e-?mail|share|publish|post|upload|notify|remind|schedule|book|buy|order|call)\b|(?:create|set(?: up)?|add|make)\s+(?:(?:an?|the|my)\s+)?(?:reminder|alarm|task|to-?do|event|appointment)\b)/i
+    if (actionClause.test(remainingBrief)) return null
   }
   const format = makeFormatOf(m[2]) || (/budget|expense|cost/i.test(m[2]) ? 'sheet' : null)
   if (!format) return null
