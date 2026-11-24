@@ -314,6 +314,19 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
   const {data:user,error:userError}=await supabaseAdmin.from('users').select('telegram_id::text,name,gmail_connected').eq('telegram_id',owner).maybeSingle()
   if(userError||!user)throw new Error('context_owner_profile_lookup_failed')
   if(exactTravelOwnerId(user.telegram_id)!==owner)throw new Error('context_profile_owner_mismatch')
+  // Disconnecting Gmail must also disarm an existing live contextual email watch.
+  // Do not touch manual email watches, user stop markers or another trip/owner.
+  if(!user.gmail_connected){
+    const disconnectedEmail=(old||[]).filter(row=>row.condition_json?.contextRoot===root
+      &&row.condition_json?.contextClass==='travel_email'&&contextualWatchStillLive(row.condition_json?.expiresAt,now))
+    if(disconnectedEmail.length){
+      const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+        .in('id',disconnectedEmail.map(row=>row.id)).eq('telegram_id',owner).eq('active',true)
+        .eq('condition_json->>contextualKind','travel').eq('condition_json->>contextClass','travel_email')
+        .eq('condition_json->>contextRoot',root)
+      if(error)throw new Error('context_travel_email_disconnect_retire_failed')
+    }
+  }
   const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
   const normalizeName=(name:unknown)=>String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
   const anotherTraveller=names.some(name=>!user?.name||normalizeName(name)!==normalizeName(user.name))
