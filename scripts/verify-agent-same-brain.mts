@@ -120,6 +120,7 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   assert.equal(searches.length, 8, 'a consent error never retries the read')
   const dashboard = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') > dashboard.indexOf('await resolveAgentActor('))
+  assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') > dashboard.indexOf('m.tryEmailAsk(actor,text)'))
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') < dashboard.indexOf('await tryAccountSiteAnswer(actor, text)'))
   assert.match(dashboard, /return NextResponse\.json\(\{ text: mail, handledBy: 'explicit-gmail-search' \}\)/)
 }
