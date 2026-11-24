@@ -133,7 +133,7 @@ export function isGeneralInboxDigest(text:string){
   return !/\bfrom\s+[a-z0-9]|\babout\s+\w|\bregarding\b|\bsubject\b|\battach|\bbrief\b|\bpdf\b|\blatest (?:e-?mail|mail) from\b|\bpromo|\bnewsletter|\bsocial\b/.test(t)
 }
 
-async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string,includeEmailLinks=false):Promise<string|null> {
+async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string,explicitMail?:{ includeLinks:boolean; retryQuery?:string }):Promise<string|null> {
   try {
     if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
     if(isEmailRead(text)) {
@@ -149,7 +149,10 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
           catch(err:any){console.error('ATTENTION_DIGEST_FAILED:',String(err?.message||err).slice(0,160))}
         }
       }
-      const result=await searchWorkspaceEmails(actor,text,{missionText})
+      let result=await searchWorkspaceEmails(actor,text,{missionText})
+      if(!result.audit && !result.messages.length && explicitMail?.retryQuery){
+        result=await searchWorkspaceEmails(actor,explicitMail.retryQuery,{missionText})
+      }
       await rememberTypedObjects(actor.legacyTelegramId,'email',result.messages.slice(0,5).map((m:any)=>({id:String(m.id),title:String(m.subject||'Email')}))).catch(()=>{})
       if(result.audit)return formatWorkspaceEmailAudit(result)
       if(!result.messages.length)return 'I searched your connected Gmail and did not find a matching recent message. I did not invent one.'
@@ -174,7 +177,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
       const shown=single?byNewest.slice(0,1):result.messages.slice(0,5)
       const lines=shown.map((m:any,index:number)=>{
         const date=formatEmailDateIST(m.date),snippet=cleanEmailSnippet(m.snippet)
-        const threadLink = includeEmailLinks && /^[a-f0-9]{6,64}$/i.test(String(m.threadId || ''))
+        const threadLink = explicitMail?.includeLinks && /^[a-f0-9]{6,64}$/i.test(String(m.threadId || ''))
           ? `\nOpen in Gmail: https://mail.google.com/mail/u/0/#all/${m.threadId}` : ''
         return `${single?'':`${index+1}. `}${m.subject}\nFrom: ${m.from}${date?`\nReceived: ${date}`:''}${snippet?`\n${snippet}`:''}${threadLink}`
       })
@@ -228,7 +231,12 @@ export async function tryExplicitGmailSearch(actor: AgentActor, text: string): P
   const display = /^(?:give|show|include|return)(?: me)? (?:the |a )?(?:sender|date|subject|summary|short status|status|link|source thread)\b/i
   const readOnly = /^(?:read[ -]only|(?:do not|don['’]t|never) (?:send(?: anything| (?:any )?(?:e-?mails?|mail))?|create a draft)(?: or create a draft)?)[.!?]*$/i
   if (!search.test(query) || action.test(query) || qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
-  const reply = await tryWorkspaceRead(actor, query, undefined, qualifiers.some(clause => /\b(?:link|source thread)\b/i.test(clause)))
+  const searchText = query.replace(/[.!?]+$/, '')
+  // If a detailed search treats “update” as an extra keyword, retry the same subject without that generic suffix.
+  const retryQuery = !/["“]/.test(searchText) && /\b(?:for|about)(?:\s+\S+){3,}\s+update$/i.test(searchText)
+    ? searchText.replace(/\s+update$/i, '') : undefined
+  const includeLinks = qualifiers.some(clause => /\b(?:link|source thread)\b/i.test(clause))
+  const reply = await tryWorkspaceRead(actor, searchText, undefined, { includeLinks, retryQuery })
   return redactSecretShapedText(reply ?? 'I could not complete that search in your connected Gmail.')
 }
 

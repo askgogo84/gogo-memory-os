@@ -76,6 +76,7 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
         assert.equal(receivedActor, actor)
         searches.push(query)
         if (!readingAllowed) throw new Error('workspace_email_reading_disabled')
+        if (query.endsWith(' update')) return { messages: [] }
         return { messages: [{ id: 'msg', threadId: '1ab234cd567ef890', from: 'Fixture vendor', date: '13 Nov 2026', subject: 'Developer onboarding', snippet: 'Fixture evidence' }] }
       },
     },
@@ -84,18 +85,19 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
   runInNewContext(code, { exports, console, require: (name: string) => dependencies[name] || {} })
   const explicit = 'Search my Gmail for the Swiggy MCP developer onboarding update.'
   const reply = await exports.tryExplicitGmailSearch(actor, explicit + ' Give the sender organization, date and a short status, plus a link to the source thread. Read only. Do not send or create a draft.')
-  assert.deepEqual(searches, [explicit])
+  assert.deepEqual(searches, [explicit.slice(0, -1), explicit.replace(' update.', '')])
   assert.match(reply, /From: Fixture vendor\nReceived: 13 Nov 2026/)
   assert.match(reply, /https:\/\/mail\.google\.com\/mail\/u\/0\/#all\/1ab234cd567ef890/)
   const alternative = 'Find emails from Swiggy about MCP developer onboarding.'
   assert.match(await exports.tryExplicitGmailSearch(actor, alternative + ' Show the date and sender. Do not send anything.'), /Fixture evidence/)
-  assert.deepEqual(searches, [explicit, alternative])
+  assert.equal(searches.at(-1), alternative.slice(0, -1))
   for (const query of [explicit + ' Then send it to Ravi.', explicit + ' Give the sender and forward the thread.', 'Connect my Gmail', 'Find a Swiggy restaurant']) {
     assert.equal(await exports.tryExplicitGmailSearch(actor, query), null, query)
   }
-  assert.equal(searches.length, 2, 'mixed actions never enter the private search handler')
+  assert.equal(searches.length, 3, 'mixed actions never enter the private search handler')
   readingAllowed = false
-  assert.match(await exports.tryExplicitGmailSearch(actor, alternative), /reading is disabled/)
+  assert.match(await exports.tryExplicitGmailSearch(actor, explicit), /reading is disabled/)
+  assert.equal(searches.length, 4, 'a consent error never retries the read')
   const dashboard = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') > dashboard.indexOf('await resolveAgentActor('))
   assert.ok(dashboard.indexOf('m.tryExplicitGmailSearch(actor, text)') < dashboard.indexOf('await tryAccountSiteAnswer(actor, text)'))
