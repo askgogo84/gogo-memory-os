@@ -18,10 +18,11 @@ const meetLinks = (s: unknown): string[] => [...new Set((String(s || '').match(/
 function moveClock(text: string) {
   // Bare pronouns after a delivered meeting reminder, not an explicitly named
   // calendar object or an explicit reminder-only clock change.
-  const m = String(text || '').trim().match(/^(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(?:tomorrow|tmrw|tmw)\s*(?:at\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)(?:\s+(IST|UTC))?[.!]*$/i)
+  const m = String(text || '').trim().match(/^(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(today|tomorrow|tmrw|tmw)\s*(?:at\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)(?:\s+(IST|UTC))?[.!]*$/i)
   if (!m) return null
-  const h = Number(m[1]), minute = Number(m[2] || 0)
-  return {hour: h % 12 + (m[3].toLowerCase() === 'pm' ? 12 : 0), minute, zone: m[4]?.toUpperCase(), valid: h >= 1 && h <= 12 && minute <= 59}
+  const h = Number(m[2]), minute = Number(m[3] || 0)
+  const daysAhead = m[1].toLowerCase() === 'today' ? 0 : 1
+  return {daysAhead, hour: h % 12 + (m[4].toLowerCase() === 'pm' ? 12 : 0), minute, zone: m[5]?.toUpperCase(), valid: h >= 1 && h <= 12 && minute <= 59}
 }
 
 export function isContextualMeetingMove(text: string): boolean { return moveClock(text) !== null }
@@ -50,7 +51,8 @@ function storedMeeting(message: string, timezone: string) {
  * Calendar is read-only here. Sent occurrences are never re-armed or rewritten. */
 export async function tryContextualMeetingReschedule(p: {telegramId:number;phone:string;text:string;surface:'web'|'whatsapp';replyToSid?:string}): Promise<string|null> {
   const clock = moveClock(p.text)
-  if (!clock) return null
+  // A same-day move uses the explicitly quoted delivery as its only source.
+  if (!clock || (clock.daysAhead === 0 && !p.replyToSid)) return null
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId === 0) return 'I couldn’t verify the reminder owner. Nothing was changed.'
   if (!clock.valid) return 'Please give one valid meeting time. Nothing was changed.'
   if (p.replyToSid && (p.surface !== 'whatsapp' || p.replyToSid.length > 256 ||
@@ -91,7 +93,7 @@ export async function tryContextualMeetingReschedule(p: {telegramId:number;phone
     const canonical = (z:string) => new Intl.DateTimeFormat('en',{timeZone:z}).resolvedOptions().timeZone
     if (clock.zone && canonical(clock.zone === 'IST' ? 'Asia/Kolkata' : 'UTC') !== canonical(source.timezone)) return 'Please confirm the timezone for this meeting. Nothing was changed.'
     const today = getLocalParts(new Date(now),source.timezone)
-    const day = new Date(Date.UTC(today.year,today.month-1,today.day+1,12))
+    const day = new Date(Date.UTC(today.year,today.month-1,today.day+clock.daysAhead,12))
     const target = exactLocal({year:day.getUTCFullYear(),month:day.getUTCMonth()+1,day:day.getUTCDate(),hour:clock.hour,minute:clock.minute},source.timezone)
     if (!target || target.getTime() <= now) return 'That meeting time is invalid or ambiguous in your timezone. Nothing was changed.'
     const lead = meeting.start.getTime() - Date.parse(source.remind_at)
