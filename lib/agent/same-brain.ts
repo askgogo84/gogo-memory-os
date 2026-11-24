@@ -231,13 +231,15 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
 
 /** Standalone inbox searches may ask for display fields or explicitly rule out delivery. */
 export async function tryExplicitGmailSearch(actor: AgentActor, text: string): Promise<string | null> {
-  const [query, ...qualifiers] = text.trim().split(/(?<=[.!?])\s+/)
+  const qualifierBoundary = /(?:(?<=[.!?;])\s+|(?:\s*,\s*(?:(?:and|then|also)\s+)?|\s+(?:and|then|also)\s+)(?=(?:give|show|include|return|read[- ]only|do not send|don['’]t send|never send)\b))(?=(?:[^"“”]*["“][^"“”]*["”])*[^"“”]*$)/i
+  const [query, ...qualifiers] = text.trim().split(qualifierBoundary)
   const search = /^(?:please\s+)?(?:search\s+(?:my\s+)?(?:gmail|inbox)\s+for|find\s+(?:my\s+)?e-?mails?\s+(?:from|about))\s+\S/i
   const action = /(?:\b(?:and|then|also)\b|[;,\n])\s*(?:(?:and|then|also|please)\s*,?\s+)*(?:send|forward|compose|reply|draft|create|share|publish|open|browse|order|book|delete|cancel|remove|remind|schedule|add|set|update|edit|move|call|buy|pay|submit)\b/i
   const display = /^(?:give|show|include|return)(?: me)? (?:the |a )?(?:sender|date|subject|summary|short status|status|link|source thread)\b/i
   const readOnly = /^(?:read[ -]only|(?:do not|don['’]t|never) (?:send(?: anything| (?:any )?(?:e-?mails?|mail))?|create a draft)(?: or create a draft)?)[.!?]*$/i
-  if (!search.test(query) || action.test(query) || qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
-  const utterance = query.replace(/[.!?]+$/, '')
+  if (!search.test(query) || action.test(query.replace(/["“][^"“”]*["”]/g, '')) ||
+      qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
+  const utterance = query.replace(/[.!?;]+$/, '')
   const searchText = utterance.replace(/^(?:please\s+)?(search\s+(?:my\s+)?(?:gmail|inbox))\s+for\s+/i, '$1 ')
   // If a detailed search treats “update” as an extra keyword, retry the same subject without that generic suffix.
   const retryQuery = !/["“]/.test(utterance) && /\b(?:for|about)(?:\s+\S+){3,}\s+update$/i.test(utterance)
