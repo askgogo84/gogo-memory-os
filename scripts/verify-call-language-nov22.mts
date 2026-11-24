@@ -40,10 +40,19 @@ const db={from:(table:string)=>{
   const q:any={insert:async(row:any)=>{if(table==='memories')savedNames.push(row.content);return {error:null}},select:()=>q,eq:()=>q,like:()=>q,order:()=>q,limit:async()=>({data:table==='conversations'?[{role:'assistant',content:last}]:[]})}
   return q
 }}
+// Real restaurant parser with inert dependencies; this fixture must never perform reservation research.
+const rr=load('lib/agent/restaurant-reservation.ts',{
+  'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:db},'./india-locality':{},
+  '@/lib/web-search':{},'@/lib/timezone':{},'./secure-computer':{},'./approval-binding':{},
+  './context-brain':{},'@/lib/bot/pending-questions':{},'./reservation-dining-context':{},
+  './provider-booking':{},'./reservation-guest-name':{},
+})
+let venueLookups=0
 const v=load('lib/agent/voice-call.ts',{
   'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:db},
   './policy':{capabilityPaused:()=>false},
-  '@/lib/agent/restaurant-reservation':{},
+  '@/lib/agent/restaurant-reservation':rr,
+  '@/lib/web-search':{searchWebResults:async()=>{venueLookups++;throw Error('unexpected venue lookup')}},
   './voice-call-language':{resolveCallLanguage,sarvamCallProfile:(id:string,l:string,k:string)=>sarvamCallProfile(id,l,k,env)},
   './voice-call-execution':{...execution,beginApprovedVoiceCall:async()=>{claims++;return {status:'blocked'}}},
   '@/lib/bot/handlers/followup-state':{saveFollowupState:async(_id:any,_kind:any,value:any)=>{stored=value},getLatestFollowupState:async()=>({payload:stored})},
@@ -135,4 +144,25 @@ for (const sep of ['. ','\n',', ','; ']) {
 const enquiry=await chat('call Example School on 080 2345 6789 and ask whether the class is in Hindi')
 assert.doesNotMatch(enquiry.text,/Call language:/)
 assert.equal(stored.plan.callLanguage,undefined)
+// Invalid explicit dates must never be converted to a same-day table-call plan.
+const beforeInvalid=stored, namesBeforeInvalid=savedNames.length, claimsBeforeInvalid=claims
+for(const date of ['2026-11-31','2027-02-29','31 November 2026']){
+  for(const phone of ['',' on 080 2345 6789']){
+    const result=await chat('call Toit'+phone+' and book a table for 2 on '+date+' at 7pm under the name Fixture Guest')
+    assert.match(result.text,/not a valid calendar date/,date)
+    assert.equal(result.handledBy,'voice-call')
+    assert.equal(stored,beforeInvalid,'no new plan saved')
+  }
+}
+assert.equal(venueLookups,0,'invalid dates stop before phone lookup')
+assert.equal(savedNames.length,namesBeforeInvalid,'no remembered booking name from rejected request')
+assert.equal(claims,claimsBeforeInvalid,'no approval claimed')
+for(const [date,expected] of [[' on 2028-02-29','2028-02-29'],['','2026-11-22']]){
+  const valid=await chat('call Toit on 080 2345 6789 and book a table for 2'+date+' at 7pm')
+  assert.equal(valid.handledBy,'voice-call-plan')
+  assert.equal(stored.plan.date,expected)
+  assert.equal(stored.approvalHash,execution.voicePlanHash(owner,stored.plan))
+}
+assert.equal(claims,claimsBeforeInvalid,'valid plans still require a separate yes')
+assert.equal(venueLookups,0)
 console.log('PASS: localized test plan, legacy approval identity, exact profile and owner, fixture transport, number follow-up and revocation.')
