@@ -239,6 +239,14 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:reply,handledBy:'human-auth-required'})
       }
     }
+    // A standalone search of the owner's inbox belongs to Gmail before provider-site and connection routing.
+    if (/^(?:please\s+)?(?:search|find)\b/i.test(text) && /\b(?:gmail|inbox|e-?mails?)\b/i.test(text)) {
+      const mail = await import('@/lib/agent/same-brain').then(m => m.tryExplicitGmailSearch(actor, text))
+      if (mail) {
+        await saveConversation(user.telegram_id, text, mail)
+        return NextResponse.json({ text: mail, handledBy: 'explicit-gmail-search' })
+      }
+    }
     // Delivered meeting context precedes model/goal clarification on this surface.
     if (/^\s*(?:please\s+)?(?:move|reschedule|shift|postpone)\s+(?:this|that|it)(?:\s+(?:meeting|call))?\s+(?:to\s+)?(?:tomorrow|tmrw|tmw)\s*(?:at\s+)?\d/i.test(text) &&
         !detectFriendReminder(text) && !(isFriendReminderFollowupCandidate(text) && await getPendingFriend(actor.legacyTelegramId))) {

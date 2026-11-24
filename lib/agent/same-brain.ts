@@ -133,7 +133,7 @@ export function isGeneralInboxDigest(text:string){
   return !/\bfrom\s+[a-z0-9]|\babout\s+\w|\bregarding\b|\bsubject\b|\battach|\bbrief\b|\bpdf\b|\blatest (?:e-?mail|mail) from\b|\bpromo|\bnewsletter|\bsocial\b/.test(t)
 }
 
-async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string):Promise<string|null> {
+async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string,includeEmailLinks=false):Promise<string|null> {
   try {
     if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
     if(isEmailRead(text)) {
@@ -174,7 +174,9 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
       const shown=single?byNewest.slice(0,1):result.messages.slice(0,5)
       const lines=shown.map((m:any,index:number)=>{
         const date=formatEmailDateIST(m.date),snippet=cleanEmailSnippet(m.snippet)
-        return `${single?'':`${index+1}. `}${m.subject}\nFrom: ${m.from}${date?`\nReceived: ${date}`:''}${snippet?`\n${snippet}`:''}`
+        const threadLink = includeEmailLinks && /^[a-f0-9]{6,64}$/i.test(String(m.threadId || ''))
+          ? `\nOpen in Gmail: https://mail.google.com/mail/u/0/#all/${m.threadId}` : ''
+        return `${single?'':`${index+1}. `}${m.subject}\nFrom: ${m.from}${date?`\nReceived: ${date}`:''}${snippet?`\n${snippet}`:''}${threadLink}`
       })
       await clearFollowupState(actor.legacyTelegramId,'gmail_search_results')
       await saveFollowupState(actor.legacyTelegramId,'gmail_search_results',{messages:result.messages.slice(0,6),created_at:new Date().toISOString()})
@@ -216,6 +218,18 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
     return 'I could not read that Google Workspace context just now. I did not guess or fall back to another account.'
   }
   return null
+}
+
+/** Standalone inbox searches may ask for display fields or explicitly rule out delivery. */
+export async function tryExplicitGmailSearch(actor: AgentActor, text: string): Promise<string | null> {
+  const [query, ...qualifiers] = text.trim().split(/(?<=[.!?])\s+/)
+  const search = /^(?:please\s+)?(?:search\s+(?:my\s+)?(?:gmail|inbox)\s+for|find\s+(?:my\s+)?e-?mails?\s+(?:from|about))\s+\S/i
+  const action = /(?:\b(?:and|then|also)\s+|[;,\n]\s*)(?:please\s+)?(?:send|forward|compose|reply|draft|create|share|publish|open|browse|order|book|delete|cancel|remove)\b/i
+  const display = /^(?:give|show|include|return)(?: me)? (?:the |a )?(?:sender|date|subject|summary|short status|status|link|source thread)\b/i
+  const readOnly = /^(?:read[ -]only|(?:do not|don['’]t|never) (?:send(?: anything| (?:any )?(?:e-?mails?|mail))?|create a draft)(?: or create a draft)?)[.!?]*$/i
+  if (!search.test(query) || action.test(query) || qualifiers.some(clause => action.test(clause) || (!readOnly.test(clause) && !display.test(clause)))) return null
+  const reply = await tryWorkspaceRead(actor, query, undefined, qualifiers.some(clause => /\b(?:link|source thread)\b/i.test(clause)))
+  return redactSecretShapedText(reply ?? 'I could not complete that search in your connected Gmail.')
 }
 
 /**
