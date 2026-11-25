@@ -193,12 +193,13 @@ export function gmailClassifierFields(data:any) {
   }
 }
 
-async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null, includeMailbox=false) {
+async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null, includeMailbox=false, requireExactId=false) {
   const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   let mailbox = ''
   const response=await workspaceFetch(actor,url,{},account,includeMailbox ? address => {mailbox=address} : undefined)
   if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
+  if(requireExactId && data?.id!==id)throw new Error('workspace_email_message_identity_mismatch')
   const headers=data?.payload?.headers||[]
   // Read inline text only: no attachment downloads, remote images or HTML execution.
   const parts=auditBody?flattenMimeParts(data?.payload).filter(p=>!p.filename&&p.body?.data):[]
@@ -301,11 +302,17 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
         throw new Error('workspace_email_recent_invalid_page')
       }
       const entries=Array.isArray(data.messages)?data.messages:[]
-      const ids=entries.slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
-      const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,false,account)))
+      // A listed ID is opaque provider evidence, not a value to coerce. Count
+      // invalid and duplicate entries as not attempted, so coverage stays partial.
+      const ids=[...new Set<string>(entries.slice(0,20).map((x:any)=>x?.id).filter((id:unknown):id is string=>
+        typeof id==='string'&&id.length>0&&!/\s/.test(id)&&id!=='.'&&id!=='..'))]
+      const cursor=data.nextPageToken
+      const hasMore=entries.length>20?true:cursor===undefined?false:
+        typeof cursor==='string'&&cursor.length>0&&!/\s/.test(cursor)?true:null
+      const settled=await Promise.allSettled(ids.map(id=>gmailMetadata(actor,id,false,account,false,true)))
       const readable=settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
       pages.push({accountId,status:'read',listed:entries.length,metadataRead:readable.length,metadataFailed:ids.length-readable.length,
-        notAttempted:entries.length-ids.length,hasMore:entries.length>20||Boolean(data.nextPageToken)})
+        notAttempted:entries.length-ids.length,hasMore})
       return readable
     } catch(error) {
       pages.push({accountId,status:'failed',listed:null,metadataRead:null,metadataFailed:null,notAttempted:null,hasMore:null})
