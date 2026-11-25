@@ -1147,9 +1147,11 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
-    // A "yes" to the question an image/PDF reply ended with runs that exact reminder/calendar instruction.
-    if ((globalThis as any).process?.env?.VERCEL_ENV && text.length <= 24 && /^\s*(?:yes|yeah|yep|yup|ok|okay|sure|haan|ha|ji|please|go ahead|do it|sounds good)\b/i.test(text)) {
-      const offered = await import('@/lib/agent/image-offer').then(m => m.takeImageOffer(String(resolvedUser.telegramId), text), () => null)
+    // A yes or explicit replacement clock to an image/PDF offer runs its exact owner-bound reminder/calendar instruction.
+    // Short clock replies are resolved before the brain or bare-time classifier; the saved date/subject and atomic claim
+    // are checked in the resolver. Forwarded content and friend flows must not accept an image offer.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && text.length <= 24 && !forwardedMessage && !preserveFriendFlow) {
+      const offered = await import('@/lib/agent/image-offer').then(m => m.isImageOfferReply(text) ? m.takeImageOffer(String(resolvedUser.telegramId), text) : null, () => null)
       if (offered) text = offered
     }
     // Context-first brain (lib/agent/brain.ts): reads the conversation and saved context BEFORE any keyword rule.
