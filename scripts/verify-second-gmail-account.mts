@@ -40,13 +40,16 @@ const inbox: Record<string, { id: string; from: string; subject: string; snippet
   'tok-work': [{ id: 'w1', from: 'CCAvenue <no-reply@ccavenue.com>', subject: 'Payment order successful - 6856147904', snippet: 'Rs 41,898.00 to Kotak Mahindra Prime Limited' }],
 }
 let workDown = false
+let workMetadataDown = false
+let primaryMore = false
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (input: any, init: any) => {
   const url = String(input), token = String(init?.headers?.Authorization || '').replace('Bearer ', '')
   if (!url.startsWith('https://gmail.googleapis.com/')) return realFetch(input, init)
   if (token === 'tok-work' && workDown) return new Response('{}', { status: 500 })
   const mine = inbox[token]; if (!mine) return new Response('{}', { status: 401 })
-  if (url.includes('/messages?')) return Response.json({ messages: mine.map(m => ({ id: m.id })) })
+  if (url.includes('/messages?')) return Response.json({ messages: mine.map(m => ({ id: m.id })), ...(token === 'tok-primary' && primaryMore ? { nextPageToken: 'fixture-opaque-page-token' } : {}) })
+  if (token === 'tok-work' && workMetadataDown) return new Response('{}', { status: 503 })
   const id = url.match(/messages\/([^?]+)/)![1]; const m = mine.find(x => x.id === id)!
   return Response.json({ id, threadId: `t-${id}`, snippet: m.snippet, payload: { headers: [{ name: 'Subject', value: m.subject }, { name: 'From', value: m.from }, { name: 'Date', value: new Date().toUTCString() }] } })
 }) as any
@@ -76,6 +79,24 @@ found = await read.searchWorkspaceEmailsByQuery(actor, '"41898"', 5)
 assert.deepEqual(found.map((m: any) => [m.id, m.account || 'primary']).sort(), [['p1', 'primary'], ['w1', 'goverdhan@tipplr.in']])
 const recent = await read.listRecentWorkspaceInbox(actor, 12)
 assert.deepEqual(recent.messages.map((m: any) => m.id).sort(), ['p1', 'w1'])
+// #1644: bounded inbox coverage must be explicit, never a whole-project all-clear.
+assert.equal(recent.coverage.accountDiscovery, 'best_effort')
+assert.deepEqual(recent.coverage.pages, [
+  { accountId: null, status: 'read', listed: 1, metadataRead: 1, metadataFailed: 0, notAttempted: 0, hasMore: false },
+  { accountId: accounts[0].id, status: 'read', listed: 1, metadataRead: 1, metadataFailed: 0, notAttempted: 0, hasMore: false },
+])
+primaryMore = true; workMetadataDown = true
+const partial = await read.listRecentWorkspaceInbox(actor, 12)
+assert.deepEqual(partial.messages.map(m => m.id), ['p1'], 'keep available primary evidence')
+assert.deepEqual(partial.coverage.pages, [
+  { accountId: null, status: 'read', listed: 1, metadataRead: 1, metadataFailed: 0, notAttempted: 0, hasMore: true },
+  { accountId: accounts[0].id, status: 'read', listed: 1, metadataRead: 0, metadataFailed: 1, notAttempted: 0, hasMore: false },
+])
+assert.ok(!JSON.stringify(partial.coverage).includes('fixture-opaque-page-token'), 'do not expose provider cursor')
+primaryMore = false; workMetadataDown = false
+const recovered = await read.listRecentWorkspaceInbox(actor, 12)
+assert.deepEqual(recovered.messages.map(m => m.id).sort(), ['p1', 'w1'], 'next read retries failed metadata')
+assert.equal(recovered.coverage.pages[1].metadataFailed, 0)
 // The payment-receipt check now finds the CCAvenue confirmation Instinct found (6 Nov live).
 const pc = await import('../lib/agent/payment-confirmation')
 const p = pc.parsePaymentConfirmation('Payment Status: SUCCESS ,Merchant Name: KOTAK MAHINDRA PRIME LIMITED ,Amount: ₹41,898.00 ,Paid By: GOVERDHAN M DODDAMANE ,Amount Details: Savings A/c **********6355 ,HDFC Transaction ID: BAN016310IO0XLNHS9UL ,Reference Number: PIN056310E9529BHHMLK')!
@@ -86,9 +107,13 @@ console.log('✓ searches and the inbox watch read both mailboxes; the CCAvenue 
 workDown = true
 found = await read.searchWorkspaceEmailsByQuery(actor, '"41898"', 5)
 assert.deepEqual(found.map((m: any) => m.id), ['p1'], 'work mailbox down: primary results still come back')
+const extraUnavailable = await read.listRecentWorkspaceInbox(actor, 12)
+assert.deepEqual(extraUnavailable.messages.map(m => m.id), ['p1'])
+assert.deepEqual(extraUnavailable.coverage.pages[1], { accountId: accounts[0].id, status: 'failed', listed: null, metadataRead: null, metadataFailed: null, notAttempted: null, hasMore: null }, 'failed mailbox is not an empty mailbox')
 workDown = false
 users[0].gmail_access_token = encryptGoogleToken('tok-dead'); users[0].gmail_refresh_token = ''
 await assert.rejects(() => read.searchWorkspaceEmailsByQuery(actor, '"41898"', 5), /workspace_email_search_failed:401/)
+await assert.rejects(() => read.listRecentWorkspaceInbox(actor, 12), /workspace_email_recent_failed:401/)
 users[0].gmail_access_token = encryptGoogleToken('tok-primary'); users[0].gmail_refresh_token = encryptGoogleToken('ref-primary')
 console.log('✓ one account failing never hides the other; the primary failing is still reported')
 
