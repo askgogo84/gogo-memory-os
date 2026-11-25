@@ -42,16 +42,20 @@ const inbox: Record<string, { id: string; from: string; subject: string; snippet
 let workDown = false
 let workMetadataDown = false
 let primaryMore = false
+let primaryPageOverride: Record<string, unknown> | null = null
+let workMetadataMismatch = false
+let primaryMetadataReads = 0
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (input: any, init: any) => {
   const url = String(input), token = String(init?.headers?.Authorization || '').replace('Bearer ', '')
   if (!url.startsWith('https://gmail.googleapis.com/')) return realFetch(input, init)
   if (token === 'tok-work' && workDown) return new Response('{}', { status: 500 })
   const mine = inbox[token]; if (!mine) return new Response('{}', { status: 401 })
-  if (url.includes('/messages?')) return Response.json({ messages: mine.map(m => ({ id: m.id })), ...(token === 'tok-primary' && primaryMore ? { nextPageToken: 'fixture-opaque-page-token' } : {}) })
+  if (url.includes('/messages?')) return Response.json(token === 'tok-primary' && primaryPageOverride ? primaryPageOverride : { messages: mine.map(m => ({ id: m.id })), ...(token === 'tok-primary' && primaryMore ? { nextPageToken: 'fixture-opaque-page-token' } : {}) })
   if (token === 'tok-work' && workMetadataDown) return new Response('{}', { status: 503 })
   const id = url.match(/messages\/([^?]+)/)![1]; const m = mine.find(x => x.id === id)!
-  return Response.json({ id, threadId: `t-${id}`, snippet: m.snippet, payload: { headers: [{ name: 'Subject', value: m.subject }, { name: 'From', value: m.from }, { name: 'Date', value: new Date().toUTCString() }] } })
+  if (token === 'tok-primary') primaryMetadataReads++
+  return Response.json({ id: token === 'tok-work' && workMetadataMismatch ? 'foreign-fixture-id' : id, threadId: `t-${id}`, snippet: m.snippet, payload: { headers: [{ name: 'Subject', value: m.subject }, { name: 'From', value: m.from }, { name: 'Date', value: new Date().toUTCString() }] } })
 }) as any
 const actor: any = { userId: 'u1', legacyTelegramId: TG, whatsappId: '918884501501', name: 'Goverdhan' }
 const read = await import('../lib/agent/google-workspace-read')
@@ -111,6 +115,20 @@ primaryMore = false; workMetadataDown = false
 const recovered = await read.listRecentWorkspaceInbox(actor, 12)
 assert.deepEqual(recovered.messages.map(m => m.id).sort(), ['p1', 'w1'], 'next read retries failed metadata')
 assert.equal(recovered.coverage.pages[1].metadataFailed, 0)
+// Checkpoint evidence must not count duplicates, coerced IDs, invalid cursors or mismatched metadata as covered.
+primaryPageOverride = { messages: [{ id: 'p1' }, { id: 'p1' }, { id: 42 }, { id: ' ' }], nextPageToken: { malformed: true } }
+primaryMetadataReads = 0
+workMetadataMismatch = true
+const invalidEvidence = await read.listRecentWorkspaceInbox(actor, 12)
+assert.deepEqual(invalidEvidence.messages.map(m => m.id), ['p1'])
+assert.equal(primaryMetadataReads, 1, 'duplicate and malformed list IDs must not cause extra reads')
+assert.deepEqual(invalidEvidence.coverage.pages, [
+  { accountId: null, status: 'read', listed: 4, metadataRead: 1, metadataFailed: 0, notAttempted: 3, hasMore: null },
+  { accountId: accounts[0].id, status: 'read', listed: 1, metadataRead: 0, metadataFailed: 1, notAttempted: 0, hasMore: false },
+])
+primaryPageOverride = null; workMetadataMismatch = false
+const afterInvalid = await read.listRecentWorkspaceInbox(actor, 12)
+assert.deepEqual(afterInvalid.messages.map(m => m.id).sort(), ['p1', 'w1'], 'recovery reads the expected message again')
 // The payment-receipt check now finds the CCAvenue confirmation Instinct found (6 Nov live).
 const pc = await import('../lib/agent/payment-confirmation')
 const p = pc.parsePaymentConfirmation('Payment Status: SUCCESS ,Merchant Name: KOTAK MAHINDRA PRIME LIMITED ,Amount: ₹41,898.00 ,Paid By: GOVERDHAN M DODDAMANE ,Amount Details: Savings A/c **********6355 ,HDFC Transaction ID: BAN016310IO0XLNHS9UL ,Reference Number: PIN056310E9529BHHMLK')!
