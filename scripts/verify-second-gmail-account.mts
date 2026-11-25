@@ -45,13 +45,23 @@ let primaryMore = false
 let primaryPageOverride: Record<string, unknown> | null = null
 let workMetadataMismatch = false
 let primaryMetadataReads = 0
+let primaryPages: Record<string, Record<string, unknown> | null> | null = null
+let listRequests: [string, string][] = []
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (input: any, init: any) => {
   const url = String(input), token = String(init?.headers?.Authorization || '').replace('Bearer ', '')
   if (!url.startsWith('https://gmail.googleapis.com/')) return realFetch(input, init)
   if (token === 'tok-work' && workDown) return new Response('{}', { status: 500 })
   const mine = inbox[token]; if (!mine) return new Response('{}', { status: 401 })
-  if (url.includes('/messages?')) return Response.json(token === 'tok-primary' && primaryPageOverride ? primaryPageOverride : { messages: mine.map(m => ({ id: m.id })), ...(token === 'tok-primary' && primaryMore ? { nextPageToken: 'fixture-opaque-page-token' } : {}) })
+  if (url.includes('/messages?')) {
+    const cursor = new URL(url).searchParams.get('pageToken') || ''
+    listRequests.push([token, cursor])
+    if (token === 'tok-primary' && primaryPages) {
+      const page = primaryPages[cursor]
+      return page ? Response.json(page) : new Response('{}', { status: 503 })
+    }
+    return Response.json(token === 'tok-primary' && primaryPageOverride ? primaryPageOverride : { messages: mine.map(m => ({ id: m.id })), ...(token === 'tok-primary' && primaryMore ? { nextPageToken: 'fixture-opaque-page-token' } : {}) })
+  }
   if (token === 'tok-work' && workMetadataDown) return new Response('{}', { status: 503 })
   const id = url.match(/messages\/([^?]+)/)![1]; const m = mine.find(x => x.id === id)!
   if (token === 'tok-primary') primaryMetadataReads++
@@ -129,6 +139,46 @@ assert.deepEqual(invalidEvidence.coverage.pages, [
 primaryPageOverride = null; workMetadataMismatch = false
 const afterInvalid = await read.listRecentWorkspaceInbox(actor, 12)
 assert.deepEqual(afterInvalid.messages.map(m => m.id).sort(), ['p1', 'w1'], 'recovery reads the expected message again')
+// #1644: bounded opt-in pagination, using only synthetic provider pages.
+const burst = Array.from({length: 51}, (_, i) => ({id: 'burst-' + i, from: 'fixture@example.invalid', subject: 'fixture', snippet: 'fixture'}))
+inbox['tok-primary'].push(...burst)
+const idsFor = (start: number, end: number) => burst.slice(start, end).map(m => ({id: m.id}))
+primaryPages = {
+  '': {messages: idsFor(0, 20), nextPageToken: 'fixture-page-2'},
+  'fixture-page-2': {messages: idsFor(20, 40), nextPageToken: 'fixture-page-3'},
+  'fixture-page-3': {messages: idsFor(40, 51)},
+}
+listRequests = []
+const singlePage = await read.listRecentWorkspaceInbox(actor, 20)
+assert.equal(singlePage.messages.length, 21, 'legacy callers read one page per account')
+assert.deepEqual(listRequests.filter(([token]) => token === 'tok-primary'), [['tok-primary', '']])
+listRequests = []
+const catchup = await read.listRecentWorkspaceInbox(actor, 20, 3)
+assert.equal(catchup.messages.length, 52, 'all 51 burst messages plus the work mailbox')
+assert.ok(catchup.messages.some(m => m.id === 'burst-50'), 'older page evidence is not dropped')
+assert.deepEqual(catchup.coverage.pages[0], {accountId:null,status:'read',listed:51,metadataRead:51,metadataFailed:0,notAttempted:0,hasMore:false})
+assert.deepEqual(listRequests.filter(([token]) => token === 'tok-primary'), [['tok-primary',''],['tok-primary','fixture-page-2'],['tok-primary','fixture-page-3']])
+assert.deepEqual(listRequests.filter(([token]) => token === 'tok-work'), [['tok-work','']], 'primary token never crosses accounts')
+assert.ok(!JSON.stringify(catchup).includes('fixture-page-2'), 'cursor is not returned')
+const budgeted = await read.listRecentWorkspaceInbox(actor, 20, 2)
+assert.equal(budgeted.coverage.pages[0].metadataRead, 40)
+assert.equal(budgeted.coverage.pages[0].hasMore, true, 'budget exhaustion is incomplete coverage')
+primaryPages['fixture-page-2'] = null
+const failedLater = await read.listRecentWorkspaceInbox(actor, 20, 3)
+assert.equal(failedLater.messages.length, 21, 'later failure preserves earlier evidence and other account')
+assert.equal(failedLater.coverage.pages[0].hasMore, null, 'failed continuation is unknown')
+primaryPages['fixture-page-2'] = {messages: [{id:'burst-0'}, {id:'burst-20'}], nextPageToken:'fixture-page-2'}
+listRequests = []
+const repeated = await read.listRecentWorkspaceInbox(actor, 20, 4)
+assert.equal(repeated.messages.filter(m => m.id === 'burst-0').length, 1, 'cross-page duplicate is not read twice')
+assert.equal(repeated.coverage.pages[0].notAttempted, 1)
+assert.equal(repeated.coverage.pages[0].hasMore, null, 'cursor loop is not a complete scan')
+assert.equal(listRequests.filter(([token]) => token === 'tok-primary').length, 2, 'loop never issues another request')
+listRequests = []
+await assert.rejects(() => read.listRecentWorkspaceInbox(actor, 20, 5), /workspace_email_recent_page_budget_invalid/)
+assert.equal(listRequests.length, 0, 'invalid budget makes no provider reads')
+primaryPages = null
+inbox['tok-primary'].splice(1)
 // The payment-receipt check now finds the CCAvenue confirmation Instinct found (6 Nov live).
 const pc = await import('../lib/agent/payment-confirmation')
 const p = pc.parsePaymentConfirmation('Payment Status: SUCCESS ,Merchant Name: KOTAK MAHINDRA PRIME LIMITED ,Amount: ₹41,898.00 ,Paid By: GOVERDHAN M DODDAMANE ,Amount Details: Savings A/c **********6355 ,HDFC Transaction ID: BAN016310IO0XLNHS9UL ,Reference Number: PIN056310E9529BHHMLK')!
