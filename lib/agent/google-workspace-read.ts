@@ -261,21 +261,53 @@ export async function searchWorkspaceEmailsByQuery(actor:AgentActor, q:string, m
   return messages.filter(Boolean).sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
 }
 
+// Coverage describes only the bounded page of each discovered account, never the
+// whole inbox or project. Legacy account discovery is best-effort; a null accountId
+// denotes the primary slot for this read, not a durable mailbox identity.
+type InboxPageCoverage = {
+  accountId: string | null
+  status: 'read' | 'failed'
+  listed: number | null
+  metadataRead: number | null
+  metadataFailed: number | null
+  notAttempted: number | null
+  hasMore: boolean | null
+}
+
 export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12) {
   const params=new URLSearchParams({
     maxResults:String(Math.max(1,Math.min(20,Math.floor(maxResults||12)))),
     q:'in:inbox newer_than:2d',
   })
+  const pages:InboxPageCoverage[]=[]
   const messages=await acrossAccounts(actor,async account=>{
-    const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
-    if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
-    const data:any=await response.json()
-    const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
-    const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,false,account)))
-    return settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
+    const accountId=account?.id??null
+    try {
+      const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
+      if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
+      const data:any=await response.json()
+      // Gmail omits messages for an empty page; an explicitly malformed list
+      // is not evidence of an empty inbox.
+      if(!data||typeof data!=='object'||Array.isArray(data)||(data.messages!==undefined&&!Array.isArray(data.messages))) {
+        throw new Error('workspace_email_recent_invalid_page')
+      }
+      const entries=Array.isArray(data.messages)?data.messages:[]
+      const ids=entries.slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
+      const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,false,account)))
+      const readable=settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
+      pages.push({accountId,status:'read',listed:entries.length,metadataRead:readable.length,metadataFailed:ids.length-readable.length,
+        notAttempted:entries.length-ids.length,hasMore:entries.length>20||Boolean(data.nextPageToken)})
+      return readable
+    } catch(error) {
+      pages.push({accountId,status:'failed',listed:null,metadataRead:null,metadataFailed:null,notAttempted:null,hasMore:null})
+      // Preserve existing semantics: primary failure propagates, extra failure
+      // leaves other available evidence intact through acrossAccounts.
+      throw error
+    }
   })
   messages.sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
-  return {messages}
+  pages.sort((a,b)=>a.accountId===null?(b.accountId===null?0:-1):b.accountId===null?1:a.accountId.localeCompare(b.accountId))
+  return {messages,coverage:{accountDiscovery:'best_effort' as const,pages}}
 }
 
 export function workspaceEmailAuditScope(input:string) {
