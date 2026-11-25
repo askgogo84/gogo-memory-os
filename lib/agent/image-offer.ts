@@ -11,6 +11,52 @@ function exactOwnerId(id: string | number): string | null {
   return /^-?[1-9]\d*$/.test(value) ? value : null
 }
 
+
+// Accept an explicit standalone clock, not a bare number, a date change, or a compound instruction.
+// In particular, 4.15pm is a clock override; 4:15 without AM/PM is ambiguous.
+function explicitOfferClock(text: string): { hour: number; minute: number } | null {
+  const m = String(text || '').trim().match(/^(\d{1,2})(?:[.:](\d{2}))?\s*(am|pm)?$/i)
+  if (!m) return null
+  let hour = Number(m[1])
+  const minute = Number(m[2] || '0'), meridiem = m[3]?.toLowerCase()
+  if (minute > 59) return null
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null
+    hour = hour % 12 + (meridiem === 'pm' ? 12 : 0)
+  } else if (!m[2] || hour > 23 || (hour >= 1 && hour <= 12)) {
+    return null
+  }
+  return { hour, minute }
+}
+
+export function isImageOfferReply(text: string): boolean {
+  return isPlainYes(text) || explicitOfferClock(text) !== null
+}
+
+// The stored generated reminder instruction supplies the date and subject, not the new reply.
+// Change only the clock token, validate both parses, and refuse a past or shifted date.
+// Calendar offers (which have no validated reminder timestamp) cannot be rewritten.
+async function reminderClockOverride(instruction: string, at: unknown, clock: { hour: number; minute: number }): Promise<string | null> {
+  if (typeof at !== 'string') return null
+  const originalMs = Date.parse(at)
+  if (!Number.isFinite(originalMs) || originalMs <= Date.now()) return null
+  const parts = instruction.match(/^(remind me (?:today|on \d{1,2} [a-z]+ \d{4}) at )(\d{1,2}(?::\d{2})?(?:am|pm))( to .+)$/i)
+  if (!parts) return null
+  const day = new Date(originalMs + 330 * 60_000).toISOString().slice(0, 10)
+  const hh = String(clock.hour).padStart(2, '0'), mm = String(clock.minute).padStart(2, '0')
+  const targetMs = Date.parse(day + 'T' + hh + ':' + mm + ':00+05:30')
+  if (!Number.isFinite(targetMs) || targetMs <= Date.now()) return null
+  const replacement = String(clock.hour % 12 || 12) + (clock.minute ? ':' + mm : '') + (clock.hour >= 12 ? 'pm' : 'am')
+  const rewritten = parts[1] + replacement + parts[3]
+  const { parseReminderIntent } = await import('@/lib/bot/handlers/reminders')
+  const before = parseReminderIntent(instruction)
+  const after = parseReminderIntent(rewritten)
+  if (before?.kind !== 'one_time' || before.remindAtIso !== new Date(originalMs).toISOString()
+    || after?.kind !== 'one_time' || after.remindAtIso !== new Date(targetMs).toISOString()
+    || !before.message || after.message !== before.message) return null
+  return rewritten
+}
+
 export async function saveImageOffer(telegramId: string | number, offer: ImageOffer | null) {
   const owner = exactOwnerId(telegramId)
   if (!owner || !offer) return
@@ -18,14 +64,16 @@ export async function saveImageOffer(telegramId: string | number, offer: ImageOf
     telegram_id: owner,
     event_type: OFFER_EVENT,
     message: offer.question.slice(0, 200),
-    metadata_json: { instruction: offer.instruction, question: offer.question },
+    metadata_json: { instruction: offer.instruction, question: offer.question, ...(offer.at ? { at: offer.at } : {}) },
   })
   if (error) console.error('IMAGE_OFFER_SAVE_FAILED:', error.message)
 }
 
-/** A "yes" becomes its offered instruction only after a successful atomic owner-scoped claim. */
+/** A yes or explicit replacement clock dispatches only after an atomic owner-scoped claim. */
 export async function takeImageOffer(telegramId: string | number, text: string): Promise<string | null> {
-  if (!isPlainYes(text)) return null
+  const yes = isPlainYes(text)
+  const clock = yes ? null : explicitOfferClock(text)
+  if (!yes && !clock) return null
   const owner = exactOwnerId(telegramId)
   if (!owner) return null
   const since = new Date(Date.now() - OFFER_MINUTES * 60_000).toISOString()
@@ -46,6 +94,9 @@ export async function takeImageOffer(telegramId: string | number, text: string):
     const latest = String((last as any)?.[0]?.content || '').trim()
     if (!question || !instruction || !latest.endsWith(question)) return null
 
+    const resolvedInstruction = clock ? await reminderClockOverride(instruction, row.metadata_json?.at, clock) : instruction
+    if (!resolvedInstruction) return null
+
     // PostgreSQL performs this guarded update atomically on the existing UUID row.
     // A racing webhook, different owner or previously-used offer matches zero rows.
     // A failed/unknown DB result returns null and is NEVER blindly retried.
@@ -54,7 +105,7 @@ export async function takeImageOffer(telegramId: string | number, text: string):
       .eq('id', row.id).eq('telegram_id', owner).eq('event_type', OFFER_EVENT)
       .select('id').maybeSingle()
     if (claimError || !claimed || String(claimed.id) !== row.id) return null
-    return instruction
+    return resolvedInstruction
   } catch {
     return null
   }
