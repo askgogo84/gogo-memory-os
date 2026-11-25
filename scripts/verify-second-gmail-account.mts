@@ -81,6 +81,20 @@ const recent = await read.listRecentWorkspaceInbox(actor, 12)
 assert.deepEqual(recent.messages.map((m: any) => m.id).sort(), ['p1', 'w1'])
 // #1644: bounded inbox coverage must be explicit, never a whole-project all-clear.
 assert.equal(recent.coverage.accountDiscovery, 'best_effort')
+assert.equal(recent.coverage.accountDiscoveryStatus, 'read')
+accountsTableMissing = true
+const discoveryUnavailable = await read.listRecentWorkspaceInbox(actor, 12)
+assert.deepEqual(discoveryUnavailable.messages.map(m => m.id), ['p1'])
+assert.equal(discoveryUnavailable.coverage.accountDiscoveryStatus, 'unavailable', 'unknown extra account discovery is not a complete account set')
+accountsTableMissing = false
+// Exactly the configured cap is conservatively bounded: do not assume there is no sixth account.
+const extraFixture = accounts[0]
+for (let i = 2; i <= 5; i++) accounts.push({ ...extraFixture, id: 'acc-fixture-' + i, email: 'fixture-' + i + '@example.invalid' })
+const capped = await read.listRecentWorkspaceInbox(actor, 12)
+assert.equal(capped.coverage.accountDiscoveryStatus, 'bounded')
+assert.equal(capped.coverage.pages.length, 6)
+accounts.splice(1)
+
 assert.deepEqual(recent.coverage.pages, [
   { accountId: null, status: 'read', listed: 1, metadataRead: 1, metadataFailed: 0, notAttempted: 0, hasMore: false },
   { accountId: accounts[0].id, status: 'read', listed: 1, metadataRead: 1, metadataFailed: 0, notAttempted: 0, hasMore: false },

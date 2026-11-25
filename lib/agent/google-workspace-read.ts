@@ -223,14 +223,22 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, accou
 
 // Every Google account the person connected (6 Nov, owner: gmail.com and tipplr.in): the primary (null) first,
 // then the extras. An extra account that fails is logged and skipped, never a reason to lose the primary's results.
-async function allAccounts(actor:AgentActor):Promise<(ExtraAccount|null)[]> {
-  const extras:ExtraAccount[]=await import('./gmail-accounts').then(m=>typeof m?.listExtraGmailAccounts==='function'?m.listExtraGmailAccounts(actor.legacyTelegramId):[]).catch(()=>[])
+type ExtraAccountDiscoveryStatus = import('./gmail-accounts').ExtraGmailDiscoveryStatus
+async function allAccounts(actor:AgentActor,onDiscovery?:(status:ExtraAccountDiscoveryStatus)=>void):Promise<(ExtraAccount|null)[]> {
+  const extras:ExtraAccount[]=await import('./gmail-accounts').then(async m=>{
+    if(onDiscovery&&typeof m?.listExtraGmailAccountsWithCoverage==='function'){
+      const result=await m.listExtraGmailAccountsWithCoverage(actor.legacyTelegramId)
+      onDiscovery(result.status)
+      return result.accounts
+    }
+    return typeof m?.listExtraGmailAccounts==='function'?m.listExtraGmailAccounts(actor.legacyTelegramId):[]
+  }).catch(()=>[])
   return [null,...extras]
 }
-async function acrossAccounts<T>(actor:AgentActor, read:(account:ExtraAccount|null)=>Promise<T[]>):Promise<T[]> {
+async function acrossAccounts<T>(actor:AgentActor, read:(account:ExtraAccount|null)=>Promise<T[]>,onDiscovery?:(status:ExtraAccountDiscoveryStatus)=>void):Promise<T[]> {
   // The primary first: its consent and connection checks decide whether any mail is read at all.
   const out:T[]=await read(null)
-  const extras=(await allAccounts(actor)).filter((a):a is ExtraAccount=>!!a)
+  const extras=(await allAccounts(actor,onDiscovery)).filter((a):a is ExtraAccount=>!!a)
   const settled=await Promise.allSettled(extras.map(read))
   settled.forEach((s,i)=>{
     if(s.status==='fulfilled')out.push(...s.value)
@@ -280,6 +288,7 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
     q:'in:inbox newer_than:2d',
   })
   const pages:InboxPageCoverage[]=[]
+  let accountDiscoveryStatus:ExtraAccountDiscoveryStatus='unavailable'
   const messages=await acrossAccounts(actor,async account=>{
     const accountId=account?.id??null
     try {
@@ -304,10 +313,10 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
       // leaves other available evidence intact through acrossAccounts.
       throw error
     }
-  })
+  },status=>{accountDiscoveryStatus=status})
   messages.sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
   pages.sort((a,b)=>a.accountId===null?(b.accountId===null?0:-1):b.accountId===null?1:a.accountId.localeCompare(b.accountId))
-  return {messages,coverage:{accountDiscovery:'best_effort' as const,pages}}
+  return {messages,coverage:{accountDiscovery:'best_effort' as const,accountDiscoveryStatus:accountDiscoveryStatus as ExtraAccountDiscoveryStatus,pages}}
 }
 
 export function workspaceEmailAuditScope(input:string) {

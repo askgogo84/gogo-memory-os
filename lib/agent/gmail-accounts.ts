@@ -6,14 +6,25 @@ import { decryptGoogleToken, encryptGoogleToken } from '@/lib/security/google-to
 
 export type ExtraGmailAccount = { id: string; email: string; accessToken: string; refreshToken: string }
 
-export async function listExtraGmailAccounts(telegramId: string | number): Promise<ExtraGmailAccount[]> {
+export type ExtraGmailDiscoveryStatus = 'read' | 'bounded' | 'unavailable'
+const EXTRA_ACCOUNT_LIMIT = 5
+
+/** The same bounded owner query as legacy discovery, but with an explicit coverage signal.
+ * Hitting the limit is not proof that all connected accounts were discovered. */
+export async function listExtraGmailAccountsWithCoverage(telegramId: string | number): Promise<{ accounts: ExtraGmailAccount[]; status: ExtraGmailDiscoveryStatus }> {
   const { data, error } = await supabaseAdmin.from('gmail_accounts').select('id,email,access_token,refresh_token')
-    .eq('telegram_id', String(telegramId)).is('disconnected_at', null).order('connected_at', { ascending: true }).limit(5)
+    .eq('telegram_id', String(telegramId)).is('disconnected_at', null).order('connected_at', { ascending: true }).limit(EXTRA_ACCOUNT_LIMIT)
   if (error) {
     if (!/does not exist|relation|schema cache/i.test(error.message)) console.error('GMAIL_ACCOUNTS_READ_FAILED:', error.message)
-    return []
+    return { accounts: [], status: 'unavailable' }
   }
-  return (data || []).map((r: any) => ({ id: String(r.id), email: String(r.email).toLowerCase(), accessToken: decryptGoogleToken(String(r.access_token || '')), refreshToken: decryptGoogleToken(String(r.refresh_token || '')) }))
+  if (!Array.isArray(data)) return { accounts: [], status: 'unavailable' }
+  const accounts = data.map((r: any) => ({ id: String(r.id), email: String(r.email).toLowerCase(), accessToken: decryptGoogleToken(String(r.access_token || '')), refreshToken: decryptGoogleToken(String(r.refresh_token || '')) }))
+  return { accounts, status: data.length >= EXTRA_ACCOUNT_LIMIT ? 'bounded' : 'read' }
+}
+
+export async function listExtraGmailAccounts(telegramId: string | number): Promise<ExtraGmailAccount[]> {
+  return (await listExtraGmailAccountsWithCoverage(telegramId)).accounts
 }
 
 export async function upsertExtraGmailAccount(telegramId: string | number, email: string, tokens: { access_token: string; refresh_token?: string | null; scope?: string | null }) {
