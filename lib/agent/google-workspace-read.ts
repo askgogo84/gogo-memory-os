@@ -283,8 +283,11 @@ type InboxPageCoverage = {
   hasMore: boolean | null
 }
 
-export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12) {
-  const params=new URLSearchParams({
+// Opt-in catch-up is bounded per account and per invocation. This is not a
+// durable checkpoint: caller-visible coverage never contains a provider cursor.
+export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12, maxPages = 1) {
+  if(!Number.isInteger(maxPages)||maxPages<1||maxPages>4)throw new Error('workspace_email_recent_page_budget_invalid')
+  const baseParams=new URLSearchParams({
     maxResults:String(Math.max(1,Math.min(20,Math.floor(maxResults||12)))),
     q:'in:inbox newer_than:2d',
   })
@@ -292,34 +295,61 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
   let accountDiscoveryStatus:ExtraAccountDiscoveryStatus='unavailable'
   const messages=await acrossAccounts(actor,async account=>{
     const accountId=account?.id??null
+    // Tokens and message IDs are scoped to this account, never shared with
+    // another mailbox. A new invocation always starts at the first page.
+    const seenIds=new Set<string>()
+    const seenCursors=new Set<string>()
+    let pageToken:string|undefined
+    let listed=0, metadataRead=0, metadataFailed=0, notAttempted=0, pagesRead=0
+    let hasMore:boolean|null=null
+    const readable:Awaited<ReturnType<typeof gmailMetadata>>[]=[]
     try {
-      const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
-      if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
-      const data:any=await response.json()
-      // Gmail omits messages for an empty page; an explicitly malformed list
-      // is not evidence of an empty inbox.
-      if(!data||typeof data!=='object'||Array.isArray(data)||(data.messages!==undefined&&!Array.isArray(data.messages))) {
-        throw new Error('workspace_email_recent_invalid_page')
+      for(let page=0;page<maxPages;page++){
+        const params=new URLSearchParams(baseParams)
+        if(pageToken!==undefined)params.set('pageToken',pageToken)
+        const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
+        if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
+        const data:any=await response.json()
+        // Gmail omits messages for an empty page; an explicitly malformed list
+        // is not evidence of an empty inbox.
+        if(!data||typeof data!=='object'||Array.isArray(data)||(data.messages!==undefined&&!Array.isArray(data.messages))) {
+          throw new Error('workspace_email_recent_invalid_page')
+        }
+        const entries=Array.isArray(data.messages)?data.messages:[]
+        const ids=[...new Set<string>(entries.slice(0,20).map((x:any)=>x?.id).filter((id:unknown):id is string=>
+          typeof id==='string'&&id.length>0&&!/\s/.test(id)&&id!=='.'&&id!=='..'))].filter(id=>!seenIds.has(id))
+        ids.forEach(id=>seenIds.add(id))
+        const cursor=data.nextPageToken
+        hasMore=entries.length>20?true:cursor===undefined?false:
+          typeof cursor==='string'&&cursor.length>0&&!/\s/.test(cursor)?true:null
+        if(typeof cursor==='string'&&seenCursors.has(cursor))hasMore=null
+        const settled=await Promise.allSettled(ids.map(id=>gmailMetadata(actor,id,false,account,false,true)))
+        const available=settled.flatMap(x=>x.status==='fulfilled'?[x.value]:[])
+        readable.push(...available)
+        listed+=entries.length
+        metadataRead+=available.length
+        metadataFailed+=ids.length-available.length
+        notAttempted+=entries.length-ids.length
+        pagesRead++
+        // Do not proceed beyond an incomplete page, oversized response or
+        // repeated cursor. Previously verified evidence remains available.
+        if(hasMore!==true||entries.length!==ids.length||available.length!==ids.length||typeof cursor!=='string'||!cursor||/\s/.test(cursor))break
+        seenCursors.add(cursor)
+        pageToken=cursor
       }
-      const entries=Array.isArray(data.messages)?data.messages:[]
-      // A listed ID is opaque provider evidence, not a value to coerce. Count
-      // invalid and duplicate entries as not attempted, so coverage stays partial.
-      const ids=[...new Set<string>(entries.slice(0,20).map((x:any)=>x?.id).filter((id:unknown):id is string=>
-        typeof id==='string'&&id.length>0&&!/\s/.test(id)&&id!=='.'&&id!=='..'))]
-      const cursor=data.nextPageToken
-      const hasMore=entries.length>20?true:cursor===undefined?false:
-        typeof cursor==='string'&&cursor.length>0&&!/\s/.test(cursor)?true:null
-      const settled=await Promise.allSettled(ids.map(id=>gmailMetadata(actor,id,false,account,false,true)))
-      const readable=settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
-      pages.push({accountId,status:'read',listed:entries.length,metadataRead:readable.length,metadataFailed:ids.length-readable.length,
-        notAttempted:entries.length-ids.length,hasMore})
-      return readable
     } catch(error) {
-      pages.push({accountId,status:'failed',listed:null,metadataRead:null,metadataFailed:null,notAttempted:null,hasMore:null})
-      // Preserve existing semantics: primary failure propagates, extra failure
-      // leaves other available evidence intact through acrossAccounts.
-      throw error
+      if(!pagesRead){
+        pages.push({accountId,status:'failed',listed:null,metadataRead:null,metadataFailed:null,notAttempted:null,hasMore:null})
+        // Preserve existing semantics: a first primary failure propagates;
+        // an unavailable extra account leaves other evidence intact.
+        throw error
+      }
+      // A failed continuation is not a complete scan. Keep the pages that
+      // were already verified; a subsequent invocation can retry them.
+      hasMore=null
     }
+    pages.push({accountId,status:'read',listed,metadataRead,metadataFailed,notAttempted,hasMore})
+    return readable
   },status=>{accountDiscoveryStatus=status})
   messages.sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
   pages.sort((a,b)=>a.accountId===null?(b.accountId===null?0:-1):b.accountId===null?1:a.accountId.localeCompare(b.accountId))
