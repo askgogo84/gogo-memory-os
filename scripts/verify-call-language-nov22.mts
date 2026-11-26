@@ -165,4 +165,50 @@ for(const [date,expected] of [[' on 2028-02-29','2028-02-29'],['','2026-11-22']]
 }
 assert.equal(claims,claimsBeforeInvalid,'valid plans still require a separate yes')
 assert.equal(venueLookups,0)
+
+const languages = [
+  { name: 'English', code: '', table: 'fixture-english-table', general: 'fixture-english-general' },
+  ...[['Hindi', 'HI'], ['Kannada', 'KN'], ['Tamil', 'TA'], ['Telugu', 'TE']].map(([name, code], index) => ({
+    name, code,
+    table: `00000000-0000-4000-8000-${String(21 + index * 2).padStart(12, '0')}`,
+    general: `00000000-0000-4000-8000-${String(22 + index * 2).padStart(12, '0')}`,
+  })),
+]
+for (const language of languages) {
+  const prefix = language.code ? `BOLNA_SARVAM_${language.code}_` : 'BOLNA_'
+  env[`${prefix}${language.code ? 'TABLE_' : ''}AGENT_ID`] = language.table
+  env[`${prefix}GENERAL_AGENT_ID`] = language.general
+}
+const scenarios = [
+  { venue: 'Toit', ask: 'book a table for 2 on 2026-11-28 at 7pm', kind: 'table', evidence: /2.*7pm/i },
+  { venue: 'Fixture Hotel', ask: 'book a room for two nights from Saturday, no deposit', kind: 'general', evidence: /room for two nights from Saturday.*no deposit/i },
+  { venue: 'Fixture Salon', ask: 'book a haircut on Sunday at 11am', kind: 'general', evidence: /haircut on Sunday at 11am/i },
+  { venue: 'Fixture Service Centre', ask: 'ask for a lower quote for the service and do not accept or book', kind: 'general', evidence: /lower quote.*do not accept or book/i },
+  { venue: 'Fixture Tipplr Restaurant', ask: 'ask whether they want a Tipplr onboarding callback and make no promises about fees', kind: 'general', evidence: /Tipplr onboarding callback.*no promises about fees/i },
+  { venue: 'Fixture ONDC Restaurant', ask: 'ask whether they want a seller partner callback about ONDC and do not claim activation', kind: 'general', evidence: /seller partner callback about ONDC.*do not claim activation/i },
+] as const
+for (const language of languages) {
+  for (const scenario of scenarios) {
+    const label = `${language.name} / ${scenario.venue}`
+    const suffix = language.code ? `; speak in ${language.name}` : ''
+    const before = observed.length
+    const result = await chat(`call ${scenario.venue} on 080 2345 6789 and ${scenario.ask}${suffix}`)
+    assert.equal(result.handledBy, 'voice-call-plan', label)
+    assert.match(result.text, /NEEDS YOUR YES/, label)
+    assert.equal(stored.plan.kind ?? 'table', scenario.kind, label)
+    assert.match(result.text, scenario.evidence, label)
+    assert.equal(stored.approvalHash, execution.voicePlanHash(owner, stored.plan), label)
+    assert.equal(observed.length, before, 'planning must not invoke the provider')
+    await v.placeCall(stored.plan, '+919999999999', transport, owner)
+    const payload = observed.at(-1)[1]
+    assert.equal(payload.agent_id, language[scenario.kind], label)
+    assert.equal(payload.recipient_phone_number, '+918023456789', label)
+    if (scenario.kind === 'general') {
+      assert.match(payload.user_data.purpose, scenario.evidence, label)
+      assert.equal(Object.hasOwn(payload.user_data, 'contact_number'), false)
+    }
+  }
+}
+assert.equal(claims, claimsBeforeInvalid, 'the matrix never commits an approval or starts a real call')
+console.log('PASS: 30 language/scenario combinations through plan building and inert Bolna payloads.')
 console.log('PASS: localized test plan, legacy approval identity, exact profile and owner, fixture transport, number follow-up and revocation.')
