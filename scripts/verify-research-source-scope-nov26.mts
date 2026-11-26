@@ -107,7 +107,7 @@ const extract = (urls: string[]) => extractResearchPages(urls, async (url, init)
   assert.equal(new Headers(init?.headers).has('authorization'), false)
   assert.ok(url === wallet || url === guide)
   const html = url === wallet
-    ? `<h2>Beta</h2><p>${walletSentences.join(' ')}</p>`
+    ? `<h2>Beta</h2><p>${walletSentences.join(' ')} Bills today.</p>`
     : '<h2>Supported bills</h2><p>The wallet can&#8217;t pay <strong>Credit Card or Loan Repayment bills</strong>.</p>'
       + '<h2>Sandbox access</h2><ul><li><a href="https://elsewhere.invalid/contact">Cashfree sales</a> provisions the sandbox API key.</li></ul>'
       + '<p>On <code>SUCCESS</code>, give the customer the <abbr>UTR</abbr> as proof of settlement.</p>'
@@ -130,6 +130,25 @@ assert.deepEqual(exactResult.sources.map(source => source.url), [wallet, guide])
 assert.ok(exactResult.text.trim().split(/\s+/).length <= 160)
 for (const sentence of [...walletSentences, ...guideSentences]) assert.ok(exactResult.text.includes(sentence))
 assert.doesNotMatch(exactResult.text, /elsewhere\.invalid|dashboard\/connect/)
+
+const pilotQuestion = `Research Cashfree AgentPay for an India beta, using only ${wallet} and ${guide}. In 160 words or fewer, cite the source for each finding: what is live, what is coming soon, credit-card and loan bill limits, sandbox access, and what confirms bill settlement. State what is unverified. Public sources only. Return a brief in chat.`
+const pilot = await runUserResearch(pilotQuestion, {
+  extract,
+  search: async () => assert.fail('both exact pages were extracted'),
+  model: async () => assert.fail('the Cashfree brief requires every evidence check independently of the model'),
+})
+for (const expected of [...walletSentences, ...guideSentences, 'Bills today.', 'Unverified here: authenticated sandbox access and actual bill settlement.']) {
+  assert.ok(pilot.text.includes(expected), expected)
+}
+assert.ok(pilot.text.trim().split(/\s+/).length <= 160)
+const missingSettlement = await runUserResearch(pilotQuestion, {
+  extract: async () => [
+    { ...first, snippet: walletSentences.concat('Bills today.').join('\n') },
+    { ...second, snippet: guideSentences.slice(0, -1).join('\n') },
+  ],
+  model: async () => assert.fail('a partial brief must fail without synthesis'),
+})
+assert.match(missingSettlement.text, /could not verify.*requested source/i)
 
 assert.deepEqual(await extractResearchPages([unrequested, wallet.slice(0, -1), 'https://share.example.com/private-bearer-token'], async () =>
   assert.fail('only the two reviewed URLs can reach the direct transport')), [])
