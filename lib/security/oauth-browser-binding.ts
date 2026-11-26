@@ -7,8 +7,8 @@
 //
 // Fix: the start route (the page the WhatsApp / dashboard link opens) sets a short-lived HttpOnly, Secure,
 // SameSite=Lax cookie holding a random nonce plus an HMAC of that nonce tied to the exact OAuth state it issued. The
-// callback refuses the state unless the same browser presents a cookie whose HMAC matches that state, and every
-// callback exit clears the cookie, so a state can be finished once, only in the browser that started it.
+// callback refuses the state unless the browser presents a cookie whose HMAC matches that state. Callback responses
+// clear the browser cookie. Google authorizes the code exchange and enforces single use of its authorization code.
 // SameSite=Lax is required (not Strict): the callback is a top-level GET navigation coming from accounts.google.com.
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 
@@ -26,12 +26,13 @@ export function oauthBindingCookieName(flow: OauthBindingFlow) {
   return FLOWS[flow].cookie
 }
 
-function bindingSecret() {
-  return process.env.CALENDAR_OAUTH_STATE_SECRET || process.env.GMAIL_OAUTH_STATE_SECRET || process.env.CRON_SECRET || ''
+function bindingSecret(flow: OauthBindingFlow) {
+  const gmailSecret = process.env.GMAIL_OAUTH_STATE_SECRET || process.env.CRON_SECRET || ''
+  return flow === 'calendar' ? process.env.CALENDAR_OAUTH_STATE_SECRET || gmailSecret : gmailSecret
 }
 
 function bindingMac(flow: OauthBindingFlow, nonce: string, state: string): string | null {
-  const secret = bindingSecret()
+  const secret = bindingSecret(flow)
   if (!secret) return null
   return createHmac('sha256', secret).update(`gogo-oauth-bind.v1|${flow}|${nonce}|${state}`).digest('base64url')
 }
@@ -61,7 +62,7 @@ export function readOauthBindingCookie(req: { cookies?: { get?: (name: string) =
 }
 
 type CookieJar = { set: (name: string, value: string, opts: Record<string, unknown>) => unknown }
-type WithCookies = { cookies?: CookieJar }
+type WithCookies = { cookies?: CookieJar; headers?: Headers }
 
 function cookieOptions(flow: OauthBindingFlow, maxAge: number) {
   return { httpOnly: true, secure: true, sameSite: 'lax', path: FLOWS[flow].path, maxAge }
@@ -77,11 +78,13 @@ export function setOauthBindingCookie(res: WithCookies, flow: OauthBindingFlow, 
   const value = issueOauthBinding(flow, state)
   if (!value || !res?.cookies) return false
   res.cookies.set(FLOWS[flow].cookie, value, cookieOptions(flow, OAUTH_BINDING_MAX_AGE_SECONDS))
+  res.headers?.set('Cache-Control', 'no-store')
   return true
 }
 
-/** Callback helper: every exit clears the cookie (single use). Returns the same response. */
+/** Clear the browser's cookie on the callback response and keep the response out of caches. */
 export function clearOauthBindingCookie<T extends WithCookies>(res: T, flow: OauthBindingFlow): T {
   res?.cookies?.set?.(FLOWS[flow].cookie, '', cookieOptions(flow, 0))
+  res.headers?.set('Cache-Control', 'no-store')
   return res
 }

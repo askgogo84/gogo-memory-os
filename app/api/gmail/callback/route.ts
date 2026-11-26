@@ -6,7 +6,6 @@ import { clearOauthBindingCookie, oauthBindingMatches, readOauthBindingCookie } 
 
 export const dynamic = 'force-dynamic'
 
-// Every exit clears the browser-binding cookie: one attempt per started flow, in the browser that started it.
 export async function GET(req: NextRequest) {
   return clearOauthBindingCookie(await handle(req), 'gmail')
 }

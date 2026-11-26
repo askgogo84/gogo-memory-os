@@ -44,6 +44,7 @@ globalThis.fetch = (async (input: any, init: any) => {
 }) as any
 
 const OWNER = -111111111
+const OTHER_OWNER = -222222222
 const CAL = B.oauthBindingCookieName('calendar'), GM = B.oauthBindingCookieName('gmail')
 
 // 1. Helper: a cookie binds exactly one state, in one flow.
@@ -66,9 +67,9 @@ const starts = [
   ['gmail read', gmConnect, '/api/gmail/connect', (id: number) => gm.buildGmailConnectUrl(id), GM, 'gmail', '/api/gmail/callback'],
   ['gmail send', gmSendConnect, '/api/gmail/send/connect', (id: number) => gm.buildGmailSendConnectUrl(id), GM, 'gmail', '/api/gmail/callback'],
 ] as const
-async function start(i: number) {
+async function start(i: number, owner = OWNER) {
   const [, handler, path, build, cookie] = starts[i]
-  const token = new URL(build(OWNER)!).searchParams.get('token')!
+  const token = new URL(build(owner)!).searchParams.get('token')!
   const res = await handler.GET(req(`${path}?token=${encodeURIComponent(token)}`))
   return { res, cookie: setCookie(res, cookie), state: stateOf(res) }
 }
@@ -76,6 +77,7 @@ for (let i = 0; i < starts.length; i++) {
   const [name, , , , , flow, path] = starts[i]
   const { res, cookie, state } = await start(i)
   assert.ok(res.status >= 300 && res.status < 400, `${name}: redirects to Google`)
+  assert.equal(res.headers.get('cache-control'), 'no-store', `${name}: redirect is not cacheable`)
   assert.match(res.headers.get('location') || '', /^https:\/\/accounts\.google\.com\//, `${name}: Google consent URL`)
   assert.ok(cookie.value, `${name}: binding cookie set`)
   assert.match(cookie.raw, /HttpOnly/i, `${name}: HttpOnly`)
@@ -102,6 +104,7 @@ const callbacks = [
 for (const [name, startIdx, cb, path, cookieName, okStatus] of callbacks) {
   const a = await start(startIdx)
   const b = await start(startIdx) // a second browser starting its own flow gets a different valid cookie
+  const otherOwner = await start(startIdx, OTHER_OWNER)
   const url = `${path}?code=c&state=${encodeURIComponent(a.state)}`
 
   writes.length = 0; googleTokenCalls = 0
@@ -113,6 +116,7 @@ for (const [name, startIdx, cb, path, cookieName, okStatus] of callbacks) {
 
   for (const [label, value] of [
     ['other browser cookie', b.cookie.value!],
+    ['another owner cookie', otherOwner.cookie.value!],
     ['forged cookie', 'v1.forged.forged'],
     ['other flow cookie', B.issueOauthBinding(cookieName === CAL ? 'gmail' : 'calendar', a.state)!],
   ] as const) {
@@ -126,6 +130,7 @@ for (const [name, startIdx, cb, path, cookieName, okStatus] of callbacks) {
   writes.length = 0; googleTokenCalls = 0
   const ok = await cb.GET(req(url, `${cookieName}=${encodeURIComponent(a.cookie.value!)}`))
   assert.equal(ok.status, okStatus, `${name}: matching cookie proceeds`)
+  assert.equal(ok.headers.get('cache-control'), 'no-store', `${name}: callback is not cacheable`)
   assert.equal(googleTokenCalls, 1, `${name}: code exchanged once`)
   assert.ok(writes.some(w => w.includes(`telegram_id=eq.${OWNER}`)), `${name}: saved to the state owner`)
   const cleared = setCookie(ok, cookieName)
@@ -151,4 +156,4 @@ for (const [name, startIdx, cb, path, cookieName, okStatus] of callbacks) {
   assert.match(gm.buildGmailConnectUrl(OWNER)!, /^https:\/\/app\.askgogo\.in\/api\/gmail\/connect\?token=/)
   assert.match(gm.buildGmailSendConnectUrl(OWNER)!, /^https:\/\/app\.askgogo\.in\/api\/gmail\/send\/connect\?token=/)
 }
-console.log('OAuth browser binding: Calendar and Gmail connect finish only in the starting browser, once')
+console.log('OAuth browser binding: Calendar and Gmail require the starting browser cookie and clear it on callback')
