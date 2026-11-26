@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { createClient } from '@supabase/supabase-js'
 import ts from 'typescript'
 import * as core from '../lib/metering/core'
 import { percentile, summarizeMeteredTasks, loadTaskMeasurements } from '../lib/metering/task-measurements'
@@ -76,13 +77,71 @@ await check('latency percentiles and cost coverage include failures and exclude 
   assert.equal(summarizeMeteredTasks('owner', [], []).elapsedMs.p50, null)
   assert.equal(percentile([1, 2, 3, 4, NaN], .95), 4)
 })
-await check('bounded owner reads fail closed and flag truncation', async () => {
-  const db = { from: (table: string) => {
-    const q: any = { select: () => q, eq: (key: string, owner: string) => { assert.equal(key, 'telegram_id'); assert.equal(owner, 'owner'); return q }, gte: () => q, order: () => q, limit: (n: number) => { assert.ok(n === 101 || n === 5001); return Promise.resolve({ data: table === 'agent_runs' ? Array.from({ length: 101 }, () => runs[0]) : [], error: null }) } }; return q
-  } }
-  assert.equal((await loadTaskMeasurements('owner', db)).truncated, true)
-  const broken = { from: () => { const q: any = { select: () => q, eq: () => q, gte: () => q, order: () => q, limit: async () => ({ data: null, error: { message: 'down' } }) }; return q } }
-  await assert.rejects(loadTaskMeasurements('owner', broken), /unavailable/)
+const windowEnd = new Date('2026-10-02T00:00:00Z')
+const exactOwner = '-9007199254740993'
+const eventRow = (id: number) => ({
+  ...events[0], id, telegram_id: exactOwner, cost_inr: '1', input_tokens: 10,
+})
+function cappedMetricsFixture(options: { events: number; runs?: number; cap?: number; failAt?: number; gapAt?: number }) {
+  const eventOffsets: number[] = []
+  const requests: Array<{ query: URLSearchParams; timeField: string }> = []
+  const db = createClient('https://metering.fixture.invalid', 'fixture-key', {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: async (input, init) => {
+      const { pathname, searchParams: query } = new URL(String(input))
+      const readingRuns = pathname.endsWith('/agent_runs')
+      assert.ok(readingRuns || pathname.endsWith('/admin_cost_events'))
+      assert.equal(query.get('telegram_id'), 'eq.' + exactOwner)
+      const timeField = readingRuns ? 'updated_at' : 'created_at'
+      requests.push({ query, timeField })
+      const offset = Number(query.get('offset') ?? 0)
+      if (!readingRuns) eventOffsets.push(offset)
+      if (!readingRuns && offset === options.failAt) {
+        return Response.json({ message: 'fixture query failed' }, { status: 500 })
+      }
+      const total = readingRuns ? options.runs ?? 1 : options.events
+      const limit = Math.min(options.cap ?? 1000, Number(query.get('limit')))
+      const size = offset === options.gapAt && !readingRuns ? 0 : Math.max(0, Math.min(total - offset, limit))
+      const data = Array.from({ length: size }, (_, index) => readingRuns
+        ? { ...runs[0], id: 'r' + (offset + index + 1), telegram_id: exactOwner }
+        : eventRow(total - offset - index))
+      const count = new Headers(init?.headers).get('prefer')?.includes('count=exact') ? total : '*'
+      return Response.json(data, { headers: { 'content-range': size ? `${offset}-${offset + size - 1}/${count}` : `*/${count}` } })
+    } },
+  })
+  return { db, eventOffsets, requests }
+}
+
+await check('a database response cap cannot silently drop metered events or narrow cost coverage', async () => {
+  const fixture = cappedMetricsFixture({ events: 1201 })
+  const report = await loadTaskMeasurements(exactOwner, fixture.db, windowEnd)
+  assert.equal(report.attributedEvents, 1201)
+  assert.equal(report.meanAttributedCostInrPerPricedTask, 1201)
+  assert.equal(report.inputTokens.total, 12010)
+  assert.equal(report.truncated, false)
+  assert.equal(report.observedCostCoverageComplete, true)
+  assert.deepEqual(fixture.eventOffsets, [0, 1000])
+  for (const { query, timeField } of fixture.requests) {
+    assert.deepEqual(query.getAll(timeField), ['gte.2026-09-02T00:00:00.000Z', 'lte.2026-10-02T00:00:00.000Z'])
+    assert.equal(query.get('order'), timeField + '.desc,id.desc')
+  }
+})
+await check('paging advances by returned rows and bounded reads keep incomplete cost unknown', async () => {
+  const lowerCap = cappedMetricsFixture({ events: 1100, cap: 400 })
+  assert.equal((await loadTaskMeasurements(exactOwner, lowerCap.db, windowEnd)).attributedEvents, 1100)
+  assert.deepEqual(lowerCap.eventOffsets, [0, 400, 800])
+  const bounded = cappedMetricsFixture({ events: 5001 })
+  const report = await loadTaskMeasurements(exactOwner, bounded.db, windowEnd)
+  assert.equal(report.attributedEvents, 5000)
+  assert.equal(report.truncated, true)
+  assert.equal(report.meanAttributedCostInrPerPricedTask, null)
+  assert.deepEqual(bounded.eventOffsets, [0, 1000, 2000, 3000, 4000])
+  const runBound = cappedMetricsFixture({ events: 0, runs: 101 })
+  assert.equal((await loadTaskMeasurements(exactOwner, runBound.db, windowEnd)).truncated, true)
+  const shortWindow = cappedMetricsFixture({ events: 1201, gapAt: 1000 })
+  assert.equal((await loadTaskMeasurements(exactOwner, shortWindow.db, windowEnd)).truncated, true)
+  const broken = cappedMetricsFixture({ events: 1201, failAt: 1000 })
+  await assert.rejects(loadTaskMeasurements(exactOwner, broken.db, windowEnd), /unavailable/)
 })
 await check('authenticated metrics endpoint exposes aggregates only and no false zero on storage failure', async () => {
   let authed = false, fail = false, reads = 0
