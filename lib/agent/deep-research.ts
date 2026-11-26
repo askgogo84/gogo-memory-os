@@ -90,6 +90,11 @@ const RESEARCH_URL = /https?:\/\/[^\s<>"`]+/gi
 const SOURCE_SENTENCES = new Intl.Segmenter(undefined, { granularity: 'sentence' })
 const PROSE_BRACKETS = new Map<string, string>([[')', '('], [']', '['], ['}', '{']])
 
+/** Only call with the original request from an authenticated user surface. */
+export function researchSourceScopeFromUserText(text: string) {
+  return EXPLICIT_SOURCE_SCOPE.test(text) ? text.match(RESEARCH_URL) || [] : []
+}
+
 function trimSourceLink(raw: string) {
   let link = raw.replace(/[.,;!?]+$/, '')
   for (;;) {
@@ -191,7 +196,7 @@ export async function gatherSources(queries: string[], deps: { search?: typeof s
   return top.map((r: any, i): ResearchSource => ({ n: i + 1, title: String(r.title || r.url).slice(0, 140), url: String(r.url), snippet: String(r.content || r.snippet || '').slice(0, 500), text: texts[i] || '' }))
 }
 
-export async function runDeepResearch(question: string, deps: { model?: Model; search?: typeof searchWebResults; fetchImpl?: typeof fetch; format?: 'guide' } = {}) {
+export async function runDeepResearch(question: string, deps: { model?: Model; search?: typeof searchWebResults; fetchImpl?: typeof fetch; format?: 'guide'; userSourceScope?: string[] } = {}) {
   // Defense in depth: this function is also called outside the chat intent gate.
   // Never send a private question to even the query-planning model or search API.
   if (researchContainsPrivateData(question)) {
@@ -202,8 +207,7 @@ export async function runDeepResearch(question: string, deps: { model?: Model; s
     }
   }
   const model = deps.model || defaultModel
-  const requestedLinks = EXPLICIT_SOURCE_SCOPE.test(question) ? question.match(RESEARCH_URL) : null
-  if (requestedLinks?.length) return researchRequestedSources(question, requestedLinks, deps.search || searchWebResults, model)
+  if (deps.userSourceScope?.length) return researchRequestedSources(question, deps.userSourceScope, deps.search || searchWebResults, model)
   const queries = await planQueries(question, model)
   const sources = await gatherSources(queries, deps)
   if (isHotelDiscoveryResearch(question)) return { ...hotelResearchEvidence(question, sources), queries }

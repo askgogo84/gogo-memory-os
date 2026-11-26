@@ -223,6 +223,7 @@ async function handleChatPost(req: NextRequest) {
   const body = await req.json().catch(() => null) as any
   __trace.mark('body')
   let text = String(body?.text || '').trim().slice(0, 2000)
+  const originalUserText = text
   if (!text) return NextResponse.json({ error: 'empty_message' }, { status: 400 })
 
   try {
@@ -492,7 +493,8 @@ async function handleChatPost(req: NextRequest) {
     if(text.length<=600&&(/^(?:please\s+)?(?:do\s+(?:a\s+)?|run\s+(?:a\s+)?)?(?:deep\s+)?research\b/i.test(text)||/\bwith (?:sources|citations|references)\b/i.test(text)&&/\b(?:best|compare|comparison|top|options|vs\.?|versus|review|pros and cons)\b/i.test(text))){
       const dr:any=await import('@/lib/agent/deep-research').catch(()=>null)
       if(dr?.isDeepResearchRequest?.(text)){
-        const out=await Promise.resolve().then(()=>dr.runDeepResearch(text)).catch((err:any)=>{console.error('DEEP_RESEARCH_FAILED:',String(err?.message||err).slice(0,160));return null})
+        const userSourceScope = dr.researchSourceScopeFromUserText(originalUserText)
+        const out=await Promise.resolve().then(()=>dr.runDeepResearch(text, { userSourceScope })).catch((err:any)=>{console.error('DEEP_RESEARCH_FAILED:',String(err?.message||err).slice(0,160));return null})
         if(out?.text){
           await saveConversation(user.telegram_id,text,out.text)
           return NextResponse.json({text:out.text,handledBy:'deep-research',status:'completed'})
