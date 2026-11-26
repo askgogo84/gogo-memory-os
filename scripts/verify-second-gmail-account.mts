@@ -47,6 +47,7 @@ let workMetadataMismatch = false
 let primaryMetadataReads = 0
 let primaryPages: Record<string, Record<string, unknown> | null> | null = null
 let listRequests: [string, string][] = []
+let listQueries: string[] = []
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (input: any, init: any) => {
   const url = String(input), token = String(init?.headers?.Authorization || '').replace('Bearer ', '')
@@ -56,6 +57,7 @@ globalThis.fetch = (async (input: any, init: any) => {
   if (url.includes('/messages?')) {
     const cursor = new URL(url).searchParams.get('pageToken') || ''
     listRequests.push([token, cursor])
+    listQueries.push(new URL(url).searchParams.get('q') || '')
     if (token === 'tok-primary' && primaryPages) {
       const page = primaryPages[cursor]
       return page ? Response.json(page) : new Response('{}', { status: 503 })
@@ -177,6 +179,27 @@ assert.equal(listRequests.filter(([token]) => token === 'tok-primary').length, 2
 listRequests = []
 await assert.rejects(() => read.listRecentWorkspaceInbox(actor, 20, 5), /workspace_email_recent_page_budget_invalid/)
 assert.equal(listRequests.length, 0, 'invalid budget makes no provider reads')
+// Fixed windows are explicit, replayable and do not slide as time passes.
+listQueries = []
+await read.listRecentWorkspaceInbox(actor, 12)
+assert.ok(listQueries.length > 0 && listQueries.every(q => q === 'in:inbox newer_than:2d'), 'legacy query unchanged')
+const fixedWindow = {afterEpochSeconds: 1795478400, beforeEpochSeconds: 1795564800}
+listQueries = []
+const fixed = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
+const fixedQuery = 'in:inbox after:1795478400 before:1795564800'
+assert.ok(listQueries.length > 0 && listQueries.every(q => q === fixedQuery), 'all pages and accounts use exact fixed query')
+assert.deepEqual(fixed.coverage.window, fixedWindow, 'coverage is bound to the explicit query window')
+assert.notEqual(fixed.coverage.window, fixedWindow, 'coverage is a snapshot, not caller-owned mutable object')
+const replayQueries = [...listQueries]
+listQueries = []
+await read.listRecentWorkspaceInbox(actor, 20, 2, {...fixedWindow})
+assert.deepEqual(listQueries, replayQueries, 'replay reconstructs identical provider query')
+assert.equal(recent.coverage.window, undefined, 'legacy scan is not a fixed-window proof')
+for (const bad of [null, {}, {afterEpochSeconds: '1795478400', beforeEpochSeconds: 1795564800}, {afterEpochSeconds: 1.5, beforeEpochSeconds: 2}, {afterEpochSeconds: 0, beforeEpochSeconds: 2}, {afterEpochSeconds: 2, beforeEpochSeconds: 2}, {afterEpochSeconds: 3, beforeEpochSeconds: 2}, {afterEpochSeconds: 1, beforeEpochSeconds: 604802}, {afterEpochSeconds: 1, beforeEpochSeconds: Infinity}, {afterEpochSeconds: 9999999999, beforeEpochSeconds: 10000000000}]) {
+  listQueries = []
+  await assert.rejects(() => read.listRecentWorkspaceInbox(actor, 20, 2, bad as any), /workspace_email_recent_window_invalid/)
+  assert.equal(listQueries.length, 0, 'invalid fixed window makes no provider reads')
+}
 primaryPages = null
 inbox['tok-primary'].splice(1)
 // The payment-receipt check now finds the CCAvenue confirmation Instinct found (6 Nov live).

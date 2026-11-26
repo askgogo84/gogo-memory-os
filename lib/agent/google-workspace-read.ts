@@ -283,13 +283,26 @@ type InboxPageCoverage = {
   hasMore: boolean | null
 }
 
-// Opt-in catch-up is bounded per account and per invocation. This is not a
-// durable checkpoint: caller-visible coverage never contains a provider cursor.
-export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12, maxPages = 1) {
+type InboxQueryWindow = Readonly<{afterEpochSeconds:number;beforeEpochSeconds:number}>
+
+// Opt-in catch-up is bounded per account and per invocation. A caller can
+// replay the same absolute Gmail query after a restart; these are provider
+// query bounds, not proof of a complete mailbox or exact message timestamps.
+// No cursor or checkpoint is persisted here. Existing callers stay relative.
+export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12, maxPages = 1, window?:InboxQueryWindow) {
   if(!Number.isInteger(maxPages)||maxPages<1||maxPages>4)throw new Error('workspace_email_recent_page_budget_invalid')
+  let fixedWindow:InboxQueryWindow|undefined
+  if(window!==undefined){
+    const after=window?.afterEpochSeconds, before=window?.beforeEpochSeconds
+    // Accept only bounded integer epoch seconds, not free-form Gmail query
+    // fragments, millisecond values, or an unbounded historical scan.
+    if(typeof after!=='number'||typeof before!=='number'||!Number.isSafeInteger(after)||!Number.isSafeInteger(before)||
+      after<1||before>9_999_999_999||before<=after||before-after>7*86400)throw new Error('workspace_email_recent_window_invalid')
+    fixedWindow={afterEpochSeconds:after,beforeEpochSeconds:before}
+  }
   const baseParams=new URLSearchParams({
     maxResults:String(Math.max(1,Math.min(20,Math.floor(maxResults||12)))),
-    q:'in:inbox newer_than:2d',
+    q:fixedWindow?`in:inbox after:${fixedWindow.afterEpochSeconds} before:${fixedWindow.beforeEpochSeconds}`:'in:inbox newer_than:2d',
   })
   const pages:InboxPageCoverage[]=[]
   let accountDiscoveryStatus:ExtraAccountDiscoveryStatus='unavailable'
@@ -353,7 +366,7 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
   },status=>{accountDiscoveryStatus=status})
   messages.sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
   pages.sort((a,b)=>a.accountId===null?(b.accountId===null?0:-1):b.accountId===null?1:a.accountId.localeCompare(b.accountId))
-  return {messages,coverage:{accountDiscovery:'best_effort' as const,accountDiscoveryStatus:accountDiscoveryStatus as ExtraAccountDiscoveryStatus,pages}}
+  return {messages,coverage:{accountDiscovery:'best_effort' as const,accountDiscoveryStatus:accountDiscoveryStatus as ExtraAccountDiscoveryStatus,pages,...(fixedWindow?{window:fixedWindow}:{})}}
 }
 
 export function workspaceEmailAuditScope(input:string) {
