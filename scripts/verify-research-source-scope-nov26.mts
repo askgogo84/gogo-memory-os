@@ -52,6 +52,27 @@ const invalid = await runDeepResearch(question, {
 assert.match(invalid.text, /could not verify.*requested source/i)
 assert.doesNotMatch(invalid.text, /10,000/)
 
+const negated = await runDeepResearch(question, {
+  search: async () => [first, { ...second, snippet: 'It is false that payments have a ₹10,000 limit.' }],
+  model: async () => JSON.stringify([
+    { source: 1, excerpt: 'Shopping, food and travel are coming soon.' },
+    { source: 2, excerpt: 'payments have a ₹10,000 limit.' },
+  ]),
+})
+assert.match(negated.text, /could not verify.*requested source/i)
+assert.doesNotMatch(negated.text, /10,000/)
+
+const parenthesized = 'https://en.wikipedia.org/wiki/Java_(programming_language)'
+const titled = await runDeepResearch(`Research a language using only [this page](${parenthesized}).`, {
+  search: async query => {
+    assert.ok(query.startsWith('site:en.wikipedia.org/wiki/Java_(programming_language) '))
+    return [{ url: parenthesized, title: 'Java', snippet: 'Java is a high-level programming language.' }]
+  },
+  model: async () => JSON.stringify([{ source: 1, excerpt: 'Java is a high-level programming language.' }]),
+})
+assert.deepEqual(titled.sources.map(s => s.url), [parenthesized])
+assert.match(titled.text, /high-level programming language\. \[1\]/)
+
 const incompleteCitations = await runDeepResearch(question, {
   search: allSourceResults,
   model: async () => JSON.stringify([{ source: 2, excerpt: 'Credit-card and loan payments are unavailable.' }]),
