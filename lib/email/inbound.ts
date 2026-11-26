@@ -78,6 +78,22 @@ export async function processInboundEmail(input: { to: string; from?: string; ra
       telegram_id: telegramId, alias, message_id: mail.messageId || `confirm-${confirm.code || createHash('sha256').update(String(confirm.link)).digest('hex').slice(0, 16)}`, from_addr: clean(mail.from, 300), to_addr: clean(mail.to, 300),
       subject: clean(mail.subject, 300), snippet: confirm.code ? `Gmail forwarding confirmation code ${confirm.code}` : 'Gmail forwarding confirmation link', body_text: confirm.link || '', category: 'forwarding_confirmation', received_at: new Date(now).toISOString(),
     }, { onConflict: 'telegram_id,message_id', ignoreDuplicates: true })
+    // red #1119: the only evidence that records which mailbox forwards here is Gmail's own confirmation email, with
+    // its numeric confirmation code, delivered to this alias (envelope and visible To). Header-based, not
+    // cryptographic; a later forwarded mail can turn forwarding on only against this recorded address.
+    const verifiedForwarder = String(confirm.forwarder || '').trim().toLowerCase()
+    if (confirm.code && aliasFromAddress(input.to) === alias && aliasFromAddress(mail.to) === alias
+      && /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(verifiedForwarder) && !aliasFromAddress(verifiedForwarder)) {
+      const changed = (owner as { verifiedForwarder?: string | null }).verifiedForwarder !== verifiedForwarder
+      try {
+        const { error: recordError } = await supabaseAdmin.from('email_aliases')
+          .update({ forwarding_verified_address: verifiedForwarder, ...(changed ? { forwarding_confirmed_at: null } : {}) }).eq('alias', alias)
+        // Before the migration the column is missing: forwarding then simply stays "not confirmed".
+        if (recordError) console.error('EMAIL_FORWARDING_VERIFIED_ADDRESS_NOT_RECORDED:', String(recordError.message || recordError).slice(0, 160))
+      } catch (err: any) {
+        console.error('EMAIL_FORWARDING_VERIFIED_ADDRESS_NOT_RECORDED:', String(err?.message || err).slice(0, 160))
+      }
+    }
     await notify(telegramId, `email-forward-confirm/${telegramId}/${confirm.code || createHash('sha256').update(String(confirm.link)).digest('hex').slice(0, 16)}`, confirmationText(confirm.code, confirm.forwarder, confirm.link))
     return { status: 'confirmation', telegramId }
   }
@@ -100,9 +116,17 @@ export async function processInboundEmail(input: { to: string; from?: string; ra
   if (!inserted?.length) return { status: 'duplicate', telegramId }
 
   const at = new Date(now).toISOString()
-  // Only real forwarded mail turns forwarding "on": Gmail keeps the original To (not the alias) and adds X-Forwarded-*.
-  const forwarded = Boolean(mail.headers['x-forwarded-to'] || mail.headers['x-forwarded-for']) || !aliasFromAddress(mail.to)
-  const firstForward = !owner.confirmedAt && forwarded && !/@(?:google|accounts\.google)\.com\b/i.test(mail.from)
+  // red #1119: X-Forwarded-To/For and the visible To are sender-controlled, so on their own they never turn forwarding
+  // "on". Forwarding becomes active only when this mail was delivered to the owner's alias (envelope recipient) AND its
+  // original recipient is the forwarding address recorded from Gmail's confirmation email. No recorded address (or no
+  // migration yet) means forwarding stays "not confirmed".
+  const verifiedForwarder = (owner as { verifiedForwarder?: string | null }).verifiedForwarder || null
+  const envelopeIsAlias = aliasFromAddress(input.to) === alias
+  const originalRecipients = verifiedForwarder
+    ? (`${mail.headers['x-forwarded-for'] || ''} ${mail.to}`.toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [])
+    : []
+  const firstForward = !owner.confirmedAt && Boolean(verifiedForwarder) && envelopeIsAlias
+    && originalRecipients.includes(String(verifiedForwarder)) && !/@(?:google|accounts\.google)\.com\b/i.test(mail.from)
   await supabaseAdmin.from('email_aliases').update({ last_received_at: at, ...(firstForward ? { forwarding_confirmed_at: at } : {}) }).eq('alias', alias)
   if (firstForward) await notify(telegramId, `email-forward-on/${telegramId}`, FORWARDING_ON_TEXT)
 

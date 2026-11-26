@@ -1,0 +1,3 @@
+# red #1119: forwarding activation needs Gmail-verified forwarding address
+npx tsx scripts/verify-forwarding-activation-evidence-testonly.mts
+npx tsx scripts/verify-forwarding-verified-address-nov10.mts
