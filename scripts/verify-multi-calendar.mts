@@ -36,7 +36,6 @@ assert.equal(m.describeCalendarAccounts([{ email: null }]), '')
 const cb = readFileSync(new URL('../app/api/calendar/callback/route.ts', import.meta.url), 'utf8')
 assert.match(cb, /saveExtraCalendarAccount\(telegramId, newEmail, encrypted\)/, 'a different account is stored beside the primary')
 assert.match(cb, /primaryEmail !== newEmail/, 'the same account connecting again refreshes the primary instead')
-assert.match(cb, /if \(!addedAsExtra\) error = await savePrimary\(\)/, 'if the extra table is unavailable the connection still works as before')
 for (const f of ['lib/agent/calendar-read.ts', 'lib/bot/handlers/morning-briefing.ts', 'lib/bot/handlers/plan-my-day.ts', 'lib/dashboard/queries.ts', 'lib/agent/autonomy-status.ts', 'lib/bot/process-message.ts']) {
   assert.match(readFileSync(new URL('../' + f, import.meta.url), 'utf8'), /google-calendar-accounts/, `${f} reads every linked account`)
 }

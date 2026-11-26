@@ -31,13 +31,30 @@ const stateOf = (res: Response) => new URL(res.headers.get('location') || 'https
 
 let googleTokenCalls = 0
 const writes: string[] = []
+let calendarAccountFixture: { newEmail: string; lookupFailed?: boolean; extraSaveFailed?: boolean } | undefined
 globalThis.fetch = (async (input: any, init: any) => {
   const url = String(input)
-  if (url.startsWith('https://oauth2.googleapis.com/token')) { googleTokenCalls++; return new Response(JSON.stringify({ access_token: 'at', refresh_token: 'rt', scope: 'https://www.googleapis.com/auth/gmail.send' })) }
+  if (url.startsWith('https://oauth2.googleapis.com/token')) {
+    googleTokenCalls++
+    const accessToken = init?.body?.get('grant_type') === 'refresh_token' ? 'primary-access-token' : 'at'
+    return Response.json({ access_token: accessToken, refresh_token: 'rt', scope: 'https://www.googleapis.com/auth/gmail.send' })
+  }
+  if (calendarAccountFixture && url.includes('/calendars/primary/events')) {
+    const primary = new Headers(init?.headers).get('Authorization') === 'Bearer primary-access-token'
+    return Response.json({ summary: primary ? 'primary@example.test' : calendarAccountFixture.newEmail })
+  }
   if (url.includes('googleapis.com')) return new Response(JSON.stringify({ id: 'synthetic@example.com', email: 'synthetic@example.com', items: [{ id: 'synthetic@example.com', primary: true }] }))
   if (url.startsWith('https://synthetic.supabase.co/rest/v1/')) {
     const method = init?.method || 'GET'
-    if (method !== 'GET') writes.push(`${method} ${decodeURIComponent(new URL(url).search)}`)
+    const { pathname, search } = new URL(url)
+    if (method !== 'GET') writes.push(`${method} ${pathname}${decodeURIComponent(search)}`)
+    if (calendarAccountFixture && method === 'GET' && pathname.endsWith('/users')) {
+      if (calendarAccountFixture.lookupFailed) return Response.json({ code: 'fixture_error', message: 'fixture lookup failure' }, { status: 500 })
+      return Response.json({ google_calendar_connected: true, google_refresh_token: 'legacy-primary-fixture-token' })
+    }
+    if (calendarAccountFixture?.extraSaveFailed && pathname.endsWith('/google_calendar_accounts')) {
+      return Response.json({ message: 'fixture secondary persistence failure' }, { status: 500 })
+    }
     return new Response(method === 'GET' ? 'null' : '[]', { status: 200, headers: { 'content-type': 'application/json' } })
   }
   return new Response('{}', { status: 404 })
@@ -137,6 +154,28 @@ for (const [name, startIdx, cb, path, cookieName, okStatus] of callbacks) {
   assert.match(cleared.raw, /Max-Age=0/i, `${name}: cookie cleared after use`)
   assert.equal(cleared.value, '', `${name}: cleared value is empty`)
 }
+
+// A failed secondary connection must leave the working primary in place.
+for (const [fixture, expectedStatus, expectedWrites] of [
+  [{ newEmail: 'work@example.test', extraSaveFailed: true }, 503, ['POST /rest/v1/google_calendar_accounts?on_conflict=telegram_id,email']],
+  [{ newEmail: 'work@example.test', lookupFailed: true }, 503, []],
+  [{ newEmail: 'work@example.test' }, 303, ['POST /rest/v1/google_calendar_accounts?on_conflict=telegram_id,email']],
+  [{ newEmail: 'primary@example.test' }, 303, [`PATCH /rest/v1/users?telegram_id=eq.${OWNER}`]],
+] as const) {
+  calendarAccountFixture = fixture
+  writes.length = 0
+  const { cookie, state } = await start(0)
+  const callback = await calCallback.GET(req(
+    `/api/calendar/callback?code=c&state=${encodeURIComponent(state)}`,
+    `${CAL}=${encodeURIComponent(cookie.value!)}`,
+  ))
+  assert.deepEqual(writes, expectedWrites, 'a second Calendar account must never write to the primary row')
+  assert.equal(callback.status, expectedStatus)
+  if ('extraSaveFailed' in fixture) assert.match(await callback.text(), /Your primary calendar is still connected/)
+  assert.equal(callback.headers.get('cache-control'), 'no-store')
+  assert.match(setCookie(callback, CAL).raw, /Max-Age=0/i)
+}
+calendarAccountFixture = undefined
 
 // 4. Every connect goes through a bound start route: no raw getAuthUrl fallback in the bot, no /calendar?id= rewriter.
 {
