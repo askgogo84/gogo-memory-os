@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Gogo Markets — Personal View</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin:0; min-height:100%; background:#08131b; color:#edf7fb;
+      font-family:Roboto,"Segoe UI",Arial,sans-serif; }
+    main { padding:5vh 5vw; }
+    .tag { letter-spacing:.2em; color:#8ebaca; font-size:16px; font-weight:600; }
+    h1 { font-size:clamp(32px,5vw,66px); font-weight:300; margin:10px 0 6px; }
+    .lead { color:#b0ced7; font-size:clamp(16px,2vw,22px); }
+    .panel { margin-top:5vh; padding:24px 14px; border:1px solid #35525f;
+      background:linear-gradient(145deg,rgba(51,111,130,.26),rgba(9,24,36,.94));
+      border-radius:20px; min-height:140px; }
+    .note { margin-top:28px; color:#a2bbc6; font-size:16px; max-width:960px; line-height:1.6; }
+    a { color:#9cd8eb; }
+    .fallback { color:#a5c1cb; padding:32px 16px; text-align:center; font-size:20px; }
+  </style>
+  <script type="module"
+      src="https://www.tradingview-widget.com/w/en/tv-ticker-tape.js"></script>
+</head>
+<body>
+  <main>
+    <div class="tag">GOGO TV · PERSONAL MARKET VIEW</div>
+    <h1>Markets</h1>
+    <div class="lead">Nifty · Sensex · Bank Nifty · US indices · Gold · USD/INR</div>
+
+    <div class="panel">
+      <tv-ticker-tape
+        symbols="NSE:NIFTY,BSE:SENSEX,NSE:BANKNIFTY,NASDAQ:NDX,SP:SPX,DJ:DJI,OANDA:XAUUSD,FX_IDC:USDINR"
+        direction="horizontal"
+        item-size="normal">
+        <div class="fallback">Loading official TradingView market widget…</div>
+      </tv-ticker-tape>
+    </div>
+    <p class="note">Quotes and availability depend on TradingView's exchange coverage.
+      Some prices may be delayed. This is a free branded TradingView widget;
+      no Twelve Data API key or subscription is needed.
+      <a href="https://www.tradingview.com/widget/">Widgets by TradingView</a>.
+      Press Back on your remote to return to Gogo TV.</p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://app.askgogo.in/schemas/gogo-tv-markets-v1",
+  "title": "Gogo TV authorized market feed",
+  "description": "Provider-approved display data, with source and per-quote timestamps. Never submit test fixtures as live prices.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["licensedForDisplay", "source", "quotes"],
+  "properties": {
+    "licensedForDisplay": {
+      "type": "boolean",
+      "const": true,
+      "description": "Set only after verifying exchange and provider display entitlements."
+    },
+    "source": {"type": "string", "minLength": 1, "maxLength": 30},
+    "quotes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["symbol", "value", "changePct", "asOf"],
+        "properties": {
+          "symbol": {"type": "string", "minLength": 1, "maxLength": 22},
+          "value": {"type": "number", "exclusiveMinimum": 0},
+          "changePct": {"type": "number", "minimum": -100, "maximum": 100},
+          "asOf": {"type": "string", "format": "date-time"},
+          "currency": {"type": "string", "maxLength": 5}
+        }
+      }
+    }
+  }
+}
