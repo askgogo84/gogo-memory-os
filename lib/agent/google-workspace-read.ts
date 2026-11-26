@@ -111,7 +111,7 @@ async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promi
   }catch(err:any){console.error('COMPOSIO_DRIVE_LOOKUP_FAILED:',String(err?.message||err).slice(0,160));return null}
 }
 
-async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}, account?: ExtraAccount | null, onMailbox?: (address: string) => void) {
+async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}, account?: ExtraAccount | null, onMailbox?: (address: string) => void, revalidateExtra = false) {
   if (!Number.isSafeInteger(actor.legacyTelegramId) || actor.legacyTelegramId === 0) throw new Error('workspace_owner_invalid')
   // OAuth reach and the user's read preference are separate. Check before even
   // loading credentials; Drive/Contacts retain their independent Workspace access.
@@ -136,9 +136,26 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
       if(!native)return viaComposio(url)
     }
   }
+  // Fixed-window scans must not reuse credentials captured by account discovery
+  // after a disconnect or identity change. Keep legacy callers unchanged.
+  const recheck = async () => {
+    if (revalidateExtra && account) {
+      account = await import('./gmail-accounts').then(m => m.revalidateExtraGmailAccount(actor.legacyTelegramId, account!))
+    }
+  }
+  await recheck()
   const creds = await credentials(actor, account)
   let token = String(creds.gmail_access_token || '')
-  if (!token && creds.gmail_refresh_token) token = await refresh(actor, String(creds.gmail_refresh_token), account)
+  const refreshForRead = async () => {
+    const refreshed = await refresh(actor, String(creds.gmail_refresh_token), account)
+    if (revalidateExtra && account) {
+      await recheck()
+      if (!account.accessToken) throw new Error('gmail_account_revalidation_no_access_token')
+      return account.accessToken
+    }
+    return refreshed
+  }
+  if (!token && creds.gmail_refresh_token) token = await refreshForRead()
 
   const run = (accessToken:string) => fetch(url, {
     ...init,
@@ -147,7 +164,7 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
   })
   let response = await run(token)
   if (response.status === 401 && creds.gmail_refresh_token) {
-    token = await refresh(actor, String(creds.gmail_refresh_token), account)
+    token = await refreshForRead()
     response = await run(token)
   }
   if ((response.status === 403 || response.status === 401) && viaComposio) return viaComposio(url)
@@ -193,10 +210,10 @@ export function gmailClassifierFields(data:any) {
   }
 }
 
-async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null, includeMailbox=false, requireExactId=false) {
+async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null, includeMailbox=false, requireExactId=false, revalidateExtra=false) {
   const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   let mailbox = ''
-  const response=await workspaceFetch(actor,url,{},account,includeMailbox ? address => {mailbox=address} : undefined)
+  const response=await workspaceFetch(actor,url,{},account,includeMailbox ? address => {mailbox=address} : undefined,revalidateExtra)
   if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
   if(requireExactId && data?.id!==id)throw new Error('workspace_email_message_identity_mismatch')
@@ -320,7 +337,7 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
       for(let page=0;page<maxPages;page++){
         const params=new URLSearchParams(baseParams)
         if(pageToken!==undefined)params.set('pageToken',pageToken)
-        const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
+        const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account,undefined,!!fixedWindow)
         if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
         const data:any=await response.json()
         // Gmail omits messages for an empty page; an explicitly malformed list
@@ -336,7 +353,7 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
         hasMore=entries.length>20?true:cursor===undefined?false:
           typeof cursor==='string'&&cursor.length>0&&!/\s/.test(cursor)?true:null
         if(typeof cursor==='string'&&seenCursors.has(cursor))hasMore=null
-        const settled=await Promise.allSettled(ids.map(id=>gmailMetadata(actor,id,false,account,false,true)))
+        const settled=await Promise.allSettled(ids.map(id=>gmailMetadata(actor,id,false,account,false,true,!!fixedWindow)))
         const available=settled.flatMap(x=>x.status==='fulfilled'?[x.value]:[])
         readable.push(...available)
         listed+=entries.length
