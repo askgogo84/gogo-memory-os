@@ -27,6 +27,29 @@ export async function listExtraGmailAccounts(telegramId: string | number): Promi
   return (await listExtraGmailAccountsWithCoverage(telegramId)).accounts
 }
 
+/** Recheck the exact discovered row before a fixed-window Gmail read. Never
+ * reuse a discovery snapshot after disconnect, owner mismatch or lookup failure.
+ * This verifies the saved connection, not Google's independent mailbox identity. */
+export async function revalidateExtraGmailAccount(telegramId: string | number, expected: Pick<ExtraGmailAccount, 'id' | 'email'>): Promise<ExtraGmailAccount> {
+  const owner = String(telegramId)
+  if ((typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) || !/^-?[1-9]\d*$/.test(owner)) {
+    throw new Error('gmail_account_owner_invalid')
+  }
+  if (typeof expected.id !== 'string' || !expected.id || typeof expected.email !== 'string' || !expected.email) {
+    throw new Error('gmail_account_identity_missing')
+  }
+  const { data, error } = await supabaseAdmin.from('gmail_accounts').select('id,email,access_token,refresh_token')
+    .eq('telegram_id', owner).eq('id', expected.id).is('disconnected_at', null).maybeSingle()
+  if (error) throw new Error('gmail_account_revalidation_unavailable')
+  if (!data || data.id !== expected.id || typeof data.email !== 'string' || data.email.toLowerCase() !== expected.email) {
+    throw new Error('gmail_account_disconnected_or_identity_mismatch')
+  }
+  const accessToken = decryptGoogleToken(String(data.access_token || ''))
+  const refreshToken = decryptGoogleToken(String(data.refresh_token || ''))
+  if (!accessToken && !refreshToken) throw new Error('gmail_account_revalidation_no_credentials')
+  return { id: expected.id, email: expected.email, accessToken, refreshToken }
+}
+
 export async function upsertExtraGmailAccount(telegramId: string | number, email: string, tokens: { access_token: string; refresh_token?: string | null; scope?: string | null }) {
   const row: any = { telegram_id: String(telegramId), email: email.toLowerCase(), access_token: encryptGoogleToken(tokens.access_token), scopes: tokens.scope || null, updated_at: new Date().toISOString(), disconnected_at: null }
   if (tokens.refresh_token) row.refresh_token = encryptGoogleToken(tokens.refresh_token)
