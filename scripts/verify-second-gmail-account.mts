@@ -48,6 +48,8 @@ let primaryMetadataReads = 0
 let primaryPages: Record<string, Record<string, unknown> | null> | null = null
 let listRequests: [string, string][] = []
 let listQueries: string[] = []
+let workAfterList: (() => void) | null = null
+let workMetadataReads = 0
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (input: any, init: any) => {
   const url = String(input), token = String(init?.headers?.Authorization || '').replace('Bearer ', '')
@@ -62,8 +64,10 @@ globalThis.fetch = (async (input: any, init: any) => {
       const page = primaryPages[cursor]
       return page ? Response.json(page) : new Response('{}', { status: 503 })
     }
+    if (token === 'tok-work' && workAfterList) workAfterList()
     return Response.json(token === 'tok-primary' && primaryPageOverride ? primaryPageOverride : { messages: mine.map(m => ({ id: m.id })), ...(token === 'tok-primary' && primaryMore ? { nextPageToken: 'fixture-opaque-page-token' } : {}) })
   }
+  if (token === 'tok-work') workMetadataReads++
   if (token === 'tok-work' && workMetadataDown) return new Response('{}', { status: 503 })
   const id = url.match(/messages\/([^?]+)/)![1]; const m = mine.find(x => x.id === id)!
   if (token === 'tok-primary') primaryMetadataReads++
@@ -202,6 +206,30 @@ for (const bad of [null, {}, {afterEpochSeconds: '1795478400', beforeEpochSecond
 }
 primaryPages = null
 inbox['tok-primary'].splice(1)
+// Fixed-window catch-up cannot keep reading with a discovered token after the
+// exact account is disconnected or its identity changes during the scan.
+for (const change of ['disconnect', 'identity-change', 'lookup-unavailable']) {
+  const row = accounts[0]
+  const original = {...row}
+  workAfterList = () => {
+    if (change === 'disconnect') row.disconnected_at = new Date().toISOString()
+    if (change === 'identity-change') row.email = 'different@example.invalid'
+    if (change === 'lookup-unavailable') accountsTableMissing = true
+  }
+  workMetadataReads = 0
+  try {
+    const interrupted = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
+    assert.deepEqual(interrupted.messages.map(m => m.id), ['p1'], change + ': keep other mailbox evidence only')
+    assert.equal(workMetadataReads, 0, change + ': do not use stale credentials for metadata')
+    assert.equal(interrupted.coverage.pages[1].metadataFailed, 1, change + ': incomplete evidence')
+  } finally {
+    Object.assign(row, original)
+    accountsTableMissing = false
+    workAfterList = null
+  }
+}
+const revalidated = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
+assert.deepEqual(revalidated.messages.map(m => m.id).sort(), ['p1','w1'], 'restored mailbox is read again')
 // The payment-receipt check now finds the CCAvenue confirmation Instinct found (6 Nov live).
 const pc = await import('../lib/agent/payment-confirmation')
 const p = pc.parsePaymentConfirmation('Payment Status: SUCCESS ,Merchant Name: KOTAK MAHINDRA PRIME LIMITED ,Amount: ₹41,898.00 ,Paid By: GOVERDHAN M DODDAMANE ,Amount Details: Savings A/c **********6355 ,HDFC Transaction ID: BAN016310IO0XLNHS9UL ,Reference Number: PIN056310E9529BHHMLK')!
