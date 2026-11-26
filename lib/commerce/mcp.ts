@@ -11,7 +11,7 @@ export type CommerceServer = 'food' | 'grocery' | 'dineout'
 const READ_TOOLS: Record<CommerceProvider, Partial<Record<CommerceServer, readonly string[]>>> = {
   swiggy: {
     food: ['get_addresses', 'search_restaurants', 'search_menu', 'get_restaurant_menu', 'get_food_cart'],
-    grocery: ['get_addresses', 'search_products', 'get_cart'],
+    grocery: ['get_addresses', 'search_products', 'get_cart', 'get_payment_options', 'get_orders', 'check_payment_status'],
     // Dineout reads only. book_table, create_cart and payment tools are deliberately absent: a booking needs its own
     // durable, explicitly approved executor (like instamart-cart) before any write exists.
     dineout: ['search_restaurants_dineout', 'get_restaurant_details', 'get_available_slots', 'get_booking_status'],
@@ -111,6 +111,67 @@ export class CommerceMcpClient {
     if (result.isError) throw new CommerceMcpError('provider_unavailable')
     // A transport success is not a verified cart. The executor must read get_cart next.
   }
+
+  /**
+   * Financial mutation. Only a separate explicit, durably claimed checkout
+   * executor can call this. This method itself never retries on an unknown
+   * transport outcome, never sets confirmDuplicate and never confirms payment.
+   * Operational flags do not replace provider agreement/customer consent.
+   */
+  async placeInstamartCheckout(addressId:string,method:
+    {mode:'cash_on_delivery'|'swiggy_money'|'upi_intent'|'upi_qr';methodId:string}) {
+    if(process.env.COMMERCE_NATIVE_CHECKOUT_ENABLED!=='true' ||
+      process.env.COMMERCE_PURCHASES_ENABLED!=='true' ||
+      process.env.COMMERCE_SWIGGY_ENABLED!=='true') throw new CommerceMcpError('tool_not_allowed')
+    if(this.provider!=='swiggy'||this.server!=='grocery' ||
+      !addressId || addressId.length>512 ||
+      !method||typeof method.methodId!=='string'||
+      method.methodId.length<1||method.methodId.length>200) throw new CommerceMcpError('tool_not_allowed')
+    const args:Record<string,unknown>={addressId}
+    switch(method.mode){
+      case 'cash_on_delivery':
+        if(method.methodId!=='Cash'&&method.methodId!=='COD') throw new CommerceMcpError('tool_not_allowed')
+        args.paymentMethod=method.methodId;break
+      case 'swiggy_money':
+        if(method.methodId!=='SwiggyPay') throw new CommerceMcpError('tool_not_allowed')
+        args.paymentMethod='SwiggyPay';break
+      case 'upi_intent':args.paymentMethod='UPI';args.intentApp=method.methodId;break
+      case 'upi_qr':args.paymentMethod='UPI';args.generateUPIQR=true;break
+      default:throw new CommerceMcpError('tool_not_allowed')
+    }
+    await this.initialize()
+    // CRITICAL: one outbound checkout attempt, no retry even after timeout.
+    const result=await this.rpc('tools/call',{name:'checkout',arguments:args})
+    if(result.isError) throw new CommerceMcpError('provider_unavailable')
+    const payload=result.structuredContent
+    if(payload?.success!==true || !payload.data || typeof payload.data!=='object')
+      throw new CommerceMcpError('invalid_response')
+    return payload.data as Record<string,unknown>
+  }
+
+  /**
+   * Separate financial finalization; never called from background automation.
+   * Only the authenticated user's exact stored order+PaaS transaction IDs.
+   */
+  async confirmInstamartPaidOrder(orderId:string,paasId:string){
+    if(process.env.COMMERCE_NATIVE_CONFIRMATION_ENABLED!=='true' ||
+      process.env.COMMERCE_NATIVE_CHECKOUT_ENABLED!=='true' ||
+      process.env.COMMERCE_PURCHASES_ENABLED!=='true'||
+      process.env.COMMERCE_SWIGGY_ENABLED!=='true' ||
+      this.provider!=='swiggy'||this.server!=='grocery')
+       throw new CommerceMcpError('tool_not_allowed')
+    const valid=(v:string)=>typeof v==='string' && /^[A-Za-z0-9:_-]{1,200}$/.test(v)
+    if(!valid(orderId)||!valid(paasId))throw new CommerceMcpError('invalid_response')
+    await this.initialize()
+    const result=await this.rpc('tools/call',{name:'confirm_order',
+      arguments:{orderId,paasId}})
+    if(result.isError)throw new CommerceMcpError('provider_unavailable')
+    const payload=result.structuredContent
+    if(payload?.success!==true||!payload.data||typeof payload.data!=='object')
+      throw new CommerceMcpError('invalid_response')
+    return payload.data as Record<string,unknown>
+  }
+
   async readTool(name: string, args: Record<string, unknown>) {
     if (!(READ_TOOLS[this.provider][this.server] || []).includes(name)) throw new CommerceMcpError('tool_not_allowed')
     await this.initialize()

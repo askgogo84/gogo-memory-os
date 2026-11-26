@@ -9,6 +9,7 @@ type Task = {service: 'food' | 'grocery'; runId: string; summary: string; subjec
 type AddressPage = {addresses: Array<{id: string; label: string; addressLine: string}>; page: number; hasMore: boolean}
 export default function CommerceConnectionsPage() {
   const [providers, setProviders] = useState<Provider[]>([])
+  const [purchaseHandoffEnabled, setPurchaseHandoffEnabled] = useState(false)
   const [runId, setRunId] = useState('')
   const [task, setTask] = useState<Task | null>(null)
   const [addresses, setAddresses] = useState<AddressPage | null>(null)
@@ -17,7 +18,9 @@ export default function CommerceConnectionsPage() {
   async function load(id: string) {
     const response = await fetch('/api/commerce', {cache: 'no-store'})
     if (!response.ok) throw new Error()
-    setProviders((await response.json()).providers)
+    const connectionStatus = await response.json()
+    setProviders(connectionStatus.providers)
+    setPurchaseHandoffEnabled(connectionStatus.purchaseHandoffEnabled === true)
     if (id) {
       const result = await fetch('/api/commerce/tasks/' + encodeURIComponent(id), {cache: 'no-store'})
       if (!result.ok) { setTask(null); throw new Error() }
@@ -123,6 +126,7 @@ export default function CommerceConnectionsPage() {
       <p className="whitespace-pre-line">{task.summary}</p>
       <button disabled={busy!==null} onClick={refreshTask} className="rounded-lg border border-[#292929] px-4 py-2 disabled:opacity-50">Refresh saved progress</button>
       {task.state === 'cart_outcome_unknown' && <button disabled={busy !== null} onClick={() => cart('check')} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Check cart outcome — no new addition</button>}
+      {purchaseHandoffEnabled && task.state === 'cart_contents_verified' && <Link href={'/dashboard/commerce/checkout?run=' + encodeURIComponent(task.runId)} className="block w-fit rounded-lg border border-[#2fb8a6] px-4 py-2 text-[#2fb8a6]">Review merchant checkout (pilot)</Link>}
       {task.addressLabel && <p>Selected address: {task.addressLabel}</p>}
       <Link href="/dashboard/chat" className="text-[#2fb8a6]">Back to Gogo</Link>
     </section>}
