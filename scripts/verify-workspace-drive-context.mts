@@ -98,6 +98,28 @@ assert.equal((await webResult.json()).handledBy,'workspace-drive-context','real 
 assert.ok(shadowOutcomes.some(x=>x.actualHandler==='workspace-drive-context'&&x.actualCapability==='files'&&x.runId),'real Drive route records its observed outcome')
 console.log('Actual Drive executor, schema, report presenter and web route passed')
 
+const lookupTitle='AskGogo Connector Acceptance Fixture 2026-11-26'
+const lookupText=`Search my connected Google Drive for the exact filename ${lookupTitle}. Read-only check. Tell me whether Google Drive answered and whether there was an exact match. Do not show other filenames or contents.`
+const exactFile={...file,name:lookupTitle}
+const readFile=deps['./google-workspace-read'].readWorkspaceDriveText
+deps['./google-workspace-read'].readWorkspaceDriveText=async()=>assert.fail('an existence check must not open a file')
+for(const [files,hasMore,expected] of [
+  [[file],false,/No file matched the exact filename/],
+  [[exactFile],false,/One file matched the exact filename/],
+  [[exactFile,{...exactFile,id:'duplicate'}],false,/Multiple files used the exact filename/],
+  [[exactFile],true,/search was incomplete/],
+] as const){
+  deps['./google-workspace-read'].searchWorkspaceDrive=async(_actor:unknown,_text:string,opts:{exactName?:string})=>{
+    assert.equal(opts.exactName,lookupTitle)
+    return {files,hasMore}
+  }
+  const lookup=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:lookupText})
+  assert.match(lookup.text,expected)
+  assert.doesNotMatch(lookup.text,/Fixture brief|drive\.google\.com|Private report/)
+}
+deps['./google-workspace-read'].readWorkspaceDriveText=readFile
+deps['./google-workspace-read'].searchWorkspaceDrive=async()=>({files:[file]})
+
 for(const negative of ['Do not read my Google Drive document','Find a place to drive this weekend','Read my Google Drive brief and send it to Alice','Read my Google Drive brief and show my calendar tomorrow','Read my Google Drive brief and create a reminder'])
  assert.equal(api.isWorkspaceDriveContextRequest(negative),false,negative+' retains its existing routing')
 assert.equal(api.isWorkspaceDriveContextRequest('Read my Google Drive document "Create a calendar". Do not send email or create reminders.'),true,'quoted titles and prohibitions are not independent actions')
