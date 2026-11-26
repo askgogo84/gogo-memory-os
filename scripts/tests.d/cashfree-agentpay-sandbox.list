@@ -1,0 +1,2 @@
+# Cashfree AgentPay sandbox transport and catalogue fixtures (offline)
+node scripts/verify-cashfree-agentpay-sandbox.mjs
