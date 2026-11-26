@@ -65,15 +65,41 @@ export function summarizeMeteredTasks(owner: string, runs: MeasuredRun[], rows: 
   }
 }
 
-/** Fail closed on read errors and expose partial sampling, rather than silently report complete totals. */
+/** Bound the report independently of the database's per-response row cap. */
 export async function loadTaskMeasurements(owner: string, db: Pick<SupabaseClient,'from'>, now = new Date()) {
   const since = new Date(now.getTime() - 30 * 86400_000).toISOString()
-  const [{ data: runs, error: runError }, { data: rows, error: eventError }] = await Promise.all([
-    db.from('agent_runs').select('id,telegram_id,status,started_at,completed_at').eq('telegram_id', owner)
-      .gte('updated_at', since).order('updated_at', { ascending: false }).limit(101),
-    db.from('admin_cost_events').select('id,telegram_id,vendor,category,model,input_tokens,output_tokens,cost_inr,ok,metadata')
-      .eq('telegram_id', owner).gte('created_at', since).order('created_at', { ascending: false }).limit(5001),
+  const until = now.toISOString()
+  const runLimit = 100
+  const eventLimit = 5000
+  const pageSize = 1000
+  const pageLimit = 10
+  const readEvents = (offset: number, size: number, count?: 'exact') =>
+    db.from('admin_cost_events').select('id,telegram_id,vendor,category,model,input_tokens,output_tokens,cost_inr,ok,metadata', { count })
+      .eq('telegram_id', owner).gte('created_at', since).lte('created_at', until)
+      .order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + size - 1)
+
+  const [{ data: runs, count: runCount, error: runError }, firstPage] = await Promise.all([
+    db.from('agent_runs').select('id,telegram_id,status,started_at,completed_at', { count: 'exact' })
+      .eq('telegram_id', owner).gte('updated_at', since).lte('updated_at', until)
+      .order('updated_at', { ascending: false }).order('id', { ascending: false }).limit(runLimit),
+    readEvents(0, pageSize, 'exact'),
   ])
-  if (runError || eventError) throw new Error('task_measurements_unavailable')
-  return { ...summarizeMeteredTasks(owner, (runs || []).slice(0, 100), (rows || []).slice(0, 5000), (runs || []).length > 100 || (rows || []).length > 5000), windowStart: since, windowEnd: now.toISOString() }
+  if (runError || !runs || runCount == null || firstPage.error || !firstPage.data || firstPage.count == null) {
+    throw new Error('task_measurements_unavailable')
+  }
+
+  const expectedEvents = Math.min(firstPage.count, eventLimit)
+  const rows: MeasuredEvent[] = [...firstPage.data]
+  // Advance by the returned rows because the server may cap the requested range.
+  for (let pages = 1; rows.length && rows.length < expectedEvents && pages < pageLimit; pages++) {
+    const { data, error } = await readEvents(rows.length, Math.min(pageSize, expectedEvents - rows.length))
+    if (error || !data) throw new Error('task_measurements_unavailable')
+    if (!data.length) break
+    rows.push(...data)
+  }
+
+  const duplicateEvents = new Set(rows.map(row => String(row.id))).size !== rows.length
+  const truncated = runCount > runLimit || runs.length !== runCount
+    || firstPage.count > eventLimit || rows.length !== expectedEvents || duplicateEvents
+  return { ...summarizeMeteredTasks(owner, runs, rows, truncated), windowStart: since, windowEnd: until }
 }
