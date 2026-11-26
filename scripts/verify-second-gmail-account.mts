@@ -50,12 +50,18 @@ let listRequests: [string, string][] = []
 let listQueries: string[] = []
 let workAfterList: (() => void) | null = null
 let workMetadataReads = 0
+let profileReads: string[] = []
+const profileAddresses: Record<string, unknown> = {'tok-primary': users[0].gmail_email, 'tok-work': 'goverdhan@tipplr.in'}
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (input: any, init: any) => {
   const url = String(input), token = String(init?.headers?.Authorization || '').replace('Bearer ', '')
   if (!url.startsWith('https://gmail.googleapis.com/')) return realFetch(input, init)
   if (token === 'tok-work' && workDown) return new Response('{}', { status: 500 })
   const mine = inbox[token]; if (!mine) return new Response('{}', { status: 401 })
+  if (url.endsWith('/users/me/profile')) {
+    profileReads.push(token)
+    return Response.json({emailAddress: profileAddresses[token]})
+  }
   if (url.includes('/messages?')) {
     const cursor = new URL(url).searchParams.get('pageToken') || ''
     listRequests.push([token, cursor])
@@ -230,6 +236,42 @@ for (const change of ['disconnect', 'identity-change', 'lookup-unavailable']) {
 }
 const revalidated = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
 assert.deepEqual(revalidated.messages.map(m => m.id).sort(), ['p1','w1'], 'restored mailbox is read again')
+// Fixed-window reads must bind the provider profile to the same token used for
+// list/metadata, not simply trust a saved mailbox label.
+profileReads = []
+await read.listRecentWorkspaceInbox(actor, 12)
+assert.equal(profileReads.length, 0, 'legacy scans add no profile calls')
+profileReads = []
+const profileBound = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
+assert.deepEqual(profileBound.messages.map(m => m.id).sort(), ['p1','w1'])
+assert.deepEqual(profileReads.sort(), ['tok-primary','tok-work'], 'one profile check per token per scan')
+for (const badAddress of ['foreign@example.invalid', null, {email:'fixture@example.invalid'}, ' ']) {
+  profileAddresses['tok-work'] = badAddress
+  listRequests = []; workMetadataReads = 0
+  const mismatch = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
+  assert.deepEqual(mismatch.messages.map(m => m.id), ['p1'], 'mismatched or malformed extra profile is not evidence')
+  assert.equal(mismatch.coverage.pages[1].status, 'failed')
+  assert.equal(workMetadataReads, 0)
+  assert.equal(listRequests.some(([token]) => token === 'tok-work'), false, 'verify before listing')
+}
+profileAddresses['tok-work'] = accounts[0].email
+profileAddresses['tok-primary'] = 'foreign@example.invalid'
+listRequests = []
+await assert.rejects(() => read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow), /workspace_email_mailbox_identity_mismatch/)
+assert.equal(listRequests.length, 0, 'wrong primary profile fails before any list')
+profileAddresses['tok-primary'] = users[0].gmail_email
+const originalWorkToken = accounts[0].access_token
+workAfterList = () => { accounts[0].access_token = encryptGoogleToken('tok-primary') }
+try {
+  const swapped = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
+  assert.deepEqual(swapped.messages.map(m => m.id), ['p1'], 'replacement token cannot use earlier profile proof')
+  assert.equal(swapped.coverage.pages[1].metadataFailed, 1)
+} finally {
+  accounts[0].access_token = originalWorkToken
+  workAfterList = null
+}
+const profileRecovered = await read.listRecentWorkspaceInbox(actor, 20, 2, fixedWindow)
+assert.deepEqual(profileRecovered.messages.map(m => m.id).sort(), ['p1','w1'])
 // The payment-receipt check now finds the CCAvenue confirmation Instinct found (6 Nov live).
 const pc = await import('../lib/agent/payment-confirmation')
 const p = pc.parsePaymentConfirmation('Payment Status: SUCCESS ,Merchant Name: KOTAK MAHINDRA PRIME LIMITED ,Amount: ₹41,898.00 ,Paid By: GOVERDHAN M DODDAMANE ,Amount Details: Savings A/c **********6355 ,HDFC Transaction ID: BAN016310IO0XLNHS9UL ,Reference Number: PIN056310E9529BHHMLK')!
