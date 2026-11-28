@@ -17,7 +17,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AgentActor } from './actor'
 import { brainMessages, brainSystemBlocks, brainUsage, estimateCostUsd, toolRequiredSystem, type BrainContext, type BrainUsage } from './brain'
-import { SONNET_MODEL, forModel, isAdaptiveOnlyModel, textOf } from '@/lib/services/model-ids'
+import { SONNET_MODEL, forModel, isAdaptiveOnlyModel, resolveSonnetModel, textOf } from '@/lib/services/model-ids'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { stripUnrequestedAddress } from '@/lib/services/claude'
 
@@ -138,7 +138,7 @@ export const runBrainLoopShadow = (p: LoopParams): Promise<LoopResult> => runBra
  *  `alreadyReplied` is what Gogo has already sent for this message: the pass then looks only for a further step. */
 export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; alreadyReplied?: string }): Promise<LoopResult> {
   const L = { ...LOOP_LIMITS, ...(p.limits || {}) }, clock = p.clock || Date.now, t0 = clock()
-  const model = p.model || (globalThis as any).process?.env?.GOGO_BRAIN_LOOP_MODEL || SONNET_MODEL
+  const model = p.model || resolveSonnetModel(process.env.GOGO_BRAIN_LOOP_MODEL, SONNET_MODEL)
   const total: BrainUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }
   const add = (u: BrainUsage) => { for (const k of ['input', 'output', 'cacheRead', 'cacheCreation'] as const) total[k] = (total[k] || 0) + (u[k] || 0) }
   const steps: LoopStep[] = []
