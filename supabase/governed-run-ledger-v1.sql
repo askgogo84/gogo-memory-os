@@ -627,7 +627,7 @@ alter table if exists public.memories add column if not exists gogo_provenance j
 -- refresh. Zero is permitted only as an explicit current operator price row;
 -- an absent/expired row is never inferred to be free.
 create table public.gogo_governed_connector_prices (
-  operation text primary key check(operation in ('google.calendar.refresh','google.calendar.read','google.workspace.refresh','google.gmail.read','google.gmail.send','google.drive.read','google.contacts.read')),
+  operation text primary key check(operation in ('google.calendar.refresh','google.calendar.read','google.workspace.refresh','google.gmail.read','google.gmail.send','google.drive.read','google.contacts.read','bolna.call.v1','bolna.execution.read.v1')),
   max_cost_micros bigint not null check(max_cost_micros between 0 and 9007199254740991),
   valid_until timestamptz not null,
   verified_source text not null check(length(trim(verified_source)) between 1 and 300)
@@ -680,4 +680,18 @@ begin
 end $$;
 revoke all on function public.gogo_materialize_recovery_revision(text,text,text,text,text,text,text,text) from public,anon,authenticated;
 grant execute on function public.gogo_materialize_recovery_revision(text,text,text,text,text,text,text,text) to service_role;
+-- Operator review of a pre-provisioned, bounded Bolna agent. Do not seed
+-- a profile or assume its maximum duration or price from an API name.
+create table public.gogo_governed_voice_profiles (
+  profile_id text primary key check(profile_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  kind text not null check(kind in ('table','general')),
+  language text not null check(language in ('English','Hindi','Kannada','Tamil','Telugu')),
+  max_seconds integer not null check(max_seconds between 1 and 180),
+  max_cost_micros bigint not null check(max_cost_micros between 1 and 9007199254740991),
+  valid_until timestamptz not null,
+  verified_source text not null check(length(trim(verified_source)) between 1 and 300)
+);
+alter table public.gogo_governed_voice_profiles enable row level security;
+revoke all on public.gogo_governed_voice_profiles from public,anon,authenticated,service_role;
+grant select on public.gogo_governed_voice_profiles to service_role;
 commit;

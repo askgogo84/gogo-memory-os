@@ -2,6 +2,10 @@
 // server adapters, never from a model's URL or an arbitrary HTTP tool.
 export const GOOGLE_OPERATIONS=['google.calendar.refresh','google.calendar.read','google.workspace.refresh','google.gmail.read','google.gmail.send','google.drive.read','google.contacts.read'] as const
 export type GoogleOperation=typeof GOOGLE_OPERATIONS[number]
+export const VOICE_OPERATIONS=['bolna.call.v1','bolna.execution.read.v1'] as const
+export type VoiceOperation=typeof VOICE_OPERATIONS[number]
+export const CONNECTOR_OPERATIONS=[...GOOGLE_OPERATIONS,...VOICE_OPERATIONS] as const
+export type ConnectorOperation=typeof CONNECTOR_OPERATIONS[number]
 export type GoogleRequest={operation:GoogleOperation;url:string;method:'GET'|'POST';credential:string}
 const ID='[A-Za-z0-9_.@%+-]{1,1024}'
 const calendar=new RegExp('^/calendar/v3/calendars/primary/events(?:/'+ID+')?$')

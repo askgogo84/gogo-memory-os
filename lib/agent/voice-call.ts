@@ -124,6 +124,7 @@ export type CallPlan = {
   /** 'general' = any ask other than a restaurant table. `opening` is the first thing said; `details` is what may be shared. */
   kind?: 'table' | 'general'; opening?: string; details?: string
   callLanguage?: CallLanguage; voiceAgentId?: string
+  governedCall?: import('./governed-voice').VoiceBinding
 }
 
 /** 9 am to 9 pm India time for an Indian number (GOGO_CALL_HOURS="9-21" to change). Another country's number has no
@@ -147,7 +148,7 @@ export function callPlanText(p: CallPlan) {
     '*CALL PLAN · NEEDS YOUR YES*',
     ...(p.callLanguage ? [`Call language: ${p.callLanguage} (Sarvam via Bolna). The script below is shown in English.`] : []),
     `To: ${p.venue} · ${displayPhone(p.to)}${p.source ? ` (${p.source})` : ''}`,
-    `From: ${displayPhone(DEFAULT_FROM_NUMBER)}`,
+    `From: ${displayPhone(p.governedCall?.from||DEFAULT_FROM_NUMBER)}`,
     `"Hi, I'm an AI assistant from AskGogo, calling for ${p.guestName}. ${p.opening || ''}"`,
     `What I'll do: ${p.purpose}`,
     `Details I may share: ${p.details || 'only what is above'}.`,
@@ -161,9 +162,10 @@ export function callPlanText(p: CallPlan) {
     '*CALL PLAN · NEEDS YOUR YES*',
     ...(p.callLanguage ? [`Call language: ${p.callLanguage} (Sarvam via Bolna). The script below is shown in English.`] : []),
     `To: ${p.venue} · ${displayPhone(p.to)}${p.source ? ` (${p.source})` : ''}`,
-    `From: ${displayPhone(DEFAULT_FROM_NUMBER)}`,
+    `From: ${displayPhone(p.governedCall?.from||DEFAULT_FROM_NUMBER)}`,
     script,
     p.test ? '' : `Seating: ${p.seating}. Booking name: ${p.guestName} (add "under the name …" to change it).`,
+    ...(p.governedCall?[p.governedCall.contact?'Contact number, only if asked: '+displayPhone(p.governedCall.contact):'I will not share your contact number.', 'Maximum call duration: '+p.governedCall.maxSeconds+' seconds.']:[]),
     "Won't pay, share card details or agree to a deposit on the call.",
   ].filter(Boolean).join('\n')
   return `${body}\n\nReply *yes call* to place it, or *no* to skip.`
@@ -332,9 +334,13 @@ export async function ensureCallAgent(fetchImpl: typeof fetch = fetch, kind: 'ta
   return (cachedAgentId = id)
 }
 
+export function voiceWireBody(plan:CallPlan,agentId:string,contactNumber:string){
+  return { agent_id:agentId,recipient_phone_number:plan.to,from_phone_number:plan.governedCall?.from||String(process.env.BOLNA_FROM_NUMBER||DEFAULT_FROM_NUMBER),user_data:plan.kind==='general'?{venue:plan.venue,guest_name:plan.guestName,purpose:plan.purpose,opening:plan.opening||'',details:plan.details||'only what is in the task',timezone:'Asia/Kolkata'}:{venue:plan.venue,guest_name:plan.guestName,party_size:String(plan.partySize||2),date_label:plan.dateLabel,time_label:plan.timeLabel,flex_window:plan.flexWindow,seating:plan.seating,contact_number:plan.callLanguage?'':contactNumber,purpose:plan.purpose,timezone:'Asia/Kolkata'}}
+}
 export async function placeCall(plan: CallPlan, contactNumber: string, fetchImpl: typeof fetch = fetch, owner?: string) {
   let agentId: string
-  if (plan.callLanguage !== undefined || plan.voiceAgentId !== undefined) {
+  if(plan.governedCall)agentId=plan.governedCall.agentId
+  else if (plan.callLanguage !== undefined || plan.voiceAgentId !== undefined) {
     const { sarvamCallProfile } = await import('./voice-call-language')
     const profile = sarvamCallProfile(owner,plan.callLanguage,plan.kind ?? 'table')
     if (!profile || profile !== plan.voiceAgentId) throw Error('localized_call_profile_unavailable')
@@ -342,19 +348,7 @@ export async function placeCall(plan: CallPlan, contactNumber: string, fetchImpl
   } else {
     agentId = await ensureCallAgent(fetchImpl, plan.kind === 'general' ? 'general' : 'table')
   }
-  const res = await bolna('/call', { method: 'POST', body: {
-    agent_id: agentId,
-    recipient_phone_number: plan.to,
-    from_phone_number: String(process.env.BOLNA_FROM_NUMBER || DEFAULT_FROM_NUMBER),
-    // A general call is given only what is on its approved card; no table fields.
-    user_data: plan.kind === 'general'
-      ? { venue: plan.venue, guest_name: plan.guestName, purpose: plan.purpose, opening: plan.opening || '', details: plan.details || 'only what is in the task', timezone: 'Asia/Kolkata' }
-      : {
-      venue: plan.venue, guest_name: plan.guestName, party_size: String(plan.partySize || 2), date_label: plan.dateLabel,
-      time_label: plan.timeLabel, flex_window: plan.flexWindow, seating: plan.seating,
-      contact_number: plan.callLanguage ? '' : contactNumber, purpose: plan.purpose, timezone: 'Asia/Kolkata',
-    },
-  } }, fetchImpl)
+  const res = await bolna('/call', { method:'POST',body:voiceWireBody(plan,agentId,plan.governedCall?.contact??contactNumber) },fetchImpl)
   const executionId = String(res?.execution_id || '')
   if (!executionId) throw new Error('bolna_call_no_execution')
   return executionId
@@ -718,10 +712,28 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       if (!profile || profile !== plan.voiceAgentId) return { text:'The voice profile for that plan is unavailable or has changed. Ask for a fresh plan. Nothing was called.',handledBy:'voice-call' }
     }
     const contact = params.actor.whatsappId ? '+' + String(params.actor.whatsappId).replace(/\D/g, '') : ''
+    const env=(globalThis as any).process?.env||{}
+    const governed=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(String(tg))
+    let place=()=>placeCall(plan,contact,fetch,String(tg))
+    if(governed){
+      const gv=await import('./governed-voice'),provider=await import('./governed-provider-call')
+      if(!plan.governedCall||!await gv.voiceBindingStillValid(String(tg),plan,String(process.env.BOLNA_FROM_NUMBER||DEFAULT_FROM_NUMBER),params.actor.whatsappId))return {text:'The reviewed call profile or plan has changed. Ask for a fresh call plan; nothing was called.',handledBy:'voice-call'}
+      const approvedHash=String(state?.payload?.approvalHash||'')
+      const expectedBody=JSON.stringify(voiceWireBody(plan,plan.governedCall.agentId,plan.governedCall.contact))
+      const authorize=()=>gv.approvedVoiceRunAuthority(String(tg),params.actor.userId,plan,approvedHash,async()=>{
+        const latest=await fs.getLatestFollowupState(tg,PLAN_STATE)
+        return latest?.payload?.approvalHash===approvedHash&&voicePlanHash(String(tg),latest.payload.plan||{})===approvedHash&&!callingHoursProblem(plan.to,new Date())&&voiceCallsEnabled()
+      })
+      const guardedFetch=(async(input,init)=>{
+        if(typeof input!=='string'||!init)throw Error('voice_provider_shape_invalid')
+        return provider.governedVoiceFetch({operation:'bolna.call.v1',owner:String(tg),url:input,init,expectedBody,authorize})
+      }) as typeof fetch
+      place=()=>placeCall(plan,contact,guardedFetch,String(tg))
+    }
     const placement = await beginApprovedVoiceCall({ owner: String(tg), plan,
       approvedPlanHash: String(state?.payload?.approvalHash || ''),
       shownText: await latestAssistantText(tg), expectedText: callPlanText(plan), surface: params.surface,
-      db: supabaseAdmin, place: () => placeCall(plan, contact, fetch, String(tg)) })
+      db: supabaseAdmin, place })
     if (placement.status === 'outcome_unknown') return { text: `The call to ${plan.venue} may have started, but I couldn't confirm its status. I haven't repeated it. Check the task before trying again.`, handledBy: 'voice-call' }
     if (placement.status === 'rejected') return { text: `The calling provider rejected this attempt to ${plan.venue}. Nothing was called or booked. Ask for a fresh call plan to try again.`, handledBy: 'voice-call' }
     if (placement.status === 'blocked') return { text: placement.reason === 'call_already_attempted' || placement.reason === 'previous_call_requires_reconciliation'
@@ -795,6 +807,11 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       const brief = await compileCallAsk(general.ask, general.venue, guestName)
       plan = { ...voiceProfile, venue: general.venue, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
         purpose: brief.task, opening: brief.opening, details: brief.details, kind: 'general', test: false, redials: 0, createdAt: now }
+      if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&String((globalThis as any).process?.env?.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(String(tg))){
+        const bound=await import('./governed-voice').then(m=>m.bindReviewedVoicePlan(String(tg),plan,params.actor.whatsappId,String(process.env.BOLNA_FROM_NUMBER||DEFAULT_FROM_NUMBER))).catch(()=>null)
+        if(!bound)return {text:'Calling is not ready for your governed account: the configured call profile or price could not be verified. Nothing was called.',handledBy:'voice-call'}
+        plan=bound
+      }
       if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
       await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: voicePlanHash(String(tg), plan) })
       // The number supplied in a follow-up only generated a plan; it was never itself permission to dial.
@@ -827,6 +844,11 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       purpose: `Book a table for ${intent.partySize || 2} people at ${intent.restaurant}.`, test: false, redials: 0, createdAt: now, startClock: start }
   }
   // Review (PR #1533): a name is remembered only once a plan showing it exists, never from a request that was refused.
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&String((globalThis as any).process?.env?.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(String(tg))){
+        const bound=await import('./governed-voice').then(m=>m.bindReviewedVoicePlan(String(tg),plan,params.actor.whatsappId,String(process.env.BOLNA_FROM_NUMBER||DEFAULT_FROM_NUMBER))).catch(()=>null)
+        if(!bound)return {text:'Calling is not ready for your governed account: the configured call profile or price could not be verified. Nothing was called.',handledBy:'voice-call'}
+        plan=bound
+      }
   if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
   await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: voicePlanHash(String(tg), plan) })
   return { text: callPlanText(plan), handledBy: 'voice-call-plan' }
@@ -890,7 +912,15 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
       continue
     }
     let exec: any
-    try { exec = await getExecution(String(meta.execution_id)) } catch (err: any) { console.error('VOICE_CALL_READ_FAILED:', run.id, String(err?.message || err).slice(0, 160)); continue }
+    const env=(globalThis as any).process?.env||{}
+    const governed=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(owner)
+    try {
+      exec=governed?await import('./governed-voice').then(m=>m.governedVoiceStatus(owner,String(run.id),String(meta.execution_id))):await getExecution(String(meta.execution_id))
+    } catch (err: any) {
+      console.error('VOICE_CALL_READ_FAILED:',run.id,String(err?.message||err).slice(0,160))
+      if(governed&&Date.now()-Date.parse(String(run.started_at))>20*60_000)await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'The approved call outcome requires reconciliation. No repeat call was placed.',metadata_json:{...meta,outcome_state:'unknown',reconciliation_required:true},updated_at:new Date().toISOString()}).eq('id',run.id).eq('telegram_id',owner).eq('status','running').is('metadata_json->>result_claim',null)
+      continue
+    }
     const status = String(exec?.status || '')
     const tooOld = Date.now() - Date.parse(String(run.started_at)) > 20 * 60_000
     if (!TERMINAL.has(status) && !tooOld) continue
@@ -908,10 +938,16 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
         : `Read this restaurant booking phone call transcript. Reply with JSON only: {"booked": true only if the restaurant clearly confirmed a table, "confirmed_time": "8:00 pm" or null, "staff_name": name or null, "callback_time": when they asked to be called back or null, "notes": one short plain sentence on what happened; if a recorded phone menu answered and no person came on, say exactly that}.\nRequested: table for ${plan.partySize} ${plan.dateLabel} at ${plan.timeLabel}.\nTranscript:\n${transcript.slice(-6000)}`
       try {
         const { default: Anthropic } = await import('@anthropic-ai/sdk')
-        const res: any = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({ model: 'claude-haiku-4-5', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
+        const client=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY})
+        const request={model:'claude-haiku-4-5',max_tokens:400,messages:[{role:'user' as const,content:prompt}]}
+        const res:any=governed?await import('./governed-run-context').then(ctx=>ctx.withGovernedForeground(async()=>{
+          ctx.bindGovernedForegroundOwner(owner)
+          const g=await import('./governed-model-call')
+          return g.governedModelCall(request.model,()=>client.messages.create(request,{maxRetries:0,timeout:25_000}),x=>x,owner)
+        })):await client.messages.create(request)
         outcome = parseOutcome(String(res?.content?.[0]?.text || ''))
       } catch (err: any) { console.error('VOICE_CALL_OUTCOME_CLAUDE_FAILED:', String(err?.message || err).slice(0, 120)) }
-      if (!outcome) {
+      if (!outcome&&!governed) {
         const { askMercury } = await import('@/lib/services/mercury')
         const r = await askMercury(prompt, { maxTokens: 2000, label: 'voice_call_outcome' }).catch(() => null)
         outcome = parseOutcome(r?.text || '')
