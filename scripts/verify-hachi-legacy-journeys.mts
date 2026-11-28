@@ -13,6 +13,8 @@ const cases=[
     "L02",
     "AG04/AG11",
     "Train is not rain/weather; exact direction and date, honest partial search; follow-up picks stay on the original result set",
+    "verify-dashboard-train-surface.mts",
+    "verify-train-device-handoff.mts",
     "verify-flight-followup-owner.mts",
     "verify-acceptance-recall-flight-voice.mts",
     "verify-flight-rows-direct-oct27.mts"
