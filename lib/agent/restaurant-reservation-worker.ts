@@ -52,6 +52,45 @@ function confirmedText(result:any){
   const text=`${result?.title||''} ${result?.pageText||''}`.toLowerCase()
   return /\b(reservation|booking|table)\b.{0,80}\b(confirmed|booked|successful|complete|reserved)\b|\b(confirmed|booked|successful|reserved)\b.{0,80}\b(reservation|booking|table)\b|\bconfirmation\s*(?:number|reference|code)\b/i.test(text)
 }
+// ReserveX returns a provider receipt with separate Date, Time and Guests
+// fields. A generic success word (or a management link alone) is insufficient.
+// Preserve the exact approved clock: 20:01 cannot silently satisfy 20:00.
+function reserveXBookingUrl(value:unknown){
+  try{
+    const u=new URL(String(value||''))
+    return u.protocol==='https:'&&u.hostname==='reservex.explorex.co.in'&&!u.port&&!u.username&&!u.password&&!u.search&&!u.hash&&/^\/r\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/?$/i.test(u.pathname)
+  }catch{return false}
+}
+function reserveXReceipt(result:any,payload:any){
+  if(result?.status!=='completed'||!hasSubmit(result)||!reserveXBookingUrl(payload?.reservationUrl))return null
+  try{
+    const actual=new URL(String(result.url||'')),approved=new URL(String(payload.reservationUrl))
+    if(actual.origin!==approved.origin||actual.username||actual.password)return null
+    const path=actual.pathname.replace(/\/$/,'')
+    if(path!==approved.pathname.replace(/\/$/,'')&&!/^\/manage\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(path))return null
+  }catch{return null}
+  const page=String(result.pageText||'').normalize('NFKC').replace(/\s+/g,' ').trim()
+  if(/\b(?:not\s+(?:yet\s+)?confirmed|unconfirmed|pending\s+(?:confirmation|approval)|(?:booking|reservation)\s+(?:is\s+)?(?:pending|failed|cancelled|canceled|unsuccessful)|status\s*:\s*(?:pending|failed|cancelled|canceled|unconfirmed|rejected))\b/i.test(page))return null
+  if(!/\b(?:booking|reservation)\s+(?:(?:is|was|has been)\s+)?(?:confirmed|completed|successful)\b|\b(?:status\s*:\s*)(?:confirmed|completed)\b|\b(?:successfully\s+(?:booked|confirmed)|thank you for your (?:booking|reservation))\b/i.test(page))return null
+  const dates=[...page.matchAll(/\b(?:booking\s+|reservation\s+)?date\s*:\s*(20\d{2}-\d{2}-\d{2})\b/gi)].map(m=>m[1])
+  const guests=[...page.matchAll(/\b(?:number of\s+)?guests\s*:\s*(\d{1,2})\b/gi)].map(m=>Number(m[1]))
+  const clocks=[...page.matchAll(/\b(?:booking\s+|reservation\s+)?time\s*:\s*(\d{1,2}):(\d{2})\s*(am|pm)\b/gi)].map(m=>Number(m[1])>=1&&Number(m[1])<=12&&Number(m[2])<=59?normalizeClock(Number(m[1]),Number(m[2]),m[3]):'')
+  if(dates.length!==1||guests.length!==1||clocks.length!==1||!clocks[0]||dates[0]!==String(payload.requestedDate||'')||guests[0]!==Number(payload.partySize))return null
+  if(!validRestaurantTimeConstraint(payload.timeConstraint,String(payload.preferredStart||''),String(payload.preferredEnd||'')))return null
+  const clock=clocks[0]
+  if(payload.preferredStart&&(clock<payload.preferredStart||clock>payload.preferredEnd))return null
+  // The provider can show the canonical venue name rather than the user's
+  // nickname. Require a distinctive venue token AND the requested category
+  // when present; do not treat the provider brand or locality alone as a match.
+  const name=String(payload.restaurant||'').normalize('NFKC').toLowerCase()
+  const distinctive=name.split(/[^a-z0-9]+/).filter(t=>t.length>2&&!['the','and','restaurant','bar','kitchen','cafe','coffee','road','street','layout','nagar','bengaluru','bangalore'].includes(t))[0]
+  const words=new Set(page.toLowerCase().split(/[^a-z0-9]+/))
+  if(!distinctive||!words.has(distinctive)||(/\bbar\b/i.test(name)&&!words.has('bar')))return null
+  // A capability URL can grant access to rescheduling/cancellation. Retain
+  // only the public approved venue URL and verified non-secret receipt fields.
+  return {provider:'ReserveX',date:dates[0],time:clock,partySize:guests[0],sourceUrl:String(payload.reservationUrl)}
+}
+
 function noAvailability(result:any){
   const text=`${result?.title||''} ${result?.pageText||''}`.toLowerCase()
   return /\b(sold\s*out|fully\s+booked|no\s+available\s+(?:dates?|times?|slots?)|no\s+availability)\b/i.test(text)
@@ -215,6 +254,19 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     return{status:'outcome_unknown' as const,runId}
   }
 
+  const isReserveX=reserveXBookingUrl(url)
+  // A failed consequential control can have reached the provider even when the
+  // browser did not receive its response. Do not claim no booking or hand over
+  // a second booking link when the first submission may already have succeeded.
+  const possibleSubmit=Array.isArray(result?.actions)&&result.actions.some((a:any)=>(a?.kind==='submit'||a?.consequential===true)&&a?.status!=='skipped')
+  if(isReserveX&&possibleSubmit&&(result.status!=='completed'||!hasSubmit(result))){
+    const summary='The ReserveX submission may have reached the provider, but its outcome is not verified. I will not submit again or switch booking routes. Reconcile this same reservation before trying again.'
+    await failSafe({action,event,runId,approvalId,status:'outcome_unknown',summary,error:'restaurant_reservation_confirmation_unknown',actor})
+    await notify(actor,summary)
+    await activity(tg,runId,'restaurant_reservation_unknown',summary,{life_event_id:event.id,action_id:action.id})
+    return{status:'outcome_unknown' as const,runId}
+  }
+
   // Live-slot missions (Instinct-style): a CAPTCHA or OTP on the restaurant's page is handed back as the
   // first-party link with nothing booked. Gogo never solves or bypasses it, and the spent approval cannot replay.
   const slotLink=payload.slotMission===true&&payload.guestName?{restaurant:safe(payload.restaurant||event.title,160),time:String(payload.preferredStart||''),date:String(payload.requestedDate||''),partySize:Number(payload.partySize)||1,url}:null
@@ -243,7 +295,8 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   }
 
   const submitted=hasSubmit(result)
-  const verified=submitted&&confirmedText(result)
+  const verifiedReceipt=isReserveX?reserveXReceipt(result,payload):null
+  const verified=submitted&&(isReserveX?Boolean(verifiedReceipt):confirmedText(result))
   if(!verified){
     if(reconciledResult){
       await failSafe({action,event,runId,approvalId,status:'paused',summary:'The provider outcome is not confirmed yet. Check the retained browser again without repeating the reservation.',error:'restaurant_reconciliation_pending',actor})
@@ -265,15 +318,17 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   }
 
   const now=new Date().toISOString()
-  const meta={...(event.metadata_json||{}),reservationConfirmed:true,reservationConfirmedAt:now,confirmationUrl:result.url,confirmationEvidence:safe(result.pageText,2200)}
+  const confirmationUrl=verifiedReceipt?null:result.url
+  const receiptFields=verifiedReceipt?{providerReceipt:verifiedReceipt}:{}
+  const meta={...(event.metadata_json||{}),reservationConfirmed:true,reservationConfirmedAt:now,confirmationUrl,confirmationEvidence:verifiedReceipt?JSON.stringify(verifiedReceipt):safe(result.pageText,2200),...receiptFields}
   // Provider success and durable task completion are separate facts. Quarantine
   // this exact action before bookkeeping so a partial write cannot arm a replay.
-  const receipt={...payload,providerConfirmationVerified:true,providerConfirmedAt:now,confirmationUrl:result.url,reconciliationRequired:true,blockedReason:'restaurant_confirmation_recording'}
+  const receipt={...payload,providerConfirmationVerified:true,providerConfirmedAt:now,confirmationUrl,...receiptFields,reconciliationRequired:true,blockedReason:'restaurant_confirmation_recording'}
   const {data:recorded,error:receiptError}=await supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:now,payload_json:receipt})
     .eq('id',action.id).eq('telegram_id',tg).eq('status','running').select('id').maybeSingle()
   if(receiptError||!recorded)throw new Error('restaurant_reservation_confirmation_receipt_failed')
   if(reconciledResult)await releaseRunAuthHandoff(tg,runId)
-  const completionMetadata={plan_type:'restaurant_reservation_release',life_event_id:String(event.id),life_event_action_id:String(action.id),providerConfirmationVerified:true,confirmationUrl:result.url}
+  const completionMetadata={plan_type:'restaurant_reservation_release',life_event_id:String(event.id),life_event_action_id:String(action.id),providerConfirmationVerified:true,confirmationUrl,...receiptFields}
   if(!timeAuthority){
     const text='A provider confirmation is recorded, but this older request lacks verified dining-time authority. Do not repeat the reservation. Review the same task and provider details; no Calendar draft or fully validated completion is claimed.'
     const review=await Promise.allSettled([
@@ -306,10 +361,10 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     await notify(actor,text)
     return{status:'paused' as const,runId,text}
   }
-  await activity(tg,runId,'restaurant_reservation_verified','Provider confirmation verified for the restaurant reservation.',{life_event_id:event.id,action_id:action.id,confirmation_url:result.url})
+  await activity(tg,runId,'restaurant_reservation_verified','Provider confirmation verified for the restaurant reservation.',{life_event_id:event.id,action_id:action.id,confirmation_url:confirmationUrl,...receiptFields})
 
   let calendarNote=''
-  const startAt=extractConfirmedSlot(result.pageText,String(event.timezone||'Asia/Kolkata'))
+  const startAt=verifiedReceipt?new Date(verifiedReceipt.date+'T'+verifiedReceipt.time+':00+05:30').toISOString():extractConfirmedSlot(result.pageText,String(event.timezone||'Asia/Kolkata'))
   // 20 Oct: confirmed reservations never reached "My bookings" (no start_at) and got no reminder. Record the
   // provider-confirmed time and reference on the same life event, and a 2-hour reminder. Best-effort: the booking
   // itself is already verified and recorded above.
@@ -328,7 +383,8 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     const calendar=await prepareBookingCalendarApproval({actor,input:{lifeEventId:String(event.id),title:safe(payload.restaurant||event.title,180),startAt,endAt,timezone:String(event.timezone||'Asia/Kolkata'),location:null,provider:String(event.provider||''),sourceUrl:url,endEstimated:true}}).catch(()=>null)
     if(calendar)calendarNote=' I also prepared a Calendar block; approve that separately in Gogo Agent if you want it added.'
   }
-  await notify(actor,`✅ Reservation verified for ${safe(payload.restaurant||event.title,160)}. I verified the provider confirmation page before marking it complete.${calendarNote}`)
+  const confirmedDetails=verifiedReceipt?` Date: ${verifiedReceipt.date}. Time: ${verifiedReceipt.time} IST. Guests: ${verifiedReceipt.partySize}. Provider: ReserveX.`:''
+  await notify(actor,`✅ Reservation verified for ${safe(payload.restaurant||event.title,160)}.${confirmedDetails} I verified the provider confirmation page before marking it complete.${calendarNote}`)
   return{status:'completed' as const,runId}
 }
 
