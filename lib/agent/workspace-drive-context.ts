@@ -57,10 +57,16 @@ function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|nul
   const before=calendarAffirmativeText(outsideQuotes.slice(0,match.index))
   const after=calendarAffirmativeText(tail.slice(title.length).replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,''))
   const request=outsideQuotes.replace(/’/g,"'")
-  const asksForExactMatch=/\b(?:whether|if)\s+(?:there\s+(?:is|was)|(?:my\s+)?(?:google\s+)?drive\s+(?:has|contains|found|returned))\s+(?:an?\s+)?exact\s+match\b/i.test(request)
-  const asksIfFileExists=/\b(?:whether|if)\s+(?:(?:the|this|that|a|an|my|exact)\s+)*(?:file(?:\s*name)?|document|title|it|_{2,})\s+(?:exists?|is\s+(?:present|there|in\s+(?:my\s+)?(?:google\s+)?drive))\b/i.test(request)
+  // An "if" clause can authorize a read subject to finding the file.
+  const questions=request.replace(/\b(?:tell\s+me|check|confirm|verify|see|report|say|find\s+out)\s+if\b/gi,'whether')
+  const asksForExactMatch=/\bwhether\s+(?:there\s+(?:is|was)|(?:my\s+)?(?:google\s+)?drive\s+(?:has|contains|found|returned))\s+(?:an?\s+)?exact\s+match\b/i.test(questions)
+  const asksIfFileExists=/\bwhether\s+(?:(?:the|this|that|a|an|my|exact)\s+)*(?:file(?:\s*name)?|document|title|it|_{2,})\s+(?:exists?|is\s+(?:present|there|in\s+(?:my\s+)?(?:google\s+)?drive))\b/i.test(questions)
   const wantsExistence=asksForExactMatch||asksIfFileExists||/\b(?:existence[- ]only|metadata[- ]only)\b/i.test(request)
-  const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:other\s+(?:file(?:\s*name)?s?|titles)\s+or\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.test(request)
+  const restrictions=request.match(/\b(?:do not|don't|dont|never|without)\s+[^.;!?\n]*/gi)||[]
+  const prohibitsReading=restrictions.some(clause=>{
+    const action=/^(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:other\s+(?:file(?:\s*name)?s?|titles)\s+or\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.exec(clause)
+    return action!==null&&!/^(?:\s+(?:and|or)\s+(?:open|read|review))*\s+(?:(?:any|all|the)\s+)?other\s+(?:files?|docs?|documents?|spreadsheets?|presentations?)\s*$/i.test(clause.slice(action[0].length))
+  })
   const affirmative=before+' '+after
   const usesDocument=/\buse\s+(?:(?:my|the|this|that|google|drive)\s+)*(?:document|file|spreadsheet|sheet|presentation)\b/i.test(before)
     && /\bto\s+(?:answer|tell|check|find|identify|determine|give|explain|compare)\b/i.test(after)
