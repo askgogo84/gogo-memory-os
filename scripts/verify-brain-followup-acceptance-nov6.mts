@@ -11,7 +11,10 @@ const full = readFileSync('lib/agent/brain.ts', 'utf8')
 const start = full.indexOf('export async function answerFollowups(')
 const end = full.indexOf('// ---------------------------------------------------------------- shadow models', start)
 assert.ok(start >= 0 && end > start, 'original function boundary')
-const js = ts.transpileModule(full.slice(start, end), {
+const wrapperStart = full.indexOf('async function completeBrainModel(')
+const wrapperEnd = full.indexOf('export async function decide(', wrapperStart)
+assert.ok(wrapperStart >= 0 && wrapperEnd > wrapperStart, 'actual shared model wrapper')
+const js = ts.transpileModule(full.slice(wrapperStart, wrapperEnd) + full.slice(start, end), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 }).outputText
 

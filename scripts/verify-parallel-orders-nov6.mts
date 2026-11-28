@@ -20,7 +20,9 @@ const results = ws.parallelResults({ results: [
 ] })
 assert.equal(results.length, 1); assert.equal(results[0].snippet, 'Open Sunday 9 am … Call 080 1234 5678'); assert.equal(results[0].publishedDate, '2026-11-02T00:00:00.000Z')
 const src = readFileSync('lib/web-search.ts', 'utf8')
-assert.match(src, /fetch\('https:\/\/api\.parallel\.ai\/v1\/search', \{\n    method: 'POST', headers: \{ 'x-api-key': apiKey/)
+assert.match(src, /boundedSearchFetch\('parallel\.fast\.v1','https:\/\/api\.parallel\.ai\/v1\/search', \{\n    method: 'POST', headers: \{ 'x-api-key': apiKey/)
+assert.match(src, /GOGO_HACHI_ENFORCEMENT!=='1'\)return fetch\(url,init\)/)
+assert.match(src, /governedSearchFetch\(operation,url,init\)/)
 assert.match(src, /provider === 'parallel' \? process\.env\.PARALLEL_API_KEY/)
 console.log('✓ Parallel is the main web search when keyed; results mapped; Serper/Tavily remain the fallback')
 
