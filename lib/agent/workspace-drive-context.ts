@@ -45,16 +45,21 @@ function quotedNames(text:string){
 
 function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|null{
   const outsideQuotes=text.replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,value=>'_'.repeat(value.length))
-  const match=/\bexact\s+(?:file\s*name|file\s+title|title)\s*(?:is\s+|:\s*)?/i.exec(outsideQuotes)
+  const markers=Array.from(outsideQuotes.matchAll(/\bexact\s+(?:file\s*name|file\s+title|title)\s*(?:is\s+|:\s*)?/gi))
+  const quotedMarkers=markers.filter(marker=>/^\s*["“]/.test(text.slice((marker.index??0)+marker[0].length)))
+  if(quotedMarkers.length>1)return {name:'',metadataOnly:true}
+  const match=quotedMarkers[0]||markers[0]
   if(!match)return null
-  const tail=text.slice(match.index+match[0].length).trim()
+  const tail=text.slice((match.index??0)+match[0].length).trim()
   const quoted=tail.match(/^(?:"([^"\r\n]+)"|“([^”\r\n]+)”)/)
   const title=quoted?.[0] ?? tail.split(/[.!?](?:\s|$)|[;\r\n]|\s+and\s+(?:tell|show|read|summari[sz]e|open|extract|review)\b/i,1)[0]
   const name=quoted ? quoted[1]||quoted[2] : title.trim()
   const before=calendarAffirmativeText(outsideQuotes.slice(0,match.index))
   const after=calendarAffirmativeText(tail.slice(title.length).replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,''))
   const request=outsideQuotes.replace(/’/g,"'")
-  const wantsExistence=/\b(?:existence[- ]only|metadata[- ]only|only\s+(?:whether|if)|(?:whether|if)\b[^.;!?\n]*\b(?:exists?|exact\s+match))\b/i.test(request)
+  const asksForExactMatch=/\b(?:whether|if)\s+(?:there\s+(?:is|was)|(?:my\s+)?(?:google\s+)?drive\s+(?:has|contains|found|returned))\s+(?:an?\s+)?exact\s+match\b/i.test(request)
+  const asksIfFileExists=/\b(?:whether|if)\s+(?:(?:the|this|that|a|an|my|exact)\s+)*(?:file(?:\s*name)?|document|title|_{2,})\s+(?:exists?|is\s+(?:present|there|in\s+(?:my\s+)?(?:google\s+)?drive))\b/i.test(request)
+  const wantsExistence=asksForExactMatch||asksIfFileExists||/\b(?:existence[- ]only|metadata[- ]only)\b/i.test(request)
   const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.test(request)
   const affirmative=before+' '+after
   const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|review|open)\b/i.test(affirmative)

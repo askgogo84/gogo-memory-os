@@ -121,12 +121,18 @@ for(const [files,hasMore,expected] of [
     'Read my Google Drive document with the exact filename "'+lookupTitle+'". Do not open it yet.',
     'Check the exact filename "'+lookupTitle+'" in my Google Drive and do not summarize it.',
     'Read my Google Drive document with the exact filename "'+lookupTitle+'". Do not show me the contents.',
+    'Review whether the exact filename exists in Google Drive. Check the exact filename "'+lookupTitle+'".',
   ]){
     const lookup=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:lookupPrompt})
     assert.match(lookup.text,expected)
     assert.doesNotMatch(lookup.text,/Fixture brief|drive\.google\.com|Private report/)
   }
 }
+
+deps['./google-workspace-read'].searchWorkspaceDrive=async()=>assert.fail('multiple named exact lookups require clarification')
+const competing=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:'Read the exact filename "Budget" or the exact filename "Plan" from Google Drive.'})
+assert.equal(competing.status,'paused')
+assert.match(competing.text,/Please put the exact filename/)
 
 const driveApi:any={}
 const exactProviderTitle=' Fixture  brief &amp; notes '
@@ -168,6 +174,7 @@ for(const contentPrompt of [
   'Find my Google Drive document with the exact filename '+normalizedTitle+' and read it.',
   'Show me the contents of my Google Drive document with the exact filename "'+normalizedTitle+'".',
   'Find my Google Drive document with the exact filename "'+normalizedTitle+'" and display the document text.',
+  'Read my Google Drive document with the exact filename "'+normalizedTitle+'" and tell me whether a contingency fund exists.',
 ]){
   const contentRead=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:contentPrompt})
   assert.equal(contentRead.status,'completed')
