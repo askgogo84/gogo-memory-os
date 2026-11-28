@@ -62,10 +62,12 @@ function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|nul
   const wantsExistence=asksForExactMatch||asksIfFileExists||/\b(?:existence[- ]only|metadata[- ]only)\b/i.test(request)
   const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:other\s+(?:file(?:\s*name)?s?|titles)\s+or\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.test(request)
   const affirmative=before+' '+after
+  const usesDocument=/\buse\s+(?:(?:my|the|this|that|google|drive)\s+)*(?:document|file|spreadsheet|sheet|presentation)\b/i.test(before)
+    && /\bto\s+(?:answer|tell|check|find|identify|determine|give|explain|compare)\b/i.test(after)
   const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|open)\b/i.test(affirmative)
     || /\breview\s+(?:it\b|(?:(?:my|the|this|that|google|drive)\s+)*(?:document|file|spreadsheet|sheet|presentation|contents?)\b)/i.test(affirmative)
     || /\b(?:show|display)\s+(?:me\s+)?(?:the\s+)?(?:(?:file|document)\s+)?(?:contents?|text)\b/i.test(affirmative)
-  return {name:name.trim()&&name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly:wantsExistence||prohibitsReading||!explicitlyReads}
+  return {name:name.trim()&&name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly:wantsExistence||prohibitsReading||!(explicitlyReads||usesDocument)}
 }
 
 export function selectWorkspaceDriveFile(files:DriveFile[],text:string):{status:'selected';file:DriveFile}|{status:'not_found'|'ambiguous';files:DriveFile[]}{
