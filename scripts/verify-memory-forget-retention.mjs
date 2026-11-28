@@ -20,6 +20,8 @@ const compiled = ts.transpileModule(source, {
 
 function fixture(initialMemories, options = {}) {
   const state = {
+    dated_fact_topics: [{ id: 'd1', personal_owner: '71' }, { id: 'd2', personal_owner: '72' }, { id: 'd3', workspace_id: 'team' }],
+    dated_fact_questions: [{ id: 'q1', viewer_id: '71' }, { id: 'q2', viewer_id: '72' }],
     memories: initialMemories.map(x => ({ ...x })),
     memory_embeddings: initialMemories.map(x => ({
       source_table: 'memories', source_id: String(x.id), deleted_at: null,
@@ -77,7 +79,7 @@ function fixture(initialMemories, options = {}) {
             state.deletes++
             const chosen = options.partialDelete ? matches.slice(0, 1) : matches
             for (const row of chosen) {
-              if (String(row.telegram_id) !== '71') state.wrongOwnerDeletes++
+              if (String(row.telegram_id ?? row.personal_owner ?? row.viewer_id) !== '71') state.wrongOwnerDeletes++
             }
             const ids = new Set(chosen.map(row => String(row.id)))
             state[table] = state[table].filter(row => !ids.has(String(row.id)))
@@ -129,6 +131,8 @@ const foreign = [
   assert.equal(state.memories.some(row => row.content === 'Old oak tree secret'), false)
   assert.equal(state.memories.filter(row => row.telegram_id === 71).length, internal.length)
   assert.equal(state.memories.filter(row => row.telegram_id === 72).length, foreign.length)
+  assert.deepEqual(state.dated_fact_topics.map(r => r.id), ['d2','d3'])
+  assert.deepEqual(state.dated_fact_questions.map(r => r.id), ['q2'])
   assert.ok(state.reads >= 3, 'must read two initial pages and rescan for absence after delete')
   assert.ok(state.deletes >= 2, 'deletes must be bounded by batch')
   assert.equal(state.wrongOwnerDeletes, 0)
@@ -165,6 +169,7 @@ const foreign = [
 }
 
 for (const [description, opts, command] of [
+  ['dated fact deletion outage', { fail: { table: 'dated_fact_topics', action: 'delete' } }, 'forget everything'],
   ['read outage', { fail: { table: 'memories', action: 'read' } }, 'forget everything'],
   ['delete outage', { fail: { table: 'memories', action: 'delete' } }, 'forget oak tree secret'],
   ['partial delete confirmation', { partialDelete: true }, 'forget everything'],

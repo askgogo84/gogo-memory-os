@@ -81,6 +81,7 @@ const CAB_DETAIL = /\b[A-Z]{2}\s?-?\d{1,2}\s?-?[A-Z]{1,3}\s?-?\d{3,4}\b|(?:\+?91
 /** Cheap pre-filter for the route harnesses: only these shapes load the module. Pure. */
 export function frontDoorCandidate(text: string): boolean {
   const t = String(text || '')
+  if (/^fact\s*:/i.test(t.trim())) return true
   if (t.length >= 40 && looksLikeHotelBooking(t)) return true
   if (CAB_WORD.test(t) && CAB_DETAIL.test(t)) return true
   return t.length <= 80 && /\b(?:\d{1,2}(?:st|nd|rd|th)\b|\d{1,2}\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(t)
@@ -110,6 +111,15 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
   const text = String(p.text || '').trim()
   const now = p.now || new Date()
   if (!text) return null
+  if (!p.forwarded && /^fact\s*:/i.test(text)) {
+    const unavailable = { text: 'Could not verify the dated fact. Open Memory to check the topic and date.', handledBy: 'dated-fact' }
+    if (!Number.isSafeInteger(p.telegramId)) return unavailable
+    try {
+      const { answerDatedQuestion } = await import('./dated-facts')
+      const result = await answerDatedQuestion(String(p.telegramId), null, text, now)
+      return result ? { text: result.answer + '\n' + result.source.label, handledBy: 'dated-fact' } : unavailable
+    } catch { return unavailable }
+  }
   try {
     // 1. A forwarded hotel booking.
     // 17 Nov live: "Call Novotel on … and book a room for 2 nights on Saturday" was saved as a stay. Asking Gogo to
