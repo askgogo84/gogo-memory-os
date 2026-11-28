@@ -262,6 +262,10 @@ await check('exact availability-only request goes through public Maps and queued
   }})
   assert.equal(h.mod.isRestaurantReservationRequest(AVAILABILITY_REQUEST),false)
   assert.equal(h.mod.isRestaurantAvailabilityRequest(AVAILABILITY_REQUEST),true)
+  const noDisclaimer='Check table availability for 2 people at Toit Indiranagar tomorrow at 9 pm.'
+  assert.equal(h.mod.isRestaurantAvailabilityRequest(noDisclaimer),true)
+  assert.equal(h.mod.isRestaurantReservationRequest(noDisclaimer),false)
+  assert.equal(h.mod.parseRestaurantReservationIntent(noDisclaimer),null)
   const intent=h.mod.parseRestaurantAvailabilityIntent(AVAILABILITY_REQUEST)
   assert.equal(intent.restaurant,venue)
   assert.equal(intent.partySize,2)
