@@ -78,7 +78,7 @@ import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand, parseConnectedProviderCartAction, isExplicitProviderBrowserRead } from '@/lib/agent/browser-command'
-import { isRestaurantReservationRequest } from '@/lib/agent/restaurant-reservation'
+import { isRestaurantReservationRequest, isRestaurantAvailabilityRequest } from '@/lib/agent/restaurant-reservation'
 import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
@@ -1228,7 +1228,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     let eventsCheckedFor: string | null = null
     if (!preserveFriendFlow && !callCommand && process.env.VERCEL_ENV && (process.env.GOGO_EVENTS === '1' || process.env.GOGO_EVENTS_OWNERS)) {
       const entry = await import('@/lib/events/entry')
-      if (entry.offerEventsEarly({ owner: String(resolvedUser.telegramId), text, forwarded: Boolean(forwardedMessage), approval: Boolean(approvalIntent(text)), reservation: isRestaurantReservationRequest(text) || isSportsVenueRequest(text) })) {
+      if (entry.offerEventsEarly({ owner: String(resolvedUser.telegramId), text, forwarded: Boolean(forwardedMessage), approval: Boolean(approvalIntent(text)), reservation: isRestaurantReservationRequest(text) || isRestaurantAvailabilityRequest(text) || isSportsVenueRequest(text) })) {
         eventsCheckedFor = text
         const eventReply = await (async () => {
           const eventActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' })
@@ -1825,7 +1825,7 @@ _"${originalText}"_
       }
     }
 
-    if (isRestaurantReservationRequest(text)) {
+    if (isRestaurantReservationRequest(text) || isRestaurantAvailabilityRequest(text)) {
       const reservationAgent = await tryRunWhatsAppAgent({
         user: resolvedUser,
         text,
