@@ -3,11 +3,13 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { getUserLearningReport } from '@/lib/agent/learning-report'
 import { BrainReport } from '@/components/dashboard/brain-report'
+import {HachiSkillReview} from '@/components/dashboard/hachi-skill-review'
 
 export const dynamic='force-dynamic'
 export default async function BrainPage({searchParams}:{searchParams:Promise<{hours?:string}>}){
   const session=await getSession()
   if(!session)redirect('/dashboard')
+  const showHachi=process.env.GOGO_HACHI_ENFORCEMENT==='1'&&String(process.env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map(x=>x.trim()).includes(session.telegramId)
   const params=await searchParams
   const hours=[24,168,720].includes(Number(params.hours))?Number(params.hours):168
   let report
@@ -18,5 +20,6 @@ export default async function BrainPage({searchParams}:{searchParams:Promise<{ho
       <nav aria-label="Evidence window" className="flex gap-2">{[[24,'24 hours'],[168,'7 days'],[720,'30 days']].map(([h,label])=><Link key={h} href={`/dashboard/brain?hours=${h}`} aria-current={hours===h?'page':undefined} className={`rounded-lg border px-3 py-2 text-[16px] ${hours===h?'border-[#2fb8a6] text-[#2fb8a6]':'border-[#333] text-[#aaa]'}`}>{label}</Link>)}</nav>
     </header>
     {report?<BrainReport report={report}/>:<div role="alert" className="rounded-xl border border-[#665230] p-6"><h2 className="font-medium">Evidence is temporarily unavailable</h2><p className="mt-2 text-[16px] text-[#bbb]">We could not read the measurements. Counts and confidence will appear when the evidence store is available.</p><Link href={`/dashboard/brain?hours=${hours}`} className="mt-4 inline-block underline">Try again</Link></div>}
+    {showHachi&&<HachiSkillReview key={session.telegramId}/>}
   </div>
 }
