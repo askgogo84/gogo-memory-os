@@ -630,7 +630,7 @@ function legacyDedupeKey(actor:AgentActor,intent:RestaurantReservationIntent,url
 // Old missions used a provider-specific hash. Inspect the owner's durable objective
 // fields rather than trying to guess every historical booking URL. A partial or
 // unreadable inventory must not be interpreted as permission to submit again.
-async function matchingReservationEvents(actor:AgentActor,intent:RestaurantReservationIntent){
+async function matchingReservationEvents(actor:AgentActor,intent:RestaurantReservationIntent,anyTime=false){
   const limit=501
   let query=supabaseAdmin.from('life_events').select('id,dedupe_key,metadata_json,preferences_json,lifecycle_state')
     .eq('telegram_id',String(actor.legacyTelegramId)).eq('subtype','restaurant_booking_release')
@@ -643,8 +643,8 @@ async function matchingReservationEvents(actor:AgentActor,intent:RestaurantReser
     return reservationObjectiveName(meta.restaurant)===reservationObjectiveName(intent.restaurant)
       &&String(prefs.requestedDate||'')===String(intent.requestedDate||'')
       &&String(prefs.partySize)===String(intent.partySize)
-      &&String(prefs.preferredStart||'')===intent.preferredStart
-      &&String(prefs.preferredEnd||'')===intent.preferredEnd
+      &&(anyTime||(String(prefs.preferredStart||'')===intent.preferredStart
+      &&String(prefs.preferredEnd||'')===intent.preferredEnd))
   })
 }
 function reservationReconciliationReply(runId=''){
@@ -959,18 +959,31 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   if(!intent.partySize){
     return askReservationDetail(params.actor,params.text,intent,'party',`How many people should I book at ${intent.restaurant} for?`)
   }
+  const paused=(text:string)=>({runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text})
+  // A failed read says nothing about an earlier submission. Re-check the owner's
+  // durable reservation inventory before recommending another route. Include
+  // other times on the same dining date: a prior 8:01 alternative may already
+  // be booked even if the repeated request asks for 8:00.
+  const safeFallback=async(text:string)=>{
+    try{
+      const prior=await matchingReservationEvents(params.actor,intent,true)
+      if(prior.length)return reservationReconciliationReply()
+    }catch{
+      return paused("I couldn't verify the earlier reservation inventory. I haven't made a new booking or call, and won't suggest another route until the existing outcome can be checked.")
+    }
+    return paused(text)
+  }
   const providers=await discoverProviders(intent)
   let provider=providers[0]
   if(!provider){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I couldn't verify a public booking page for ${intent.restaurant} after checking multiple routes. Nothing was booked. I can also prepare a restaurant phone call for your approval if you want me to try that.`}
+    return safeFallback(`I couldn't verify a public booking page for ${intent.restaurant} after checking multiple routes. No booking attempt was made in this request. I can also prepare a restaurant phone call for your approval if you want me to try that.`)
   }
   const timezone=await actorTimezone(params.actor)
   // A specific dining date is a live-slot read on the booking widget (Instinct-style); otherwise the
   // page is read for its booking-release rules as before.
   const slotMode=Boolean(intent.requestedDate)
-  const paused=(text:string)=>({runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text})
   // 19 Oct live: a failed read said "I found Toit here: <EazyDiner>" plus a retry invitation. One line, the booking link, nothing promised.
-  const unreadable=()=>paused(reservationUnreadableReply({restaurant:intent.restaurant,url:provider.url}))
+  const unreadable=()=>safeFallback(reservationUnreadableReply({restaurant:intent.restaurant,url:provider.url}))
   if(slotMode){
     // Fast path: read the ReserveGo widget's own public times feed instead of driving the widget in a browser.
     const reservego:any=await import('./reservego').catch(()=>null)
@@ -992,7 +1005,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
           await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'choose_time',slotTime:null,alternatives:decision.times,slots:feed.slots,evidence,askedText:reply})
           return paused(reply)
         }
-        return paused(`${intent.restaurant} has no open tables for ${reservationDayLabel(intent.requestedDate,intent.preferredStart||'19:00').replace(/^on /,'')} on its booking page, so nothing is booked. Want me to check another date? ${widget.widgetUrl}`)
+        return safeFallback(`${intent.restaurant} has no open tables for ${reservationDayLabel(intent.requestedDate,intent.preferredStart||'19:00').replace(/^on /,'')} on its booking page. No booking attempt was made in this request. Want me to check another date? ${widget.widgetUrl}`)
       }catch(error:any){
         console.error('RESERVEGO_FEED_FAILED:',safe(error?.message||error,120))
       }
