@@ -14,7 +14,10 @@ export function governedEnabled(kind:'personal'|'workspace',id:string,env:Env=(g
 type ModelTariff={model:string;max_total_tokens:unknown;micros_per_token:unknown;valid_until:string;verified_source:string}
 type Rpc=(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:unknown}>
 type ProviderResponse={model?:unknown;usage?:{input_tokens?:unknown;output_tokens?:unknown;cache_read_input_tokens?:unknown;cache_creation_input_tokens?:unknown}}
-type Deps={rpc:Rpc;authorize:()=>Promise<boolean>;currentRun:()=>Promise<boolean>;tariff:(model:string)=>Promise<ModelTariff|null>;now:()=>number;nextAttempt:()=>string}
+export type SearchOperation='tavily.basic.v1'|'serper.search.v1'|'parallel.fast.v1'
+const SEARCH_OPERATIONS=new Set<string>(['tavily.basic.v1','serper.search.v1','parallel.fast.v1'])
+type OperationTariff={operation:string;max_cost_micros:unknown;valid_until:string;verified_source:string}
+type Deps={rpc:Rpc;authorize:()=>Promise<boolean>;currentRun:()=>Promise<boolean>;tariff:(model:string)=>Promise<ModelTariff|null>;operationTariff?:(operation:SearchOperation)=>Promise<OperationTariff|null>;now:()=>number;nextAttempt:()=>string}
 const denied=(reason:string):BudgetOutcome<never>=>({state:'blocked',reason})
 function count(v:unknown):number|null {
   if(typeof v==='string'&&/^(0|[1-9][0-9]*)$/.test(v)&&String(Number(v))===v)v=Number(v)
@@ -37,8 +40,14 @@ export function meteredUsage(res:ProviderResponse,t:ModelTariff):Usage|null {
   if(rate===null||rate<1||!Number.isSafeInteger(tokens)||!Number.isSafeInteger(tokens*rate))return null
   return {tokens,costMicrosInr:tokens*rate}
 }
+export function verifiedOperationCeiling(t:OperationTariff|null,operation:SearchOperation,now:number):Usage|null{
+  if(!SEARCH_OPERATIONS.has(operation)||!t||t.operation!==operation||typeof t.verified_source!=='string'||!t.verified_source.trim()||!Number.isFinite(now)||!(Date.parse(t.valid_until)>now))return null
+  const cost=count(t.max_cost_micros)
+  return cost!==null&&cost>0?{tokens:0,costMicrosInr:cost}:null
+}
 export type GovernedRuntime={
   model:<T extends ProviderResponse>(model:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
+  boundedSearch:<T>(operation:SearchOperation,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   local:<T>(operation:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
 }
 export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime {
@@ -59,6 +68,25 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
           return !!c&&c.tokens===ceiling.tokens&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&inTime()
         },
         execute:async()=>{const value=await execute();return {value,usage:meteredUsage(value,pinned)}}})
+    },
+    async boundedSearch(operation,execute,inTime){
+      // Fixed-cost, bounded search requests only; never classify arbitrary
+      // connector methods or model-chosen endpoints as known-price work.
+      if(s.kind!=='personal'||!SEARCH_OPERATIONS.has(operation)||!inTime()||!d.operationTariff)return denied('unpriced_tool')
+      let tariff:OperationTariff|null
+      try{tariff=await d.operationTariff(operation)}catch{return denied('price_unavailable')}
+      const ceiling=verifiedOperationCeiling(tariff,operation,d.now())
+      if(!ceiling||!tariff)return denied('price_unavailable')
+      const pinned={...tariff}
+      return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling},rpc:d.rpc,
+        authorize:async()=>{
+          if(!await current(inTime))return false
+          const live=await d.operationTariff!(operation),c=verifiedOperationCeiling(live,operation,d.now())
+          return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.valid_until===pinned.valid_until&&live?.verified_source===pinned.verified_source&&inTime()
+        },
+        // Charge the verified maximum, not a guessed actual provider invoice.
+        // Transport/invalid response throws and retains the reservation.
+        execute:async()=>({value:await execute(),usage:ceiling})})
     },
     async local(operation,execute,inTime){
       // Only verified DB-only paths. A provider/tool without a bounded billing
@@ -92,6 +120,10 @@ async function open(kind:'personal'|'workspace',scopeId:string,actorId:string,au
       tariff:async(model)=>{
         const r=await supabaseAdmin.from('gogo_governed_model_prices').select('model,max_total_tokens,micros_per_token,valid_until,verified_source').eq('model',model).maybeSingle()
         return r.error?null:r.data as ModelTariff|null
+      },
+      operationTariff:async(operation)=>{
+        const r=await supabaseAdmin.from('gogo_governed_search_prices').select('operation,max_cost_micros,valid_until,verified_source').eq('operation',operation).maybeSingle()
+        return r.error?null:r.data as OperationTariff|null
       }
     })
   }catch{return null}

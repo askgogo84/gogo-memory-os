@@ -83,4 +83,33 @@ assert.equal(guardedCalls,1)
 await assert.rejects(()=>governedModelCall(price.model,async()=>{guardedCalls++;throw Error('transport')},x=>x,'101',adapterDeps),/attempt_outcome_unverified/)
 assert.equal(guardedCalls,2)
 assert.equal(receipts.at(-1)?.args.p_cost_micros,null)
+const {validBoundedSearch,governedSearchFetch}=await import('../lib/agent/governed-search-call')
+const url='https://api.tavily.com/search'
+const init={method:'POST',body:JSON.stringify({api_key:'fixture',query:'test',topic:'general',search_depth:'basic',max_results:5,include_answer:false})}
+assert.equal(validBoundedSearch('tavily.basic.v1',url,init),true)
+assert.equal(validBoundedSearch('tavily.basic.v1','https://other.example/search',init),false)
+assert.equal(validBoundedSearch('tavily.basic.v1',url,{...init,body:JSON.stringify({...JSON.parse(init.body),search_depth:'advanced'})}),false)
+assert.equal(validBoundedSearch('tavily.basic.v1',url,{...init,body:JSON.stringify({...JSON.parse(init.body),include_raw_content:true})}),false)
+const searchPrice={operation:'tavily.basic.v1',max_cost_micros:9,valid_until:price.valid_until,verified_source:'fixture:reviewed'}
+let searchTariff:any=searchPrice,searchCalls=0
+const searchRt=makeGovernedRuntime(scope,{...deps,operationTariff:async()=>searchTariff})
+const searchDeps={selection:adapterDeps.selection,open:async()=>searchRt,now:()=>now,fetcher:async(input:any,options?:RequestInit)=>{
+  assert.equal(input,url);assert.equal(options?.redirect,'error');searchCalls++
+  return new Response(JSON.stringify({results:[]}),{headers:{'Content-Type':'application/json'}})
+}}
+assert.equal((await governedSearchFetch('tavily.basic.v1',url,init,searchDeps)).status,200)
+assert.equal(searchCalls,1)
+assert.equal(receipts.at(-1)?.args.p_cost_micros,9)
+reserve='cost'
+await assert.rejects(()=>governedSearchFetch('tavily.basic.v1',url,init,searchDeps),/governed_model_cost/)
+assert.equal(searchCalls,1)
+reserve='reserved';searchTariff=null
+await assert.rejects(()=>governedSearchFetch('tavily.basic.v1',url,init,searchDeps),/price_unavailable/)
+assert.equal(searchCalls,1)
+searchTariff=searchPrice
+await assert.rejects(()=>governedSearchFetch('tavily.basic.v1','https://other.example/search',init,searchDeps),/unpriced_search_shape/)
+assert.equal(searchCalls,1)
+await assert.rejects(()=>governedSearchFetch('tavily.basic.v1',url,init,{...searchDeps,fetcher:async()=>{searchCalls++;return new Response('error',{status:503})}}),/attempt_outcome_unverified/)
+assert.equal(searchCalls,2)
+assert.equal(receipts.at(-1)?.args.p_cost_micros,null)
 console.log('Hachi scoped runtime boundary fixtures passed')

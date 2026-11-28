@@ -191,4 +191,14 @@ create table public.gogo_governed_model_prices (
 alter table public.gogo_governed_model_prices enable row level security;
 revoke all on public.gogo_governed_model_prices from public,anon,authenticated,service_role;
 grant select on public.gogo_governed_model_prices to service_role;
+-- Exact bounded search shapes, with independent operator-reviewed ceilings.
+create table public.gogo_governed_search_prices (
+  operation text primary key check(operation in ('tavily.basic.v1','serper.search.v1','parallel.fast.v1')),
+  max_cost_micros bigint not null check(max_cost_micros between 1 and 9007199254740991),
+  valid_until timestamptz not null,
+  verified_source text not null check(length(trim(verified_source)) between 1 and 300)
+);
+alter table public.gogo_governed_search_prices enable row level security;
+revoke all on public.gogo_governed_search_prices from public,anon,authenticated,service_role;
+grant select on public.gogo_governed_search_prices to service_role;
 commit;

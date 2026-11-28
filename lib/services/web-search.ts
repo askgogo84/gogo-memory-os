@@ -15,7 +15,7 @@ async function searchWithTavily(query: string): Promise<WebSearchResult[]> {
     return []
   }
 
-  const res = await fetch('https://api.tavily.com/search', {
+  const init:RequestInit={
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -29,7 +29,11 @@ async function searchWithTavily(query: string): Promise<WebSearchResult[]> {
       include_answer: false
     }),
     cache: 'no-store',
-  })
+  }
+  const url='https://api.tavily.com/search'
+  const res=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+    ?await import('../agent/governed-search-call').then(m=>m.governedSearchFetch('tavily.basic.v1',url,init))
+    :await fetch(url,init)
 
   if (!res.ok) {
     const text = await res.text()
@@ -59,6 +63,7 @@ export async function searchWeb(query: string): Promise<string> {
       .map((r, i) => `${i + 1}. ${r.title}\n${r.snippet}\nSource: ${r.url}`)
       .join('\n\n')
   } catch (err: any) {
+    if(err instanceof Error&&err.name==='GovernedModelError')throw err
     console.error('searchWeb failed:', err)
     return ''
   }
