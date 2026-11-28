@@ -97,7 +97,8 @@ export async function governedApprovedCalendarMoveFetch(url:string,init:RequestI
   return governedGoogleRequest('google.calendar.move',url,init,owner,deps,{...authority,kind:'calendar'})
 }
 async function governedGoogleRequest(operation:GoogleOperation,url:string,init:RequestInit={},explicit?:string|number,deps?:Deps,write?:WriteAuthority):Promise<Response>{
-  const selected=deps?deps.selection():selectedModelOwner(explicit)
+  const select=()=>deps?deps.selection():selectedModelOwner(explicit)
+  const selected=select()
   const parent=currentGovernedRun(),foreground=currentGovernedForeground()
   if(parent&&(selected.kind!=='governed'||selected.owner!==parent.owner||!parent.inTime()))throw new GovernedModelError('connector_scope_mismatch')
   if(selected.kind==='legacy'){
@@ -112,12 +113,17 @@ async function governedGoogleRequest(operation:GoogleOperation,url:string,init:R
   const runtime=parent?parent.runtime:foreground?await foregroundRuntime(owner,()=>deps?deps.open():openPersonalGovernedRuntimeForOwner(owner)):deps?await deps.open():null
   if(!runtime)throw new GovernedModelError('policy_unavailable')
   const deadline=now()+15_000,which=family(operation)
+  const stillGoverned=()=>{
+    const latest=select()
+    return latest.kind==='governed'&&latest.owner===owner
+  }
   const check=async()=>{
+    if(!stillGoverned())return false
     if(write&&(pinned.body!==write.expectedBody||await write.authorize()!==true||write.kind==='gmail'&&operation!=='google.gmail.send'||write.kind==='calendar'&&(operation!=='google.calendar.move'||request.url!==write.expectedUrl||new Headers(pinned.headers).get('if-match')!==write.expectedEtag)))return false
     if(parent&&await parent.authorize()!==true)return false
     if(!(await (deps?.permission||permission)(owner,operation)))return false
     const current=deps?await deps.snapshot(owner,which):write?.kind==='gmail'?await primarySendSnapshot(owner,write.actorId,write.senderAccount):write?.kind==='calendar'?await primaryMoveSnapshot(owner,write.actorId,write.credentialKey):await readCredentialSnapshot(owner,which)
-    return !!current&&credentialAuthorized(request,owner,current,minted.get(runtime)?.get(hash(request.credential)),now())&&(!parent||await parent.authorize()===true)&&(!write||await write.authorize()===true)
+    return !!current&&credentialAuthorized(request,owner,current,minted.get(runtime)?.get(hash(request.credential)),now())&&(!parent||await parent.authorize()===true)&&(!write||await write.authorize()===true)&&stillGoverned()
   }
   const inTime=()=>now()<deadline&&!pinned.signal?.aborted&&(parent?parent.inTime():foreground?foregroundInTime(owner):!!deps)
   const r=await runtime.boundedConnector(operation,request.url,request.method,check,async()=>{

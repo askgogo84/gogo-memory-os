@@ -70,6 +70,18 @@ Priority switch: #1623. Consolidate #1661; #1662 is a reference, not a second ru
 
 Do not mark a case PASS based on a mock, a successful CI build or a model's response alone. Live provider and integration cases remain blocked until relevant owner configuration and permission exist. The first Hachi PR introduces foundations and bounded Brain Loop execution, not completed product-wide integration. 
 
+### Private acceptance entry criteria
+
+Run the 26 AskGogo and 26 SecondBrain cases in the same release candidate after both CI workflows, the matching preview, and independent CODE and SECURITY reviews clear. The owner prepares the isolated target with the reviewed schema, policies, prices, provider profiles, and test identities. For cases that send, call, change a provider object, or open checkout, record the exact approved destination or object, permitted effect, and cleanup before dispatch. Record one result per ID with the tested commit, test role, expected and observed behavior, scrubbed evidence reference, and any blocked prerequisite. Provider acceptance alone does not verify delivery or a business outcome.
+
+| Outstanding coverage | Existing entry points to verify | Journey IDs directly affected |
+|---|---|---|
+| Managed browser session and page work | `lib/agent/managed-browser.ts`, `lib/agent/approved-browser-worker.ts`, `lib/agent/browser-page-network.ts` | AG14, AG15, AG25, AG26 |
+| Commerce cart, checkout and payment receipts | `lib/commerce/instamart-cart.ts`, `lib/commerce/mcp.ts`, `lib/agent/payment-confirmation.ts` | AG13, AG24, AG25 |
+| Voice result delivery and continuity | `lib/agent/voice-call.ts`, `lib/whatsapp.ts`, `app/api/webhooks/twilio-status/route.ts` | AG12, AG17, AG26 |
+| Calendar writes beyond the primary move | `lib/services/google-calendar.ts` event creation and deletion, existing secondary-account routes | AG06, AG22, AG25 |
+| Workspace SOP ingestion and external execution beyond recorded reads and internal incident review | `app/api/workspaces/[id]/ask/route.ts`, `lib/workspaces/governed-ask.ts`, `lib/workspaces/governed-incident.ts` | SB05, SB06, SB12–SB18, SB24 |
+
 ### Runtime wiring checkpoint
 
 The canary now has a real policy-backed Brain Loop model boundary and a workspace recorded-data read boundary. `GOGO_HACHI_ENFORCEMENT=1` plus an exact entry in `GOGO_HACHI_PERSONAL_OWNERS` or `GOGO_HACHI_WORKSPACES` selects it; no selection means the existing route stays unchanged. No defaults enable spending. The operator must install the reviewed migration and configure current policies and independently verified, conservative model token tariffs. Model usage is charged at the pinned all-token ceiling rate, not presented as an actual provider invoice. Missing/expired prices, unknown receipts and unpriced tool adapters fail closed. The only personal zero-provider-cost tool currently wired is `events_list`; paid search, calendar, connector and preparation boundaries are not yet integrated. Do NOT enable on real users until the full path inventory and acceptance matrix pass. Workspace Q&A remains the bounded hospitality read-only pilot, not the full enterprise agent. No production deployment, policy or pricing is implied by this patch.

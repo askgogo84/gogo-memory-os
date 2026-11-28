@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import {createHash} from 'node:crypto'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
@@ -270,6 +269,18 @@ await withGovernedPersonalRun('101',googleRt,()=>true,async()=>{
 },guard)
 assert.equal(guardedPages,1)
 console.log('Inherited recovery authorization rechecked for actual nested connector and physical dispatch boundaries')
+
+let connectorSelected=true
+const revokedConnectorDeps={
+  ...connectorDeps,
+  selection:()=>connectorSelected?{kind:'governed' as const,owner:'101'}:{kind:'legacy' as const},
+  snapshot:async()=>{
+    connectorSelected=false
+    return connectorDeps.snapshot()
+  }
+}
+await assert.rejects(()=>governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',revokedConnectorDeps),/not_authorized|revoked/)
+assert.equal(guardedPages,1)
 
 
 // Read API cannot become a mutation. Exact approved body and fresh callback

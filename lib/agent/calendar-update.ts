@@ -31,7 +31,8 @@ export async function calendarAccessForUpdate(actor:AgentActor,readOnly=false){
     : query.select('google_calendar_connected,google_refresh_token,timezone').eq('telegram_id',owner).maybeSingle())
   if(error)throw new Error('calendar_account_read_failed')
   if(governed&&(!data||!('id' in data)||data.id!==actor.userId||
-    typeof data.telegram_id!=='string'||exactSessionOwnerId(data.telegram_id)!==ownerId||data.access_status!=='active')){
+    !('telegram_id' in data)||typeof data.telegram_id!=='string'||exactSessionOwnerId(data.telegram_id)!==ownerId||
+    !('access_status' in data)||data.access_status!=='active')){
     throw new Error('calendar_owner_unverified')
   }
   if(!data?.google_calendar_connected||!data.google_refresh_token)throw new Error('calendar_not_connected')
