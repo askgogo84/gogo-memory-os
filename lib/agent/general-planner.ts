@@ -79,12 +79,19 @@ function parseJsonLoose(text: string): any | null {
   try { return JSON.parse(match[0]) } catch { return null }
 }
 
+export function normalizeFileInstruction(value: unknown, max: number) {
+  // The provider treats whitespace inside a quoted Drive filename as part of its identity.
+  return String(value ?? '').replace(/("[^"]*"|“[^”]*”)|\s+/g, (_match, quoted) => quoted ?? ' ').trim().slice(0, max)
+}
+
 function normalizeStep(raw: any): GeneralPlanStep | null {
   const allowed = new Set<GeneralPlanTool>(['memory','files','reminders','lists','tasks','email','calendar','web_search','travel','artifact'])
   const tool = String(raw?.tool || '') as GeneralPlanTool
   if (!allowed.has(tool)) return null
   const title = String(raw?.title || '').replace(/\s+/g, ' ').trim().slice(0, 140)
-  const instruction = String(raw?.instruction || '').replace(/\s+/g, ' ').trim().slice(0, 1000)
+  const instruction = tool === 'files'
+    ? normalizeFileInstruction(raw?.instruction, 1000)
+    : String(raw?.instruction || '').replace(/\s+/g, ' ').trim().slice(0, 1000)
   if (!title || !instruction) return null
   const artifactTypes = new Set(['trip','application_tracker','meeting_brief','comparison','goal_plan','research_brief','reward_summary'])
   const artifactType = artifactTypes.has(String(raw?.artifactType || '')) ? raw.artifactType : undefined
