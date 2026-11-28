@@ -79,9 +79,10 @@ export async function governedGoogleFetch(operation:GoogleOperation,url:string,i
   if(!runtime)throw new GovernedModelError('policy_unavailable')
   const deadline=now()+15_000,which=family(operation)
   const check=async()=>{
+    if(parent&&await parent.authorize()!==true)return false
     if(!(await (deps?.permission||permission)(owner,operation)))return false
     const current=await (deps?.snapshot||readCredentialSnapshot)(owner,which)
-    return !!current&&credentialAuthorized(request,owner,current,minted.get(runtime)?.get(hash(request.credential)),now())
+    return !!current&&credentialAuthorized(request,owner,current,minted.get(runtime)?.get(hash(request.credential)),now())&&(!parent||await parent.authorize()===true)
   }
   const inTime=()=>now()<deadline&&!pinned.signal?.aborted&&(parent?parent.inTime():foreground?foregroundInTime(owner):!!deps)
   const r=await runtime.boundedConnector(operation,request.url,request.method,check,async()=>{

@@ -4,7 +4,7 @@ import {PGlite} from '@electric-sql/pglite'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
 const {catalogBaseDefinitions,personalSkillCatalog,workspaceSkillCatalog}=await import('../lib/agent/governed-skill-catalog')
-const {skillRevisionDigest}=await import('../lib/agent/governed-learning')
+const {skillRevisionDigest,canReviewSkillRevision,validSkillEvidenceRefs}=await import('../lib/agent/governed-learning')
 const {revisionDefinition,verifiedRevisionReceipts}=await import('../lib/agent/governed-review-store')
 const ws='00000000-0000-4000-8000-000000000001',otherWs='00000000-0000-4000-8000-000000000002'
 const sha='a'.repeat(40)
@@ -86,7 +86,9 @@ await putRevision(wr);await putReceipts(wr.id,wnd)
 const workspace=(id:string,actor:string)=>change('workspace',id,actor,wb.id,'publish',wr.id,0,wd,wd)
 // Source receipt fixture. No raw text is needed for candidate generation.
 await db.exec("create table public.agent_activity(id uuid primary key default gen_random_uuid(),telegram_id bigint,event_type text,created_at timestamptz default clock_timestamp(),metadata_json jsonb);grant select on public.agent_activity to service_role;")
-const evidence=(owner:number,decision:string,outcome:string,proof:string,verified:boolean)=>db.query("insert into public.agent_activity(telegram_id,event_type,metadata_json) values($1,'decision_learning',$2::jsonb)",[owner,JSON.stringify({schema:'same-brain-v2',handler:'calendar-named-read',decision_id:decision,outcome,verification_source:proof,verified,object_ref:'fixture-object'})])
+let evidenceN=0
+// Fixed UUIDs with long digit runs reproduce the formerly random rejection.
+const evidence=(owner:number,decision:string,outcome:string,proof:string,verified:boolean)=>db.query("insert into public.agent_activity(id,telegram_id,event_type,metadata_json) values($1,$2,'decision_learning',$3::jsonb)",['12345678-abcd-4abc-8abc-'+String(++evidenceN).padStart(12,'0'),owner,JSON.stringify({schema:'same-brain-v2',handler:'calendar-named-read',decision_id:decision,outcome,verification_source:proof,verified,object_ref:'fixture-object'})])
 await evidence(101,'decision1','verified_success','google_calendar',true)
 await evidence(101,'decision1','verified_success','google_calendar',true)
 await evidence(101,'decision2','verified_success','google_calendar',true)
@@ -129,6 +131,14 @@ const proposal=(await db.query<any>("select * from public.gogo_skill_revisions w
 assert.deepEqual(revisionDefinition(rb,{...proposal,expires_at:new Date(proposal.expires_at).toISOString()},{kind:'personal',id:'101'},sha,Date.now()),rn)
 assert.equal(revisionDefinition(rb,{...proposal,behavior_profile:'gmail_verify_v1',expires_at:new Date(proposal.expires_at).toISOString()},{kind:'personal',id:'101'},sha,Date.now()),null)
 assert.deepEqual(proposal.evidence_refs,learning.rows[0].evidence_ids)
+const recoveryScope={kind:'personal' as const,id:'101'}
+const reviewProposal={scope:recoveryScope,skillId:rb.id,baseVersion:rb.sopVersion,nextVersion:rn.sopVersion,authorId:'agent:hachi-learning',evidenceRefs:proposal.evidence_refs,summary:proposal.summary}
+const reviewReceipt={scope:recoveryScope,reviewerId:'101',role:'owner' as const,approved:true,testedRevision:rb.id+'@'+rn.sopVersion,testReceipt:'ci:fixture',securityReceipt:'security:fixture',currentVersion:rb.sopVersion,testedDigest:nd,securityDigest:nd,currentDigest:rd}
+assert.equal(canReviewSkillRevision(reviewProposal,rb,rn,reviewReceipt).allowed,true)
+assert.equal(validSkillEvidenceRefs(proposal.evidence_refs,recoveryScope,'agent:verified',rb.id,null),false)
+assert.equal(validSkillEvidenceRefs([...proposal.evidence_refs.slice(0,3),'1234567812345678'],recoveryScope,'agent:hachi-learning',rb.id,rn.runtimeProfile),false)
+assert.equal(validSkillEvidenceRefs(Array(4).fill(proposal.evidence_refs[0]),recoveryScope,'agent:hachi-learning',rb.id,rn.runtimeProfile),false)
+assert.equal(revisionDefinition(rb,{...proposal,author_id:'agent:verified',expires_at:new Date(proposal.expires_at).toISOString()},recoveryScope,sha),null)
 assert.equal(await change('personal','101','101',rb.id,'publish',proposal.id,0,rd,rd),'unreviewed')
 await db.exec('reset role')
 await putReceipts(proposal.id,nd)

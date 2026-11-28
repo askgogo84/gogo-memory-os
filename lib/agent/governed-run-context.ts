@@ -2,16 +2,20 @@
 import {AsyncLocalStorage} from 'node:async_hooks'
 import {exactSessionOwnerId} from '@/lib/dashboard/owner-identity'
 import type {GovernedRuntime} from './governed-runtime'
-type ActiveRun={owner:string;runtime:GovernedRuntime;inTime:()=>boolean}
+type ActiveRun={owner:string;runtime:GovernedRuntime;inTime:()=>boolean;authorize:()=>Promise<boolean>}
 const store:AsyncLocalStorage<ActiveRun>=(globalThis as any).__gogoGovernedRunStore||new AsyncLocalStorage<ActiveRun>()
 ;(globalThis as any).__gogoGovernedRunStore=store
 export function currentGovernedRun():ActiveRun|null{return store.getStore()||null}
-export async function withGovernedPersonalRun<T>(owner:string,runtime:GovernedRuntime,inTime:()=>boolean,work:()=>Promise<T>):Promise<T>{
+export async function withGovernedPersonalRun<T>(owner:string,runtime:GovernedRuntime,inTime:()=>boolean,work:()=>Promise<T>,authorize?:()=>Promise<boolean>):Promise<T>{
   const parent=store.getStore()
   if(exactSessionOwnerId(owner)!==owner||parent&&(parent.owner!==owner||parent.runtime!==runtime))throw Error('governed_nested_identity_mismatch')
   let closed=false
-  const scope={owner,runtime,inTime:()=>!closed&&inTime()&&(!parent||parent.inTime())}
+  const stillOpen=()=>!closed&&inTime()&&(!parent||parent.inTime())
+  const scope:ActiveRun={owner,runtime,inTime:stillOpen,authorize:async()=>{
+    try{return stillOpen()&&(!parent||await parent.authorize()===true)&&(!authorize||await authorize()===true)&&stillOpen()}catch{return false}
+  }}
   if(!scope.inTime())throw Error('governed_nested_deadline')
+  if(!await scope.authorize())throw Error('governed_nested_authority_revoked')
   try{return await store.run(scope,work)}finally{closed=true}
 }
 

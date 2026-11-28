@@ -96,7 +96,7 @@ export async function tryGovernedRecoveryProfile(actor:AgentActor,text:string,di
     if(!inTime())return denied()
     const authorize=async()=>{
       const row=await activeRecoveryRevision(owner,skill.id)
-      if(row?.digest!==revision.digest||row.profile!==revision.profile)return false
+      if(row?.digest!==revision.digest||row.profile!==revision.profile||row.generation!==revision.generation)return false
       const levels=await Promise.all(skill.caps.map(c=>capabilityPermissionLevel(owner,c)))
       return levels.every(l=>['read','draft','ask','auto'].includes(l))&&inTime()
     }

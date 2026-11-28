@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import type { AgentActor } from './actor'
 import { runGovernedAttempt, type GovernedScope, type BudgetOutcome, type Usage } from './governed-budget-ledger'
-import {withGovernedPersonalRun} from './governed-run-context'
+import {withGovernedPersonalRun,currentGovernedRun} from './governed-run-context'
 import {withReservedOutbound,governedFenceInstalled} from './governed-outbound-fence'
 import {GOOGLE_OPERATIONS,type GoogleOperation} from './governed-connector-shapes'
 
@@ -63,7 +63,11 @@ export type GovernedRuntime={
 }
 export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime {
   const s={...scope}
-  const current=async(inTime:()=>boolean)=>inTime()&&await d.authorize()&&await d.currentRun()&&inTime()
+  const nestedAuthority=async()=>{
+    const parent=currentGovernedRun()
+    return !parent||parent.owner===s.actorId&&parent.runtime===runtime&&await parent.authorize()===true
+  }
+  const current=async(inTime:()=>boolean)=>inTime()&&await d.authorize()&&await d.currentRun()&&await nestedAuthority()&&inTime()
   const runtime:GovernedRuntime={
     async model(model,execute,inTime){
       if(!inTime())return denied('deadline')
@@ -76,7 +80,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         authorize:async()=>{
           if(!await current(inTime))return false
           const live=await d.tariff(model),c=verifiedCeiling(live,model,d.now())
-          return !!c&&c.tokens===ceiling.tokens&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&inTime()
+          return !!c&&c.tokens===ceiling.tokens&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&await nestedAuthority()&&inTime()
         },
         execute:async()=>{const value=await withReservedOutbound('model',model,execute);return {value,usage:meteredUsage(value,pinned)}}})
     },
@@ -93,7 +97,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         authorize:async()=>{
           if(!await current(inTime))return false
           const live=await d.operationTariff!(operation),c=verifiedOperationCeiling(live,operation,d.now())
-          return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.valid_until===pinned.valid_until&&live?.verified_source===pinned.verified_source&&inTime()
+          return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.valid_until===pinned.valid_until&&live?.verified_source===pinned.verified_source&&await nestedAuthority()&&inTime()
         },
         // Charge the verified maximum, not a guessed actual provider invoice.
         // Transport/invalid response throws and retains the reservation.
@@ -110,7 +114,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         authorize:async()=>{
           if(!await current(inTime)||await authorize()!==true)return false
           const live=await d.connectorTariff!(operation),c=verifiedConnectorCeiling(live,operation,d.now())
-          return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&inTime()
+          return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&await nestedAuthority()&&await authorize()===true&&inTime()
         },execute:async()=>({value:await withReservedOutbound('connector',url,execute,method),usage:ceiling})})
     },
     async nestedSearch(operation,execute,inTime,authorize){
@@ -121,7 +125,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
       if(s.kind!=='personal'||!['web_search','venue_contact','calendar_read','recovery_read'].includes(operation)||operation==='recovery_read'&&(!authorize||!governedFenceInstalled()))return denied('unpriced_tool')
       return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling:{tokens:0,costMicrosInr:0}},rpc:d.rpc,
         authorize:async()=>await current(inTime)&&(!authorize||await authorize())&&inTime(),
-        execute:async()=>({value:await withGovernedPersonalRun(s.actorId,runtime,inTime,execute),usage:{tokens:0,costMicrosInr:0}})})
+        execute:async()=>({value:await withGovernedPersonalRun(s.actorId,runtime,inTime,execute,authorize),usage:{tokens:0,costMicrosInr:0}})})
     },
     async workerStep(operation,attemptId,execute,inTime){
       // Only the existing statically bound persistent general-plan handlers.

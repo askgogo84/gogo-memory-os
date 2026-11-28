@@ -2,11 +2,23 @@
 import { createHash } from 'node:crypto'
 import { vetSkill, type SkillDefinition } from './skill-registry'
 import {profileForSkill} from './governed-recovery-profiles'
+import {isSecretShapedMemory} from '../bot/memory-redaction'
 export type LearningScope={kind:'personal'|'workspace';id:string}
 export type SkillRevision={scope:LearningScope;skillId:string;baseVersion:string;nextVersion:string;authorId:string;evidenceRefs:readonly string[];summary:string}
 export type ReviewContext={scope:LearningScope;reviewerId:string;role:'owner'|'admin'|'member'|'viewer';approved:boolean;testedRevision:string;testReceipt:string;securityReceipt:string;currentVersion:string;testedDigest:string;securityDigest:string;currentDigest:string}
 const semver=/^(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})$/
 const safeRef=(v:unknown)=>typeof v==='string'&&/^[A-Za-z0-9_:.@/-]{1,200}$/.test(v)
+// A UUID in the code-owned, DB-materialized recovery evidence list is an
+// opaque agent_activity row identity, not freeform memory. Only this exact
+// provenance class is exempt from the conservative digit-run redactor.
+export function validSkillEvidenceRefs(refs:unknown,scope:LearningScope,author:string,skill:string,profile?:unknown):boolean{
+  if(!Array.isArray(refs)||refs.length<1||refs.length>20||new Set(refs).size!==refs.length)return false
+  if(author==='agent:hachi-learning'||profile!=null){
+    return scope.kind==='personal'&&author==='agent:hachi-learning'&&profile!=null&&profileForSkill(skill)===profile&&refs.length>=4&&
+      refs.every(x=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(x))
+  }
+  return refs.every(x=>safeRef(x)&&!isSecretShapedMemory(x))
+}
 const sameScope=(a:LearningScope,b:LearningScope)=>!!a&&!!b&&a.kind===b.kind&&a.id===b.id&&typeof a.id==='string'&&(a.kind==='personal'?/^-?[1-9][0-9]{0,18}$/.test(a.id):a.kind==='workspace'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(a.id))
 function canonical(v:unknown):unknown {
   if(v instanceof RegExp)return {regexp:v.source,flags:v.flags}
@@ -31,7 +43,7 @@ export function canReviewSkillRevision(p:SkillRevision,current:SkillDefinition,n
       return deny('revision_digest_or_validation_failed')
   } catch { return deny('revision_digest_or_validation_failed') }
   if(!safeRef(p.skillId)||p.skillId!==current.id||next.id!==current.id||p.baseVersion!==current.sopVersion||r.currentVersion!==p.baseVersion||next.sopVersion!==p.nextVersion||!greater(p.nextVersion,p.baseVersion))return deny('stale_or_invalid_version')
-  if(!Array.isArray(p.evidenceRefs)||p.evidenceRefs.length<1||p.evidenceRefs.length>20||!p.evidenceRefs.every(safeRef)||typeof p.summary!=='string'||!p.summary.trim()||p.summary.length>1000)return deny('missing_evidence')
+  if(!validSkillEvidenceRefs(p.evidenceRefs,p.scope,p.authorId,p.skillId,next.runtimeProfile)||typeof p.summary!=='string'||!p.summary.trim()||p.summary.length>1000)return deny('missing_evidence')
   if(r.testedRevision!==p.skillId+'@'+p.nextVersion||!safeRef(r.testReceipt)||!safeRef(r.securityReceipt)||r.testReceipt===r.securityReceipt)return deny('missing_independent_receipts')
   if(next.runtimeProfile!==undefined&&(p.scope.kind!=='personal'||profileForSkill(next.id)!==next.runtimeProfile)||current.runtimeProfile!==undefined&&current.runtimeProfile!==next.runtimeProfile)return deny('unreviewed_recovery_profile')
   // An improvement may tighten but may never widen the vetted capability or risk envelope.

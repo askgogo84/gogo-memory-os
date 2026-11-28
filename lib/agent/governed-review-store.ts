@@ -5,7 +5,7 @@ import {exactSessionOwnerId} from '@/lib/dashboard/owner-identity'
 import {requireWorkspaceRole} from '@/lib/workspaces/access'
 import {isSecretShapedMemory} from '@/lib/bot/memory-redaction'
 import {governedEnabled} from './governed-runtime'
-import {canReviewSkillRevision,skillRevisionDigest,type LearningScope} from './governed-learning'
+import {canReviewSkillRevision,skillRevisionDigest,validSkillEvidenceRefs,type LearningScope} from './governed-learning'
 import type {SkillDefinition} from './skill-registry'
 import {catalogBaseDefinitions} from './governed-skill-catalog'
 import {profileForSkill} from './governed-recovery-profiles'
@@ -29,7 +29,7 @@ export function revisionDefinition(base:SkillDefinition,row:RevisionRow,scope:Sc
   if(!row||row.scope_kind!==scope.kind||row.scope_id!==scope.id||row.skill_id!==base.id||!UUID.test(row.id)||!VERSION.test(row.version)||row.version===base.sopVersion||
     row.static_digest!==skillRevisionDigest(base)||row.build_sha!==buildSha||!BUILD.test(buildSha)||!DIGEST.test(row.base_digest)||!DIGEST.test(row.revision_digest)||
     !textOk(row.title,100)||!textOk(row.purpose,240)||!textOk(row.summary,1000)||!REF.test(row.author_id)||
-    !Array.isArray(row.evidence_refs)||row.evidence_refs.length<1||row.evidence_refs.length>20||!row.evidence_refs.every(x=>typeof x==='string'&&REF.test(x)&&!isSecretShapedMemory(x))||
+    !validSkillEvidenceRefs(row.evidence_refs,scope,row.author_id,row.skill_id,row.behavior_profile)||
     !Number.isFinite(now)||!(Date.parse(row.expires_at)>now))return null
   const profile=row.behavior_profile==null?null:profileForSkill(base.id)
   if(row.behavior_profile!=null&&(scope.kind!=='personal'||!profile||row.behavior_profile!==profile))return null
@@ -157,7 +157,7 @@ export async function changeSkillReview(actor:string,scope:Scope,x:ReviewChange)
 // No data-selected executable path. A live read requires the exact published
 // code-owned profile, exact build, unexpired independent receipts, active
 // access and affirmative memory consent. The caller rechecks before dispatch.
-export async function activeRecoveryRevision(owner:string,skill:string):Promise<{digest:string;version:string;profile:NonNullable<SkillDefinition['runtimeProfile']>}|null>{
+export async function activeRecoveryRevision(owner:string,skill:string):Promise<{digest:string;version:string;generation:number;profile:NonNullable<SkillDefinition['runtimeProfile']>}|null>{
   if(!profileForSkill(skill))return null
   const scope={kind:'personal' as const,id:owner}
   await access(owner,scope,false)
@@ -169,7 +169,7 @@ export async function activeRecoveryRevision(owner:string,skill:string):Promise<
   if(!pointer?.revision_id)return null
   const active=await currentDefinition(scope,base,pointer,sha)
   if(!active?.runtimeProfile||active.runtimeProfile!==profileForSkill(skill))return null
-  return {digest:pointer.active_digest,version:active.sopVersion,profile:active.runtimeProfile}
+  return {digest:pointer.active_digest,version:active.sopVersion,generation:generation(pointer),profile:active.runtimeProfile}
 }
 
 // The cron can propose an immutable, prewritten profile. It cannot publish,

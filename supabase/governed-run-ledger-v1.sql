@@ -660,6 +660,16 @@ begin
   if not found then return 'unavailable'; end if;
   select * into c from public.gogo_skill_learning_candidates where scope_kind='personal' and scope_id=p_owner and skill_id=p_skill_id and build_sha=p_build_sha and expires_at>clock_timestamp() for share;
   if not found then return 'unavailable'; end if;
+  if cardinality(c.evidence_ids) not between 4 and 20 or exists(
+    select 1 from unnest(c.evidence_ids) as evidence(ref)
+    where ref is null or ref !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  ) or (select count(distinct ref) from unnest(c.evidence_ids) as evidence(ref))<>cardinality(c.evidence_ids) then return 'unavailable'; end if;
+  if (select count(distinct a.id) from public.agent_activity a
+      where a.id::text=any(c.evidence_ids) and a.telegram_id::text=p_owner and a.event_type='decision_learning'
+      and a.created_at>clock_timestamp()-interval '30 days' and a.metadata_json->>'schema'='same-brain-v2'
+      and a.metadata_json->>'handler'=case p_skill_id when 'calendar.exact.read' then 'calendar-named-read'
+        when 'email.exact.verify' then 'gmail-verification' when 'reminder.exact.read' then 'reminder-query' else 'watcher-status' end
+    )<>cardinality(c.evidence_ids) then return 'unavailable'; end if;
   if exists(select 1 from public.gogo_skill_active where scope_kind='personal' and scope_id=p_owner and skill_id=p_skill_id and (revision_id is not null or active_digest<>p_static_digest)) then return 'stale'; end if;
   if exists(select 1 from public.gogo_skill_revisions where scope_kind='personal' and scope_id=p_owner and skill_id=p_skill_id and build_sha=p_build_sha and behavior_profile is not null) then return 'existing'; end if;
   insert into public.gogo_skill_revisions(scope_kind,scope_id,skill_id,version,base_digest,static_digest,revision_digest,build_sha,title,purpose,author_id,evidence_refs,summary,expires_at,behavior_profile)

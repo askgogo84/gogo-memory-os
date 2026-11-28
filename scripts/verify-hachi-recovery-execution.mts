@@ -12,7 +12,8 @@ const raw=ast.statements.filter(n=>!ts.isImportDeclaration(n)).map(n=>n.getText(
 const js=ts.transpileModule(raw,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const actor={userId:'owner-101',legacyTelegramId:101,whatsappId:'fixture-only',name:'Fixture'}
 function isolate(opts:any={}){
-  const e: any={}, state={active:true,allowed:true,reads:0,dispatches:0,proofs:[] as any[]}
+  const e: any={}, state={active:true,allowed:true,generation:1,reads:0,dispatches:0,calendarFetches:0,proofs:[] as any[]}
+  let nestedAuthority:()=>Promise<boolean>=async()=>false
   const calendar=[{id:'event-1',summary:'Design Review',start:{dateTime:'2026-11-28T10:00:00Z'},_account:'fixture@example.invalid'}]
   const reminders=[{id:'reminder-1',message:'Rent',remind_at:'2026-11-28T10:00:00Z',timezone:'Asia/Kolkata'}]
   const db={
@@ -49,17 +50,17 @@ function isolate(opts:any={}){
     exports:e,console,Date,Promise,randomUUID:()=> 'decision-fixture',supabaseAdmin:db,
     exactSessionOwnerId:(v:any)=>String(v)==='101'?'101':null,normalizeTimezone:()=> 'Asia/Kolkata',
     redactSecretShapedText:(s:string)=>s,readableStart:()=> '3:30 pm, Sat 28 Nov',
-    getCalendarAccountAccess:async(owner:number,_:string,unavailable:()=>void)=>{assert.equal(owner,101);if(opts.accountIncomplete)unavailable();return [{email:'fixture@example.invalid',accessToken:'synthetic',primary:true}]},
-    fetchMergedCalendarEventsPage:async()=>{state.reads++;if(opts.revokeDuringRead)state.active=false;return {events:opts.calendar||calendar,hasMore:!!opts.more,accountsRead:1,accountsTotal:1}},
+    getCalendarAccountAccess:async(owner:number,_:string,unavailable:()=>void)=>{assert.equal(owner,101);if(!await nestedAuthority())throw Error('revoked');if(opts.accountIncomplete)unavailable();if(opts.revokeDuringAcquisition)state.active=false;if(opts.republishDuringAcquisition)state.generation++;return [{email:'fixture@example.invalid',accessToken:'synthetic',primary:true}]},
+    fetchMergedCalendarEventsPage:async()=>{if(!await nestedAuthority())throw Error('revoked');state.calendarFetches++;state.reads++;if(opts.revokeBetweenPages){state.active=false;if(!await nestedAuthority())throw Error('revoked');state.calendarFetches++}if(opts.revokeDuringRead)state.active=false;return {events:opts.calendar||calendar,hasMore:!!opts.more,accountsRead:1,accountsTotal:1}},
     verifyGmailSentMessage:async(token:string,id:string,thread:string)=>{assert.equal(token,'synthetic');assert.equal(id,'message-1');assert.equal(thread,'thread-1');state.reads++;return {verified:opts.gmailVerified!==false}},
     capabilityPermissionLevel:async(owner:string)=>{assert.equal(owner,'101');return state.allowed?'read':'off'},
-    activeRecoveryRevision:async(owner:string,skill:string)=>{assert.equal(owner,'101');return state.active&&!opts.noRevision?{digest:'a'.repeat(64),version:'1.0.1',profile:skill}:null},
+    activeRecoveryRevision:async(owner:string,skill:string)=>{assert.equal(owner,'101');return state.active&&!opts.noRevision?{digest:'a'.repeat(64),version:'1.0.1',generation:state.generation,profile:skill}:null},
     governedEnabled:()=>true,governedFenceInstalled:()=>!opts.noFence,currentGovernedRun:()=>null,foregroundInTime:()=>!opts.noScope,
     foregroundRuntime:async(owner:string,open:()=>Promise<any>)=>{assert.equal(owner,'101');return open()},
     openPersonalGovernedRuntime:async()=>({nestedSearch:async(op:string,work:()=>Promise<any>,inTime:()=>boolean,authorize:()=>Promise<boolean>)=>{
       assert.equal(op,'recovery_read');assert.ok(inTime());if(!await authorize())return {state:'blocked',reason:'permission'}
       if(opts.revokeBeforeDispatch)state.allowed=false
-      state.dispatches++;return {state:'completed',value:await work()}
+      nestedAuthority=authorize;state.dispatches++;return {state:'completed',value:await work()}
     }}),
     parseRecoveryRequest,exactRecoveryTitle,RECOVERY_SKILLS:skills,
     gmailAccess:async(a:any)=>{assert.equal(a.userId,actor.userId);return {ok:true,accessToken:'synthetic'}},
@@ -106,5 +107,10 @@ for(const opts of [{noRevision:true},{noFence:true},{noScope:true},{revokeBefore
 {
   const f=isolate({revokeDuringRead:true}),r=await f.run('When is my calendar event Design Review?')
   assert.equal(r.status,'paused');assert.doesNotMatch(r.text,/Design Review:|3:30 pm/);assert.equal(f.state.proofs.length,0)
+}
+for(const opts of [{revokeDuringAcquisition:true},{republishDuringAcquisition:true},{revokeBetweenPages:true}]){
+  const f=isolate(opts),r=await f.run('When is my calendar event Design Review?')
+  assert.equal(r.status,'paused');assert.equal(f.state.proofs.length,0)
+  assert.equal(f.state.calendarFetches,opts.revokeBetweenPages?1:0,'no further page or event dispatch after revocation or rollback/republication')
 }
 console.log('Original recovery execution: exact read, ambiguity, partial result, owner/surface checks, revoked permission/consent and provider-evidence boundaries passed')

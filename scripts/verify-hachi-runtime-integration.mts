@@ -242,3 +242,26 @@ await withReservedOutbound('connector',calendarUrl,async()=>{
   await assert.rejects(()=>authorizeGovernedFetch(calendarUrl,calendarInit,fixtureEnv),/unreserved/)
 },'GET')
 console.log('Hachi scoped runtime boundary fixtures passed')
+
+
+// Actual nested run/connector boundaries: authorization is not cached across
+// acquisition, pages, nested children or the final physical dispatch fence.
+let recoveryLive=true,guardedPages=0
+const guard=async()=>recoveryLive
+const connectorDeps={...googleDeps,fetcher:async()=>{guardedPages++;return new Response(JSON.stringify({items:[]}))},snapshot:async()=>({refreshHashes:new Set<string>(),accessHashes:new Set([fingerprint('access-fixture')])})}
+await withGovernedPersonalRun('101',googleRt,()=>true,async()=>{
+  assert.equal((await governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',connectorDeps)).status,200)
+  recoveryLive=false
+  await assert.rejects(()=>governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',connectorDeps),/not_authorized|revoked/)
+  assert.equal(guardedPages,1)
+  await assert.rejects(()=>withGovernedPersonalRun('101',googleRt,()=>true,async()=>{guardedPages++}),/authority_revoked/)
+},guard)
+recoveryLive=true
+await withGovernedPersonalRun('101',googleRt,()=>true,async()=>{
+  await withReservedOutbound('connector',calendarUrl,async()=>{
+    recoveryLive=false
+    await assert.rejects(()=>authorizeGovernedFetch(calendarUrl,calendarInit,fixtureEnv),/authority_revoked/)
+  },'GET')
+},guard)
+assert.equal(guardedPages,1)
+console.log('Inherited recovery authorization rechecked for actual nested connector and physical dispatch boundaries')

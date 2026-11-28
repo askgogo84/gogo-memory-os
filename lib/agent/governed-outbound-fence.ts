@@ -68,6 +68,10 @@ export async function authorizeGovernedFetch(input:RequestInfo|URL,init?:Request
   if(p.kind==='model'&&!exactReservedModelBody(await bodyOf(input,init),p.name))throw Error('governed_egress_model_shape')
   // Recheck after asynchronous body inspection. One reservation authorizes
   // one physical fetch, never a provider SDK retry or another destination.
+  // The inherited scope predicate is checked again at the physical fetch,
+  // after pricing, credential reads and body inspection. Internal DB reads
+  // return above so checking the predicate cannot recurse through the fence.
+  if(active&&await active.authorize()!==true)throw Error('governed_egress_authority_revoked')
   if(p.used||p.closed||active&&!active.inTime())throw Error('governed_egress_revoked')
   p.used=true
   return 'provider'
