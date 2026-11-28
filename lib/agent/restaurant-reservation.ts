@@ -57,7 +57,7 @@ function restaurantName(text:string){
   // the date and time sat between "table for 2" and "at <venue>". A reservation ask whose venue follows a
   // later "at <Name>" (not "at 8pm") keeps the name, without the "near …" landmark.
   if(/\b(?:table|reservation|reserve|book)\b/i.test(raw)){
-    const later=raw.match(new RegExp('\\bat\\s+(?:the\\s+)?(?!\\d)(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP))?.[1]
+    const later=raw.match(new RegExp('\\bat\\s+(?:the\\s+)?(?!\\d)(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP,'i'))?.[1]
     if(later&&!GENERIC_NAME.test(later.trim())&&!temporalVenue(later))return safe(later,160)
   }
   const direct=raw.match(new RegExp('\\b(?:book|reserve)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
@@ -1031,7 +1031,11 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   if(slotMode&&!release.releaseAt){
     const evidence=`${inspected.summary||''}\n${inspected.pageText||''}`
     // Slots count only when the page shows the requested date: a widget left on today must not answer for tomorrow.
-    const slots=reservationSlotDateEvidence(evidence,intent.requestedDate)?extractReservationSlots(evidence):[]
+    const reserveXEvidence=publicReserveXVenue(provider.url)
+      ? new RegExp('\\b'+intent.partySize+'\\s+(?:guests?|people|pax)\\b','i').test(evidence)
+        &&/\b(?:available|selectable|open)\s+(?:individual\s+)?(?:time\s+)?slots?\s*:/i.test(evidence)
+      : true
+    const slots=reserveXEvidence&&reservationSlotDateEvidence(evidence,intent.requestedDate)?extractReservationSlots(evidence):[]
     const decision=reservationSlotDecision(slots,intent.preferredStart,intent.preferredEnd)
     if(decision.kind==='available'){
       const reply=reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)})
