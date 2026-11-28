@@ -318,7 +318,7 @@ await check('availability-only authority cannot be removed from queued research 
   assert.equal(h.browserCalls.length,0)
   assert.equal(h.db.tables.agent_approvals?.length||0,0)
 })
-await check('read-only dining gets first refusal before retail discovery and generic answers',()=>{
+await check('read-only dining gets first refusal before retail discovery and generic answers',async()=>{
   const route=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
   const start=route.indexOf('if (!preserveFriendFlow && isRestaurantAvailabilityRequest(text))')
   const product=route.indexOf('const productDiscovery = await tryProductDiscovery({ text })')
