@@ -78,7 +78,7 @@ import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand, parseConnectedProviderCartAction, isExplicitProviderBrowserRead } from '@/lib/agent/browser-command'
-import { isRestaurantReservationRequest, isRestaurantAvailabilityRequest } from '@/lib/agent/restaurant-reservation'
+import { isRestaurantReservationRequest, isRestaurantAvailabilityRequest, queueRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
 import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
@@ -1744,6 +1744,21 @@ _"${originalText}"_
       }
     }
 
+    // An explicit read-only dining lookup is not a product search or generic
+    // web question. Give it first refusal after the approval/question registry.
+    if (!preserveFriendFlow && isRestaurantAvailabilityRequest(text)) {
+      const availability = await (async () => {
+        const actor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' })
+        return queueRestaurantReservationResearch({actor,text,messageId:inboundMessageSid || null})
+      })().catch(() => null)
+      const reply = availability?.text || "I couldn't start the restaurant availability check. No booking was submitted."
+      await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:'restaurant-availability-read-only',actualCapability:'browser',status:availability?.status || 'paused',runId:availability?.runId || null}).catch(()=>{})
+      await saveConversation(resolvedUser.telegramId,'user',text)
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      await sendWhatsAppMessage(from,reply)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+    }
+
     // 2 Nov live: "find me a navy linen shirt under 2000" got a web answer pointing at a category page.
     // Open product asks read Google Shopping results (real products, prices, stores) before the web answer.
     const productDiscovery = await tryProductDiscovery({ text })
@@ -1825,7 +1840,7 @@ _"${originalText}"_
       }
     }
 
-    if (isRestaurantReservationRequest(text) || isRestaurantAvailabilityRequest(text)) {
+    if (isRestaurantReservationRequest(text)) {
       const reservationAgent = await tryRunWhatsAppAgent({
         user: resolvedUser,
         text,
