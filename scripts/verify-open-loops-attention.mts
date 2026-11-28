@@ -271,7 +271,7 @@ assert.ok(queries.every(q=>String(q.owner)==='42'),'every connection/consent rea
 console.log('Fresh inbox reply reads: real handler + web POST + WhatsApp first refusal, ownership, consent, errors, automation suppression and secret-safe text verified')
 
 let failThread=false
-const gmailTransport=loadFixture('lib/services/google-gmail.ts',()=>({}),{setTimeout,clearTimeout,fetch:async(url:string,options:any)=>{
+const gmailTransport=loadFixture('lib/services/google-gmail.ts',name=>name==='@/lib/agent/governed-run-context'?{currentGovernedRun:()=>null,currentGovernedForeground:()=>null}:{},{setTimeout,clearTimeout,fetch:async(url:string,options:any)=>{
   assert.equal(options.method,undefined,'Gmail attention performs only GET requests')
   assert.equal(options.cache,'no-store')
   const list=url.includes('/messages?')

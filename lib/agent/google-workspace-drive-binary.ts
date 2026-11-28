@@ -1,6 +1,7 @@
+import { currentGovernedForeground, currentGovernedRun } from './governed-run-context'
 
 async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
-  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,init)
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1'&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return fetch(url,init)
   return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
 }
 import { supabaseAdmin } from '@/lib/supabase-admin'

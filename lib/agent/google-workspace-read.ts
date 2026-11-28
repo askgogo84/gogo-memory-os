@@ -1,6 +1,7 @@
+import { currentGovernedForeground, currentGovernedRun } from './governed-run-context'
 
 async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
-  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,init)
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1'&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return fetch(url,init)
   return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
 }
 import {decodeHtmlEntities,formatEmailSnippet} from '@/lib/security/email-redaction'
@@ -167,12 +168,13 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
   if(url.startsWith('https://www.googleapis.com/drive/v3/')){
     // Unpriced Composio proxy requests must not bypass a selected owner's
     // native connector budget. Existing non-canary fallback is unchanged.
-    const guarded=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&await import('./governed-model-call').then(m=>m.modelGoverned(actor.legacyTelegramId))
+    const guarded=currentGovernedRun()||currentGovernedForeground()?.governanceRequired||
+      ((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&await import('./governed-model-call').then(m=>m.modelGoverned(actor.legacyTelegramId)))
     viaComposio=guarded?null:await composioDriveFor(actor)
     if(viaComposio){
       let native:any=null
       try{native=await credentials(actor)}catch{}
-      if(!native)return viaComposio(url)
+      if(!native&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return viaComposio(url)
     }
   }
   // Fixed-window scans must not reuse credentials captured by account discovery
@@ -200,7 +202,7 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
     const profileFailure=verifyMailbox?await verifyMailbox(accessToken,creds.gmail_email):null
     if(profileFailure)return profileFailure
     const request={...init,headers:{...(init.headers||{}),Authorization:`Bearer ${accessToken}`},cache:'no-store' as const}
-    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,request)
+    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1'&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return fetch(url,request)
     const op=(await import('./governed-connector-shapes')).googleReadOperation(url)
     if(!op)throw Error('workspace_connector_shape_unreviewed')
     return governedRead(op,url,request,actor.legacyTelegramId)
@@ -210,7 +212,7 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
     token = await refreshForRead()
     response = await run(token)
   }
-  if ((response.status === 403 || response.status === 401) && viaComposio) return viaComposio(url)
+  if ((response.status === 403 || response.status === 401) && viaComposio && !currentGovernedRun() && !currentGovernedForeground()?.governanceRequired) return viaComposio(url)
   if (response.status === 403) {
     // 20 Nov: 123 of these in two days all read "workspace_scope_required", though a 403 is also a rate limit, a disabled
     // API or a Workspace admin block. The error thrown is unchanged; Google's own reason is logged so the next one can be told apart.

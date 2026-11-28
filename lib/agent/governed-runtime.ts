@@ -115,7 +115,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
           if(!await current(inTime)||await authorize()!==true)return false
           const live=await d.connectorTariff!(operation),c=verifiedConnectorCeiling(live,operation,d.now())
           return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&await nestedAuthority()&&await authorize()===true&&inTime()
-        },execute:async()=>({value:await withReservedOutbound('connector',url,execute,method,async()=>inTime()&&await nestedAuthority()&&await authorize()===true&&inTime()),usage:ceiling})})
+        },execute:async()=>({value:await withReservedOutbound('connector',url,execute,method,async()=>inTime()&&await authorize()===true&&await current(inTime)),usage:ceiling})})
     },
     async nestedSearch(operation,execute,inTime,authorize){
       // The inspected first-slice search tools call only the bounded web

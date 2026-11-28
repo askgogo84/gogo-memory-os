@@ -180,6 +180,7 @@ await check('Workspace rejects unsafe numeric actor before credential or provide
   const selection: string[][] = []
   const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: null, error: null }) }
   const workspaceModule = load('lib/agent/google-workspace-read.ts', {
+    './governed-run-context': {currentGovernedRun:()=>null,currentGovernedForeground:()=>null},
     '@/lib/security/email-redaction': { decodeHtmlEntities: (x: string) => x, formatEmailSnippet: (x: string) => x },
     '@/lib/supabase-admin': { supabaseAdmin: { from: () => { dbCalls++; return q } } }, '@/lib/google-gmail': {},
     '@/lib/bot/memory-redaction': { redactSecretShapedText: (x: string) => x }, '@/lib/security/google-token-crypto': {},

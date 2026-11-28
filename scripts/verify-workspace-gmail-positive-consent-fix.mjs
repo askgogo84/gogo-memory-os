@@ -21,6 +21,8 @@ const db={from(table){
     async maybeSingle(){return {data:consent==='missing'?null:{gmail_enabled:consent},error:error?{message:'fixture unavailable'}:null}}}
 }}
 const workspace=load('lib/agent/google-workspace-read.ts','workspaceFetch',{
+  currentGovernedRun:()=>null,
+  currentGovernedForeground:()=>null,
   supabaseAdmin:db,
   credentials:async()=>{tokens++;return {gmail_access_token:'fictional-token',gmail_refresh_token:null}},
   refresh:async()=>{throw Error('unexpected refresh')},

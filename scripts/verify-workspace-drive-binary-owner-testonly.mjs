@@ -54,6 +54,8 @@ function isolate(rows) {
     },
   }
   const sandbox = {
+    currentGovernedRun: () => null,
+    currentGovernedForeground: () => null,
     supabaseAdmin: database,
     decryptGoogleToken: value => String(value ?? ''),
     encryptGoogleToken: value => String(value ?? ''),

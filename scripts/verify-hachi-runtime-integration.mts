@@ -270,6 +270,25 @@ await withGovernedPersonalRun('101',googleRt,()=>true,async()=>{
 assert.equal(guardedPages,1)
 console.log('Inherited recovery authorization rechecked for actual nested connector and physical dispatch boundaries')
 
+let connectorTariffReads=0,dispatchRunCurrent=true,runtimeDispatches=0
+const dispatchRuntime=makeGovernedRuntime(scope,{
+  ...deps,currentRun:async()=>dispatchRunCurrent,
+  connectorTariff:async(operation)=>{
+    if(++connectorTariffReads===3)dispatchRunCurrent=false
+    return {operation,max_cost_micros:7,valid_until:price.valid_until,verified_source:'fixture:reviewed'}
+  }
+})
+const dispatchRead=()=>dispatchRuntime.boundedConnector('google.calendar.read',calendarUrl,'GET',async()=>true,async()=>{
+  await authorizeGovernedFetch(calendarUrl,calendarInit,fixtureEnv)
+  runtimeDispatches++
+  return Response.json({items:[]})
+},()=>true)
+assert.equal((await dispatchRead()).state,'unknown')
+assert.equal(runtimeDispatches,0)
+dispatchRunCurrent=true
+assert.equal((await dispatchRead()).state,'completed')
+assert.equal(runtimeDispatches,1)
+
 let connectorSelected=true
 const revokedConnectorDeps={
   ...connectorDeps,
@@ -363,7 +382,7 @@ console.log('Calendar exact event/version/time approval boundary passed in inert
 
 // Run the database-facing source with a closed fake PostgREST client. Raw bigint
 // JSON rounds adjacent IDs, while an explicit text projection preserves them.
-function isolateCalendarQueries(path:string,names:string[],bindings:Record<string,unknown>){
+function isolateSourceFunctions(path:string,names:string[],bindings:Record<string,unknown>){
   const source=ts.createSourceFile(path,readFileSync(path,'utf8'),ts.ScriptTarget.Latest,true)
   const code=names.map(name=>{
     const declaration=source.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name)
@@ -407,7 +426,7 @@ const calendarDb={from(table:string){return {select(fields:string){
   return query
 }}}}
 const calendarBindings={supabaseAdmin:calendarDb,exactSessionOwnerId,createHash,decryptGoogleToken:(value:string)=>value}
-const {calendarAccessForUpdate}=isolateCalendarQueries('lib/agent/calendar-update.ts',[
+const {calendarAccessForUpdate}=isolateSourceFunctions('lib/agent/calendar-update.ts',[
   'governedCalendarSelected','calendarAccessForUpdate'
 ],{
   ...calendarBindings,process:{env:{GOGO_HACHI_ENFORCEMENT:'1',GOGO_HACHI_PERSONAL_OWNERS:'101,9223372036854776000'}},
@@ -431,7 +450,7 @@ await assert.rejects(()=>calendarAccessForUpdate({...calendarActor,legacyTelegra
 assert.equal(calendarQueries.length,beforeUnsafe)
 assert.equal(tokenRefreshes,2)
 
-const {readCredentialSnapshot,primaryMoveSnapshot}=isolateCalendarQueries('lib/agent/governed-google-read.ts',[
+const {readCredentialSnapshot,primaryMoveSnapshot}=isolateSourceFunctions('lib/agent/governed-google-read.ts',[
   'nonemptyHash','addHash','readCredentialSnapshot','primaryMoveSnapshot'
 ],{...calendarBindings,hash:fingerprint})
 for(const owner of [exactOwner,adjacentOwner,'-9223372036854775808']){
@@ -451,11 +470,16 @@ assert.equal(await primaryMoveSnapshot(exactOwner,calendarActor.userId,moveAutho
 console.log('Calendar access and credential gates preserve exact owner IDs and reject invalid readbacks before dispatch')
 
 const {updateCalendarEvent,fetchPrimaryCalendarEventResponse}=await import('../lib/services/google-calendar')
+const {verifyGmailSentMessage}=await import('../lib/services/google-gmail')
 const priorCalendarFetch=globalThis.fetch
-let rawCalendarReads=0,acceptedCalendarPatches=0
+let rawCalendarReads=0,acceptedCalendarPatches=0,rawGmailReads=0
 const startTime='2026-12-01T10:00:00Z',endTime='2026-12-01T11:00:00Z'
 try{
   globalThis.fetch=async input=>{
+    if(String(input).startsWith('https://gmail.googleapis.com/')){
+      rawGmailReads++
+      return Response.json({id:'sent-fixture',threadId:'thread-fixture',labelIds:['SENT'],payload:{headers:[]}})
+    }
     assert.equal(input,moveUrl)
     rawCalendarReads++
     return Response.json({id:'fixture-event',status:'confirmed',start:{dateTime:startTime},end:{dateTime:endTime}})
@@ -472,14 +496,38 @@ try{
     })
     assert.equal(patch.verification,'unknown')
     await assert.rejects(()=>fetchPrimaryCalendarEventResponse('access-fixture','fixture-event'),/connector_identity_mismatch/)
+    await assert.rejects(()=>verifyGmailSentMessage('access-fixture','sent-fixture','thread-fixture'),/connector_identity_mismatch/)
     assert.equal(rawCalendarReads,0)
+    assert.equal(rawGmailReads,0)
   })
   assert.equal(acceptedCalendarPatches,1)
   assert.equal((await fetchPrimaryCalendarEventResponse('access-fixture','fixture-event')).ok,true)
   assert.equal(rawCalendarReads,1)
+  assert.equal((await verifyGmailSentMessage('access-fixture','sent-fixture','thread-fixture')).verified,true)
+  assert.equal(rawGmailReads,1)
 }finally{
   globalThis.fetch=priorCalendarFetch
   if(savedEnforcement===undefined)delete process.env.GOGO_HACHI_ENFORCEMENT;else process.env.GOGO_HACHI_ENFORCEMENT=savedEnforcement
   if(savedOwners===undefined)delete process.env.GOGO_HACHI_PERSONAL_OWNERS;else process.env.GOGO_HACHI_PERSONAL_OWNERS=savedOwners
 }
 console.log('Calendar PATCH verification stays unknown after pinned governance is revoked, with zero legacy readbacks')
+
+let unreservedDriveCalls=0
+const driveBindings={
+  currentGovernedRun:()=>null,currentGovernedForeground:()=>({governanceRequired:true}),
+  credentials:async()=>({gmail_access_token:'access-fixture',gmail_refresh_token:null}),
+  fetch:async()=>{unreservedDriveCalls++;throw Error('unreserved native Drive fetch')},
+  composioDriveFor:async()=>{unreservedDriveCalls++;throw Error('unreserved Composio fallback')},
+  require:(name:string)=>{
+    if(name==='@/lib/agent/governed-google-read')return {governedGoogleFetch:async()=>{throw Error('governed connector revoked')}}
+    if(name==='./governed-connector-shapes')return {googleReadOperation:()=> 'google.drive.read'}
+    throw Error(`Unexpected fixture import ${name}`)
+  }
+}
+const driveUrl='https://www.googleapis.com/drive/v3/files?fields=files(id)'
+const workspaceSource=isolateSourceFunctions('lib/agent/google-workspace-read.ts',['governedRead','workspaceFetch'],driveBindings)
+await assert.rejects(()=>workspaceSource.workspaceFetch(calendarActor,driveUrl),/governed connector revoked/)
+const driveBinarySource=isolateSourceFunctions('lib/agent/google-workspace-drive-binary.ts',['governedRead'],driveBindings)
+await assert.rejects(()=>driveBinarySource.governedRead('google.drive.read',driveUrl),/governed connector revoked/)
+assert.equal(unreservedDriveCalls,0)
+console.log('Pinned Workspace reads deny both native and Composio legacy fallback after governance revocation')
