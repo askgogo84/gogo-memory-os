@@ -57,7 +57,7 @@ export type GovernedRuntime={
   model:<T extends ProviderResponse>(model:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   boundedSearch:<T>(operation:SearchOperation,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   boundedConnector:<T>(operation:GoogleOperation,url:string,method:'GET'|'POST',authorize:()=>Promise<boolean>,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
-  nestedSearch:<T>(operation:'web_search'|'venue_contact'|'calendar_read',execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
+  nestedSearch:<T>(operation:'web_search'|'venue_contact'|'calendar_read'|'recovery_read',execute:()=>Promise<T>,inTime:()=>boolean,authorize?:()=>Promise<boolean>)=>Promise<BudgetOutcome<T>>
   workerStep:<T>(operation:string,attemptId:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   local:<T>(operation:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
 }
@@ -113,14 +113,14 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
           return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&inTime()
         },execute:async()=>({value:await withReservedOutbound('connector',url,execute,method),usage:ceiling})})
     },
-    async nestedSearch(operation,execute,inTime){
+    async nestedSearch(operation,execute,inTime,authorize){
       // The inspected first-slice search tools call only the bounded web
       // adapters (venue lookup does not read pages or dispatch an action).
       // The orchestration step is zero provider cost; each nested provider
       // call must independently reserve against THIS same run.
-      if(s.kind!=='personal'||!['web_search','venue_contact','calendar_read'].includes(operation))return denied('unpriced_tool')
+      if(s.kind!=='personal'||!['web_search','venue_contact','calendar_read','recovery_read'].includes(operation)||operation==='recovery_read'&&(!authorize||!governedFenceInstalled()))return denied('unpriced_tool')
       return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling:{tokens:0,costMicrosInr:0}},rpc:d.rpc,
-        authorize:()=>current(inTime),
+        authorize:async()=>await current(inTime)&&(!authorize||await authorize())&&inTime(),
         execute:async()=>({value:await withGovernedPersonalRun(s.actorId,runtime,inTime,execute),usage:{tokens:0,costMicrosInr:0}})})
     },
     async workerStep(operation,attemptId,execute,inTime){

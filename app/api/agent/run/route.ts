@@ -76,6 +76,10 @@ async function handleAgentRun(request:Request){
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, body?.messageId)
     if (contentDraft) return NextResponse.json({...contentDraft, status: 'completed', capability: 'memory', risk: 'low'})
+    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&typeof body?.text==='string'&&body.text.trim()===text){
+      const recovered=await (await import('@/lib/agent/governed-recovery-execution')).tryGovernedRecoveryProfile(actor,text,true)
+      if(recovered)return NextResponse.json(recovered)
+    }
     const typedReply=await tryTypedTimeRouting({actor,text,surface:session.surface,messageId:`agent-${randomUUID()}`})
     if(typedReply)return NextResponse.json(typedReply)
     const brainReply = await trySameBrainIntrospection({ actor, text })

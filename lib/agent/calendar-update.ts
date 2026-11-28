@@ -22,7 +22,9 @@ export async function calendarAccessForUpdate(actor:AgentActor,readOnly=false){
   return {token,timezone:String(data.timezone||'Asia/Kolkata'),level}
 }
 export async function readExactCalendarEvent(token:string,eventId:string){
-  const r=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'})
+  const url=`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`
+  const init={headers:{Authorization:`Bearer ${token}`},cache:'no-store' as const}
+  const r=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'?await (await import('./governed-google-read')).governedGoogleFetch('google.calendar.read',url,init):await fetch(url,init)
   if(!r.ok)throw new Error('calendar_event_unavailable')
   const event=await r.json()
   if(event.id!==eventId||event.status==='cancelled')throw new Error('calendar_event_identity_mismatch')

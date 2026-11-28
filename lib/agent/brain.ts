@@ -697,7 +697,17 @@ async function clearOwnLoopDraft(telegramId: number, since: number): Promise<voi
   if (st?.payload?.draft?.loopDraft === true && Number.isFinite(at) && at >= since - 1000) await fs.clearFollowupState(telegramId, 'gmail_reply_draft')
 }
 
-export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string; handledBy?: string; checks?: DiagnosticCheck[]; readOnly?: boolean; mutated?: boolean } | null> {
+export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean; directLiteral?:boolean }): Promise<{ reply?: string; text?: string; handledBy?: string; checks?: DiagnosticCheck[]; readOnly?: boolean; mutated?: boolean } | null> {
+  if(p.directLiteral===true&&!p.forwarded&&brainEnabledFor(p.phone)&&(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&p.userId&&p.whatsappId){
+    const matches=(await import('./governed-recovery-profiles')).parseRecoveryRequest(p.text)
+    if(matches){
+      const context=await loadBrainContext(p).catch(()=>null)
+      if(context&&!answersGogosQuestion(context.turns,p.text)){
+        const result=await (await import('./governed-recovery-execution')).tryGovernedRecoveryProfile({userId:p.userId,legacyTelegramId:p.telegramId,whatsappId:p.whatsappId,name:p.name||'Gogo user',timezone:p.timezone||undefined},p.text,true)
+        if(result)return {reply:result.text,handledBy:result.handledBy,readOnly:true,mutated:false}
+      }
+    }
+  }
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
   // Saved-state answers the brain cannot see (connected apps) go to their handler, never a guess.
   if (await import('./autonomy-status').then(m => m.isConnectionCapabilityQuery(p.text), () => false)) return null

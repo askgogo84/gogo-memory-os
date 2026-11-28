@@ -422,7 +422,7 @@ async function handleChatPost(req: NextRequest) {
     // Context-first brain (lib/agent/brain.ts), same as WhatsApp: context before keyword rules. Canary users only.
     // Cheap env gate first: strict route harnesses (and previews) never load the module.
     if(!callCommand&&(globalThis as any).process?.env?.GOGO_BRAIN!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){
-      const brain:any=await import('@/lib/agent/brain').then(m=>m.runBrain({phone:String(user.whatsapp_id||''),telegramId:Number(user.telegram_id),text,name:user.name||null,timezone:(user as any).timezone||null,userId:String(actor.userId||''),whatsappId:String(user.whatsapp_id||''),surface:'web'})).catch((err:any)=>{console.error('BRAIN_FAILED:',String(err?.message||err).slice(0,160));return null})
+      const brain:any=await import('@/lib/agent/brain').then(m=>m.runBrain({phone:String(user.whatsapp_id||''),telegramId:Number(user.telegram_id),text,name:user.name||null,timezone:(user as any).timezone||null,userId:String(actor.userId||''),whatsappId:String(user.whatsapp_id||''),surface:'web',directLiteral:text===originalUserText})).catch((err:any)=>{console.error('BRAIN_FAILED:',String(err?.message||err).slice(0,160));return null})
       if(brain?.reply){
         await saveConversation(user.telegram_id,text,brain.reply)
         const isDiagnostic=brain.handledBy==='system-diagnostic'||brain.handledBy==='system-diagnostic-clarify'

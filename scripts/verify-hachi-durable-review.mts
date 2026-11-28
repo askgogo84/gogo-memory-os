@@ -113,6 +113,11 @@ assert.equal(parseRecoveryRequest('Move my appointment to 4 pm'),null)
 assert.equal(parseRecoveryRequest('Verify my last Gmail send')?.skill,'email.exact.verify')
 assert.equal(parseRecoveryRequest('Show my watches')?.skill,'watcher.exact.status')
 assert.equal(profileForSkill('__proto__'),null)
+const {exactRecoveryMatch}=await import('../lib/agent/governed-recovery-execution')
+assert.equal(exactRecoveryMatch([{title:'Rent'}],r=>r.title,'rent',false).kind,'incomplete')
+assert.equal(exactRecoveryMatch([{title:'Rent'},{title:'Rent'}],r=>r.title,'rent',true).kind,'ambiguous')
+assert.equal(exactRecoveryMatch([{title:'Rent payment'}],r=>r.title,'rent',true).kind,'missing')
+assert.deepEqual(exactRecoveryMatch([{title:' Rent '}],r=>r.title,'rent',true),{kind:'match',row:{title:' Rent '}})
 const rb=catalogBaseDefinitions('personal').find(d=>d.id==='calendar.exact.read')!
 const rn={...rb,sopVersion:'1.0.1',runtimeProfile:'calendar_exact_v1' as const}
 const rd=skillRevisionDigest(rb),nd=skillRevisionDigest(rn)
