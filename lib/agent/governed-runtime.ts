@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import type { AgentActor } from './actor'
 import { runGovernedAttempt, type GovernedScope, type BudgetOutcome, type Usage } from './governed-budget-ledger'
+import {withGovernedPersonalRun} from './governed-run-context'
 
 type Env=Record<string,string|undefined>
 export function governedEnabled(kind:'personal'|'workspace',id:string,env:Env=(globalThis as any).process?.env||{}):boolean {
@@ -48,12 +49,13 @@ export function verifiedOperationCeiling(t:OperationTariff|null,operation:Search
 export type GovernedRuntime={
   model:<T extends ProviderResponse>(model:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   boundedSearch:<T>(operation:SearchOperation,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
+  nestedSearch:<T>(operation:'web_search'|'venue_contact',execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   local:<T>(operation:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
 }
 export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime {
   const s={...scope}
   const current=async(inTime:()=>boolean)=>inTime()&&await d.authorize()&&await d.currentRun()&&inTime()
-  return {
+  const runtime:GovernedRuntime={
     async model(model,execute,inTime){
       if(!inTime())return denied('deadline')
       let tariff:ModelTariff|null
@@ -88,6 +90,16 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         // Transport/invalid response throws and retains the reservation.
         execute:async()=>({value:await execute(),usage:ceiling})})
     },
+    async nestedSearch(operation,execute,inTime){
+      // The inspected first-slice search tools call only the bounded web
+      // adapters (venue lookup does not read pages or dispatch an action).
+      // The orchestration step is zero provider cost; each nested provider
+      // call must independently reserve against THIS same run.
+      if(s.kind!=='personal'||!['web_search','venue_contact'].includes(operation))return denied('unpriced_tool')
+      return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling:{tokens:0,costMicrosInr:0}},rpc:d.rpc,
+        authorize:()=>current(inTime),
+        execute:async()=>({value:await withGovernedPersonalRun(s.actorId,runtime,inTime,execute),usage:{tokens:0,costMicrosInr:0}})})
+    },
     async local(operation,execute,inTime){
       // Only verified DB-only paths. A provider/tool without a bounded billing
       // adapter is blocked; it must never be treated as a zero-cost operation.
@@ -98,6 +110,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         execute:async()=>({value:await execute(),usage:{tokens:0,costMicrosInr:0}})})
     },
   }
+  return runtime
 }
 async function open(kind:'personal'|'workspace',scopeId:string,actorId:string,authorize:()=>Promise<boolean>):Promise<GovernedRuntime|null>{
   try{

@@ -112,4 +112,33 @@ assert.equal(searchCalls,1)
 await assert.rejects(()=>governedSearchFetch('tavily.basic.v1',url,init,{...searchDeps,fetcher:async()=>{searchCalls++;return new Response('error',{status:503})}}),/attempt_outcome_unverified/)
 assert.equal(searchCalls,2)
 assert.equal(receipts.at(-1)?.args.p_cost_micros,null)
+// The actual nested adapter uses the SAME run, not a new per-provider scope.
+const {currentGovernedRun,withGovernedPersonalRun}=await import('../lib/agent/governed-run-context')
+searchCalls=0
+const beforeNested=receipts.length
+const nestedDeps={...searchDeps,open:async()=>{throw Error('must reuse parent')}}
+assert.equal((await searchRt.nestedSearch('web_search',async()=>{
+  assert.equal(currentGovernedRun()?.owner,'101')
+  return governedSearchFetch('tavily.basic.v1',url,init,nestedDeps)
+},()=>true)).state,'completed')
+assert.equal(searchCalls,1)
+assert.equal(currentGovernedRun(),null)
+const nestedReceipts=receipts.slice(beforeNested)
+assert.equal(nestedReceipts.filter(x=>x.name.includes('reserve')).length,2)
+assert.ok(nestedReceipts.every(x=>x.args.p_run_id===scope.runId&&x.args.p_actor_id==='101'))
+assert.equal(nestedReceipts.filter(x=>x.name.includes('reserve')).map(x=>Number(x.args.p_cost_micros)).reduce((a,b)=>a+b,0),9)
+await withGovernedPersonalRun('101',searchRt,()=>true,async()=>{
+  await assert.rejects(()=>governedSearchFetch('tavily.basic.v1',url,init,{...nestedDeps,selection:()=>({kind:'governed',owner:'102'})}),/nested_scope_mismatch/)
+  await assert.rejects(()=>governedSearchFetch('tavily.basic.v1',url,init,{...nestedDeps,selection:()=>({kind:'legacy'})}),/nested_scope_mismatch/)
+})
+assert.equal(searchCalls,1)
+let late:(()=>Promise<Response>)|undefined
+await withGovernedPersonalRun('101',searchRt,()=>true,async()=>{
+  // Capture a real async continuation. Closing the parent invalidates it.
+  const parent=currentGovernedRun()!
+  late=async()=>{assert.equal(parent.inTime(),false);return new Response('closed')}
+})
+await late!()
+assert.equal((await searchRt.nestedSearch('web_search',async()=>{searchCalls++;return 'not reached'},()=>false)).state,'blocked')
+assert.equal(searchCalls,1)
 console.log('Hachi scoped runtime boundary fixtures passed')

@@ -5,6 +5,7 @@
 import { currentMeterContext } from '@/lib/metering/core'
 import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { governedEnabled,openPersonalGovernedRuntimeForOwner,type GovernedRuntime } from './governed-runtime'
+import {currentGovernedRun} from './governed-run-context'
 type Env=Record<string,string|undefined>
 type Owner=string|number|null|undefined
 type Selection={kind:'legacy'}|{kind:'governed';owner:string}|{kind:'invalid'}
@@ -23,27 +24,36 @@ export function selectGovernedOwner(explicit:Owner,context:Owner,env:Env):Select
   if(!chosen||(explicit!=null&&explicit!==''&&!a)||(context!=null&&context!==''&&!b)||(a&&b&&a!==b))return {kind:'invalid'}
   return {kind:'governed',owner:chosen}
 }
-export function modelGoverned(explicit?:Owner):boolean{
-  return selectGovernedOwner(explicit,currentMeterContext()?.telegramId,process.env).kind!=='legacy'
+export function selectedModelOwner(explicit?:Owner):Selection{
+  const active=currentGovernedRun(),context=currentMeterContext()?.telegramId
+  if(!active)return selectGovernedOwner(explicit,context,process.env)
+  // A nested task cannot fall through to legacy on lost context, changed
+  // flags, deadline, or mismatched owner. Parent scope remains authoritative.
+  if(!active.inTime()||!governedEnabled('personal',active.owner)||
+    (explicit!=null&&explicit!==''&&exactSessionOwnerId(explicit)!==active.owner)||
+    (context!=null&&context!==''&&exactSessionOwnerId(context)!==active.owner))return {kind:'invalid'}
+  return {kind:'governed',owner:active.owner}
 }
+export function modelGoverned(explicit?:Owner):boolean{return selectedModelOwner(explicit).kind!=='legacy'}
 type Deps={
   selection:()=>Selection
   open:(owner:string)=>Promise<GovernedRuntime|null>
   now:()=>number
 }
 export async function governedModelCall<T>(model:string,invoke:(guarded:boolean)=>Promise<T>,receipt:(value:T)=>ModelReceipt,explicit?:Owner,deps?:Deps):Promise<T>{
-  const d=deps||{selection:()=>selectGovernedOwner(explicit,currentMeterContext()?.telegramId,process.env),open:openPersonalGovernedRuntimeForOwner,now:Date.now}
-  const selected=d.selection()
+  const d=deps||{selection:()=>selectedModelOwner(explicit),open:openPersonalGovernedRuntimeForOwner,now:Date.now}
+  const selected=d.selection(),parent=currentGovernedRun()
+  if(parent&&(selected.kind!=='governed'||selected.owner!==parent.owner||!parent.inTime()))throw new GovernedModelError('nested_scope_mismatch')
   if(selected.kind==='legacy')return invoke(false)
   if(selected.kind!=='governed')throw new GovernedModelError('identity_mismatch')
   const deadline=d.now()+30_000
-  const runtime=await d.open(selected.owner).catch(()=>null)
+  const runtime=parent?parent.runtime:await d.open(selected.owner).catch(()=>null)
   if(!runtime)throw new GovernedModelError('policy_unavailable')
   const result=await runtime.model(model,async()=>{
     const value=await invoke(true)
     const proof=receipt(value)
     return {model:proof.model,usage:proof.usage,value}
-  },()=>d.now()<deadline)
+  },()=>d.now()<deadline&&(!parent||parent.inTime()))
   if(result.state!=='completed')throw new GovernedModelError(result.reason)
   return result.value.value
 }

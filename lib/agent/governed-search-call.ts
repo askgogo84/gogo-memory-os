@@ -1,7 +1,7 @@
 // Server-side adapter for three reviewed search request shapes. These are
 // code-bound endpoints, not an arbitrary network tool. Never log request bodies.
-import {currentMeterContext} from '@/lib/metering/core'
-import {selectGovernedOwner,GovernedModelError} from './governed-model-call'
+import {selectGovernedOwner,selectedModelOwner,GovernedModelError} from './governed-model-call'
+import {currentGovernedRun} from './governed-run-context'
 import {openPersonalGovernedRuntimeForOwner,type GovernedRuntime,type SearchOperation} from './governed-runtime'
 const ENDPOINTS:Record<SearchOperation,string>={
   'tavily.basic.v1':'https://api.tavily.com/search',
@@ -30,8 +30,9 @@ export function validBoundedSearch(op:SearchOperation,url:string,init:RequestIni
 }
 type Deps={selection:()=>ReturnType<typeof selectGovernedOwner>;open:(owner:string)=>Promise<GovernedRuntime|null>;fetcher:typeof fetch;now:()=>number}
 export async function governedSearchFetch(op:SearchOperation,url:string,init:RequestInit,deps?:Deps):Promise<Response>{
-  const d=deps||{selection:()=>selectGovernedOwner(undefined,currentMeterContext()?.telegramId,process.env),open:openPersonalGovernedRuntimeForOwner,fetcher:fetch,now:Date.now}
-  const s=d.selection()
+  const d=deps||{selection:()=>selectedModelOwner(),open:openPersonalGovernedRuntimeForOwner,fetcher:fetch,now:Date.now}
+  const s=d.selection(),parent=currentGovernedRun()
+  if(parent&&(s.kind!=='governed'||s.owner!==parent.owner||!parent.inTime()))throw new GovernedModelError('nested_scope_mismatch')
   if(s.kind==='legacy')return d.fetcher(url,init)
   if(s.kind!=='governed')throw new GovernedModelError('identity_mismatch')
   if(!validBoundedSearch(op,url,init))throw new GovernedModelError('unpriced_search_shape')
@@ -39,7 +40,7 @@ export async function governedSearchFetch(op:SearchOperation,url:string,init:Req
   // a redirect or a changed payload after the price check.
   const request={...init,headers:new Headers(init.headers),body:String(init.body),redirect:'error' as const}
   const deadline=d.now()+30_000
-  const rt=await d.open(s.owner).catch(()=>null)
+  const rt=parent?parent.runtime:await d.open(s.owner).catch(()=>null)
   if(!rt)throw new GovernedModelError('policy_unavailable')
   const result=await rt.boundedSearch(op,async()=>{
     const timeout=AbortSignal.timeout(15_000)
@@ -48,7 +49,7 @@ export async function governedSearchFetch(op:SearchOperation,url:string,init:Req
     const data:unknown=await response.clone().json()
     if(!object(data))throw Error('search_response_not_verified')
     return response
-  },()=>d.now()<deadline&&!request.signal?.aborted)
+  },()=>d.now()<deadline&&!request.signal?.aborted&&(!parent||parent.inTime()))
   if(result.state!=='completed')throw new GovernedModelError(result.reason)
   return result.value
 }

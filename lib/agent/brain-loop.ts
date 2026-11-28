@@ -228,7 +228,9 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
               return Promise.race([tool.run!(p.actor,input,state),new Promise<string>((_r,rej)=>{timer=setTimeout(()=>rej(new Error('timeout')),Math.max(50,Math.min(L.toolMs,left())))})])
             }
             if(governed){
-              const metered=await governed.local(tool.name,invoke,()=>left()>=500)
+              const metered=tool.klass==='read'&&(tool.name==='web_search'||tool.name==='venue_contact')
+                ?await governed.nestedSearch(tool.name,invoke,()=>left()>=500)
+                :await governed.local(tool.name,invoke,()=>left()>=500)
               if(metered.state!=='completed'){
                 governance={reason:metered.reason}
                 steps.push({tool:tool.name,klass:tool.klass,executed,ok:false,ms:clock()-s0})
