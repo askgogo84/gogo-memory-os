@@ -15,7 +15,11 @@ try {
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const m = { exports: {} }
   vm.runInNewContext(compiled, {
-    exports: m.exports, module: m, require, process, Buffer, URLSearchParams,
+    exports: m.exports, module: m,
+    require: name => name === '@/lib/agent/governed-run-context'
+      ? { currentGovernedRun: () => null, currentGovernedForeground: () => null }
+      : require(name),
+    process, Buffer, URLSearchParams,
     console, setTimeout, clearTimeout, AbortSignal, fetch: () => { throw Error('network not allowed') },
   }, { filename: 'lib/services/google-gmail.ts' })
   const oauth = m.exports

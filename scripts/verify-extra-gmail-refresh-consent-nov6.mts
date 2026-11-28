@@ -100,6 +100,7 @@ const workspace = compile(
   'lib/agent/google-workspace-read.ts',
   '\nexports.__testWorkspaceFetch = workspaceFetch;\n',
   {
+    './governed-run-context': {currentGovernedRun: () => null, currentGovernedForeground: () => null},
     '@/lib/security/email-redaction': { decodeHtmlEntities: (x: any) => x, formatEmailSnippet: (x: any) => x, redactEmailAuthSecrets: (x: any) => x },
     '@/lib/supabase-admin': { supabaseAdmin: db },
     '@/lib/services/pdf-js-serverless': { extractServerlessPdfText: () => '' },
