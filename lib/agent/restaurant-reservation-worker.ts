@@ -55,6 +55,9 @@ function confirmedText(result:any){
 // ReserveX returns a provider receipt with separate Date, Time and Guests
 // fields. A generic success word (or a management link alone) is insufficient.
 // Preserve the exact approved clock: 20:01 cannot silently satisfy 20:00.
+function reserveXHost(value:unknown){
+  try{return new URL(String(value||'')).hostname.toLowerCase().replace(/^www\./,'').replace(/\.+$/,'')==='reservex.explorex.co.in'}catch{return false}
+}
 function reserveXBookingUrl(value:unknown){
   try{
     const u=new URL(String(value||''))
@@ -63,6 +66,9 @@ function reserveXBookingUrl(value:unknown){
 }
 function reserveXReceipt(result:any,payload:any){
   if(result?.status!=='completed'||!hasSubmit(result)||!reserveXBookingUrl(payload?.reservationUrl))return null
+  const submissions=result.actions.filter((a:any)=>(a?.kind==='submit'||a?.consequential===true)&&a?.status!=='skipped')
+  if(submissions.length!==1||submissions[0].status!=='done')return null
+  if(result.originalUrl&&result.originalUrl!==payload.reservationUrl)return null
   try{
     const actual=new URL(String(result.url||'')),approved=new URL(String(payload.reservationUrl))
     if(actual.origin!==approved.origin||actual.username||actual.password)return null
@@ -84,7 +90,9 @@ function reserveXReceipt(result:any,payload:any){
   // when present; do not treat the provider brand or locality alone as a match.
   const name=String(payload.restaurant||'').normalize('NFKC').toLowerCase()
   const distinctive=name.split(/[^a-z0-9]+/).filter(t=>t.length>2&&!['the','and','restaurant','bar','kitchen','cafe','coffee','road','street','layout','nagar','bengaluru','bangalore'].includes(t))[0]
-  const words=new Set(page.toLowerCase().split(/[^a-z0-9]+/))
+  const venueEnd=page.search(/\b(?:number of\s+)?guests\s*:|\b(?:booking\s+|reservation\s+)?(?:date|time)\s*:/i)
+  if(venueEnd<=0)return null
+  const words=new Set(page.slice(0,venueEnd).toLowerCase().split(/[^a-z0-9]+/))
   if(!distinctive||!words.has(distinctive)||(/\bbar\b/i.test(name)&&!words.has('bar')))return null
   // A capability URL can grant access to rescheduling/cancellation. Retain
   // only the public approved venue URL and verified non-secret receipt fields.
@@ -200,6 +208,12 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:permission,mode:'execute',risk:'high',irreversible:true,approvalStatus:'approved'})
   if(!policy.allowed)throw new Error(`policy_${policy.reason}`)
   const url=String(payload.reservationUrl||'')
+  if(reserveXHost(url)&&!reserveXBookingUrl(url)){
+    const summary='This older ReserveX approval does not point to a public venue booking page. No browser action was attempted; refresh the same reservation task before approving another route.'
+    await failSafe({action,event,runId,approvalId,status:'paused',summary,error:'restaurant_context_review_required',expireApproval:true,actor})
+    await notify(actor,summary)
+    return{status:'paused' as const,runId}
+  }
   const contextWindows=Array.isArray(payload.contextWindows)?payload.contextWindows:[]
   const reservationLocation=safe(payload.reservationLocation||event.metadata_json?.reservationLocation||event.location||'',120)
   const gapDisclosed=!usableReservationDiningContext(snapshot)&&disclosedLiveSlotContext(payload)
@@ -216,7 +230,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   const timeInstruction=payload.preferredStart&&payload.preferredEnd?(payload.preferredStart===payload.preferredEnd?`Choose a slot starting exactly at ${payload.preferredStart}; if that exact start is unavailable, do not book. `:`Choose a slot between ${payload.preferredStart} and ${payload.preferredEnd}; if no in-bounds slot exists, do not book. `):'Choose the earliest available slot.'
   // Live-slot missions carry the approved guest name; it is part of the approval binding above.
   const guestInstruction=payload.guestName?` Book under the guest name ${JSON.stringify(safe(payload.guestName,60))}.`:''
-  const instruction=`At the verified booking-release time, attempt exactly one restaurant reservation at ${safe(payload.restaurant||event.title,180)} for ${Number(payload.partySize)||1} people. ${payload.requestedDate?`Prefer only ${payload.requestedDate}. `:''}${timeInstruction}${guestInstruction}${contextualConstraint} The approved booking fee/deposit ceiling is ₹0. If any fee, deposit, payment, paid add-on, new terms requiring separate consent, password, OTP, CAPTCHA, passkey, device approval or payment authentication appears, stop before it. Fill ordinary reservation fields from already available safe profile/browser context only. Use one final submit only when all approved constraints are satisfied. Never submit a second time if the result is uncertain.`
+  const instruction=`At the verified booking-release time, attempt exactly one restaurant reservation at ${safe(payload.restaurant||event.title,180)} for ${Number(payload.partySize)||1} people. ${payload.requestedDate?`Book only on ${payload.requestedDate}; no other dining date is authorized. `:''}${timeInstruction}${guestInstruction}${contextualConstraint} The approved booking fee/deposit ceiling is ₹0. If any fee, deposit, payment, paid add-on, new terms requiring separate consent, password, OTP, CAPTCHA, passkey, device approval or payment authentication appears, stop before it. Fill ordinary reservation fields from already available safe profile/browser context only. Use one final submit only when all approved constraints are satisfied. Never submit a second time if the result is uncertain.`
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:'execute',risk:'high',irreversible:true,approved:true,instruction,url,actionCount:12})
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
@@ -370,7 +384,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   // itself is already verified and recorded above.
   if(startAt){
     const bookingEngine:any=await import('./booking-engine').catch(()=>null)
-    const ref=typeof bookingEngine?.confirmationRefFrom==='function'?bookingEngine.confirmationRefFrom(String(result.pageText||'')):null
+    const ref=!verifiedReceipt&&typeof bookingEngine?.confirmationRefFrom==='function'?bookingEngine.confirmationRefFrom(String(result.pageText||'')):null
     await Promise.resolve(supabaseAdmin.from('life_events').update({start_at:startAt,end_at:new Date(Date.parse(startAt)+90*60_000).toISOString(),...(ref?{confirmation_ref:ref}:{}),updated_at:new Date().toISOString()}).eq('id',event.id).eq('telegram_id',tg)).catch(()=>{})
     const remindAt=new Date(Date.parse(startAt)-2*3600_000)
     if(remindAt.getTime()>Date.now()){
