@@ -34,8 +34,11 @@ export function canReviewSkillRevision(p:SkillRevision,current:SkillDefinition,n
   if(r.testedRevision!==p.skillId+'@'+p.nextVersion||!safeRef(r.testReceipt)||!safeRef(r.securityReceipt)||r.testReceipt===r.securityReceipt)return deny('missing_independent_receipts')
   // An improvement may tighten but may never widen the vetted capability or risk envelope.
   if(JSON.stringify(canonical(next.input))!==JSON.stringify(canonical(current.input))||JSON.stringify(canonical(next.output))!==JSON.stringify(canonical(current.output))||
-    next.requiredCapabilities.some(c=>!current.requiredCapabilities.includes(c))||
-    (next.optionalAdapters||[]).some(a=>!(current.optionalAdapters||[]).includes(a))||
+    // The bound handler has not changed. Both addition AND removal of
+    // permission gates are unsafe, including removing the last adapter
+    // (the registry treats an empty adapter requirement as unrestricted).
+    JSON.stringify([...new Set(next.requiredCapabilities)].sort())!==JSON.stringify([...new Set(current.requiredCapabilities)].sort())||
+    JSON.stringify([...new Set(next.optionalAdapters||[])].sort())!==JSON.stringify([...new Set(current.optionalAdapters||[])].sort())||
     next.risk!==current.risk||next.irreversible!==current.irreversible||
     (current.exactActionApproval&&!next.exactActionApproval)||
     current.evidence.some(e=>!next.evidence.includes(e))||

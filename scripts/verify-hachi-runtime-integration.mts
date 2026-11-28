@@ -59,4 +59,28 @@ assert.match(await personalSkillCatalog('',async()=> 'off'),/No matching/)
 assert.doesNotMatch(workspaceSkillCatalog('',true),/people\.brief|thread\.reply/)
 assert.match(workspaceSkillCatalog('stock',true),/workspace\.stock\.summary/)
 assert.match(workspaceSkillCatalog('',false),/No matching/)
+const {selectGovernedOwner,governedModelCall,openAICompatibleReceipt}=await import('../lib/agent/governed-model-call')
+const env={GOGO_HACHI_ENFORCEMENT:'1',GOGO_HACHI_PERSONAL_OWNERS:'101'}
+assert.deepEqual(selectGovernedOwner('101','101',env),{kind:'governed',owner:'101'})
+assert.deepEqual(selectGovernedOwner(undefined,'101',env),{kind:'governed',owner:'101'})
+assert.deepEqual(selectGovernedOwner('102','101',env),{kind:'invalid'})
+assert.deepEqual(selectGovernedOwner('101',Number.MAX_SAFE_INTEGER+1,env),{kind:'invalid'})
+assert.deepEqual(selectGovernedOwner('102','102',env),{kind:'legacy'})
+assert.deepEqual(selectGovernedOwner('101','101',{}),{kind:'legacy'})
+assert.deepEqual(openAICompatibleReceipt({model:'gpt-exact',usage:{prompt_tokens:20,completion_tokens:5,prompt_tokens_details:{cached_tokens:10}}}),{model:'gpt-exact',usage:{input_tokens:20,output_tokens:5}})
+let guardedCalls=0
+const adapterDeps={selection:()=>({kind:'governed' as const,owner:'101'}),open:async()=>rt,now:()=>now}
+const result=await governedModelCall(price.model,async guarded=>{assert.equal(guarded,true);guardedCalls++;return response},x=>x,'101',adapterDeps)
+assert.deepEqual(result,response)
+reserve='cost'
+await assert.rejects(()=>governedModelCall(price.model,async()=>{guardedCalls++;return response},x=>x,'101',adapterDeps),/governed_model_cost/)
+assert.equal(guardedCalls,1)
+reserve='reserved'
+await assert.rejects(()=>governedModelCall(price.model,async()=>{guardedCalls++;return response},x=>x,'101',{...adapterDeps,open:async()=>null}),/policy_unavailable/)
+assert.equal(guardedCalls,1)
+await assert.rejects(()=>governedModelCall(price.model,async()=>{guardedCalls++;return response},x=>x,'101',{...adapterDeps,selection:()=>({kind:'invalid'})}),/identity_mismatch/)
+assert.equal(guardedCalls,1)
+await assert.rejects(()=>governedModelCall(price.model,async()=>{guardedCalls++;throw Error('transport')},x=>x,'101',adapterDeps),/attempt_outcome_unverified/)
+assert.equal(guardedCalls,2)
+assert.equal(receipts.at(-1)?.args.p_cost_micros,null)
 console.log('Hachi scoped runtime boundary fixtures passed')

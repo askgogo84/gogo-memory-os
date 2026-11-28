@@ -12,6 +12,17 @@ assert.equal(canReviewSkillRevision(p,d,{...next,purpose:'changed after review'}
 assert.equal(canReviewSkillRevision(p,d,next,{...r,securityDigest:'wrong'}).allowed,false)
 const wider={...next,limits:{...next.limits,maxSteps:next.limits.maxSteps+1}}
 assert.equal(canReviewSkillRevision(p,d,wider,{...r,testedDigest:skillRevisionDigest(wider),securityDigest:skillRevisionDigest(wider)}).allowed,false)
+// Independent review: the people handler still reads all three sources.
+// Matching receipts cannot authorize removal of any required gate.
+const person=BUILTIN_SKILLS.find(x=>x.def.id==='people.brief')!.def
+const personNext={...person,sopVersion:'1.1.0',requiredCapabilities:['contacts' as const]}
+const personProposal={...p,skillId:person.id,baseVersion:person.sopVersion,nextVersion:personNext.sopVersion}
+const personReview={...r,testedRevision:person.id+'@'+personNext.sopVersion,currentVersion:person.sopVersion,currentDigest:skillRevisionDigest(person),testedDigest:skillRevisionDigest(personNext),securityDigest:skillRevisionDigest(personNext)}
+assert.equal(canReviewSkillRevision(personProposal,person,personNext,personReview).allowed,false)
+const adapterCurrent={...person,optionalAdapters:['mcp' as const]}
+const adapterNext={...person,sopVersion:'1.1.0'}
+const adapterReview={...personReview,currentDigest:skillRevisionDigest(adapterCurrent),testedDigest:skillRevisionDigest(adapterNext),securityDigest:skillRevisionDigest(adapterNext)}
+assert.equal(canReviewSkillRevision(personProposal,adapterCurrent,adapterNext,adapterReview).allowed,false)
 assert.equal(explicitMemoryFact('Please remember that my hotel is Central'),'my hotel is Central')
 assert.equal(explicitMemoryFact('Could you remember that my seat is aisle'),'my seat is aisle')
 assert.equal(explicitMemoryFact('Save this memory: My project is Hachi'),'My project is Hachi')

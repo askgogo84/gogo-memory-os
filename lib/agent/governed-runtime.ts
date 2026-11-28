@@ -99,10 +99,26 @@ async function open(kind:'personal'|'workspace',scopeId:string,actorId:string,au
 export async function openPersonalGovernedRuntime(actor:AgentActor):Promise<GovernedRuntime|null>{
   const owner=exactSessionOwnerId(actor.legacyTelegramId)
   if(!owner||!actor.userId)return null
+  const actorId=actor.userId
   return open('personal',owner,owner,async()=>{
-    const r=await supabaseAdmin.from('users').select('id,telegram_id').eq('id',actor.userId).eq('telegram_id',owner).maybeSingle()
-    return !r.error&&String(r.data?.id??'')===actor.userId&&exactSessionOwnerId(r.data?.telegram_id)===owner
+    const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
+    return !r.error&&String(r.data?.id??'')===actorId&&exactSessionOwnerId(r.data?.telegram_id)===owner&&r.data?.access_status==='active'
   })
+}
+// Only callers that already resolved the authenticated or metering owner may
+// use this helper. Pin the database user identity; recheck active access on
+// every reservation and immediately before the provider invocation.
+export async function openPersonalGovernedRuntimeForOwner(owner:string):Promise<GovernedRuntime|null>{
+  if(exactSessionOwnerId(owner)!==owner||!governedEnabled('personal',owner))return null
+  try{
+    const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status').eq('telegram_id',owner).maybeSingle()
+    if(r.error||!r.data?.id||r.data.access_status!=='active'||exactSessionOwnerId(r.data.telegram_id)!==owner)return null
+    const actorId=String(r.data.id)
+    return open('personal',owner,owner,async()=>{
+      const current=await supabaseAdmin.from('users').select('id,telegram_id,access_status').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
+      return !current.error&&String(current.data?.id??'')===actorId&&exactSessionOwnerId(current.data?.telegram_id)===owner&&current.data?.access_status==='active'
+    })
+  }catch{return null}
 }
 export function openWorkspaceGovernedRuntime(owner:string,id:string,authorize:()=>Promise<boolean>):Promise<GovernedRuntime|null>{
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))return Promise.resolve(null)

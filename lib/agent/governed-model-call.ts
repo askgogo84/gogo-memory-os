@@ -1,0 +1,55 @@
+// Shared adapter for existing non-streaming model call sites. This is a
+// server-only boundary, not an executor. Explicit owner is a trusted resolved
+// identity; an authenticated metering context is the alternative. Neither
+// model arguments nor public request JSON may choose this identity.
+import { currentMeterContext } from '@/lib/metering/core'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
+import { governedEnabled,openPersonalGovernedRuntimeForOwner,type GovernedRuntime } from './governed-runtime'
+type Env=Record<string,string|undefined>
+type Owner=string|number|null|undefined
+type Selection={kind:'legacy'}|{kind:'governed';owner:string}|{kind:'invalid'}
+export type ModelReceipt={model?:unknown;usage?:{input_tokens?:unknown;output_tokens?:unknown;cache_read_input_tokens?:unknown;cache_creation_input_tokens?:unknown}}
+export class GovernedModelError extends Error{
+  constructor(readonly reason:string){super('governed_model_'+reason);this.name='GovernedModelError'}
+}
+export function selectGovernedOwner(explicit:Owner,context:Owner,env:Env):Selection{
+  if(env.GOGO_HACHI_ENFORCEMENT!=='1')return {kind:'legacy'}
+  const a=exactSessionOwnerId(explicit),b=exactSessionOwnerId(context)
+  const chosen=a||b
+  const selected=[a,b].some(x=>x!==null&&governedEnabled('personal',x,env))
+  if(!selected)return {kind:'legacy'}
+  // Empty context is not an identity. A conflicting or malformed supplied
+  // identity must not cause an enabled owner to fall back to unmetered calls.
+  if(!chosen||(explicit!=null&&explicit!==''&&!a)||(context!=null&&context!==''&&!b)||(a&&b&&a!==b))return {kind:'invalid'}
+  return {kind:'governed',owner:chosen}
+}
+export function modelGoverned(explicit?:Owner):boolean{
+  return selectGovernedOwner(explicit,currentMeterContext()?.telegramId,process.env).kind!=='legacy'
+}
+type Deps={
+  selection:()=>Selection
+  open:(owner:string)=>Promise<GovernedRuntime|null>
+  now:()=>number
+}
+export async function governedModelCall<T>(model:string,invoke:(guarded:boolean)=>Promise<T>,receipt:(value:T)=>ModelReceipt,explicit?:Owner,deps?:Deps):Promise<T>{
+  const d=deps||{selection:()=>selectGovernedOwner(explicit,currentMeterContext()?.telegramId,process.env),open:openPersonalGovernedRuntimeForOwner,now:Date.now}
+  const selected=d.selection()
+  if(selected.kind==='legacy')return invoke(false)
+  if(selected.kind!=='governed')throw new GovernedModelError('identity_mismatch')
+  const deadline=d.now()+30_000
+  const runtime=await d.open(selected.owner).catch(()=>null)
+  if(!runtime)throw new GovernedModelError('policy_unavailable')
+  const result=await runtime.model(model,async()=>{
+    const value=await invoke(true)
+    const proof=receipt(value)
+    return {model:proof.model,usage:proof.usage,value}
+  },()=>d.now()<deadline)
+  if(result.state!=='completed')throw new GovernedModelError(result.reason)
+  return result.value.value
+}
+export function openAICompatibleReceipt(value:unknown):ModelReceipt{
+  // Prompt/total input counters already include cached input tokens. Do not
+  // count the cached subset a second time. Reasoning is included in output.
+  const r=value as {model?:unknown;usage?:{prompt_tokens?:unknown;completion_tokens?:unknown}}|null
+  return {model:r?.model,usage:{input_tokens:r?.usage?.prompt_tokens,output_tokens:r?.usage?.completion_tokens}}
+}
