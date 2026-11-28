@@ -3,6 +3,8 @@
 // dashboard queues reservation research in the background like WhatsApp.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'x'
 process.env.OPENAI_API_KEY ||= 'x'; process.env.ANTHROPIC_API_KEY ||= 'x'
 const be = await import('../lib/agent/booking-engine.ts')
@@ -52,6 +54,50 @@ assert.match(worker, /eq\('id',event\.id\)\.eq\('telegram_id',tg\)/)
 const route = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
 assert.match(route, /await queueRestaurantReservationResearch\(\{ actor, text, messageId: shadowEventId \}\)/)
 assert.doesNotMatch(route, /tryRunRestaurantReservation\(/, 'the dashboard no longer waits on provider pages inline')
+// Actual source helpers in an inert VM, not a live provider session.
+const sc=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
+const begin=sc.indexOf('function googleDiningPage('),end=sc.indexOf('function productLinkNeedsDetail(',begin)
+assert.ok(begin>0&&end>begin)
+const obs:any={}
+runInNewContext(ts.transpileModule(sc.slice(begin,end),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:obs,URL})
+const venue='1522 The Pub Malleshwara'
+const partner='https://www.eazydiner.com/bengaluru/1522-the-pub-malleshwaram-123456'
+const googlePage={url:'https://www.google.com/maps/reserve/v/dine/c/synthetic-review',title:venue+' - Google Maps',text:venue+' Party 2 Date Today Time 9:00 PM Continue with EazyDiner District Dining ₹15 deposit per person Swiggy',links:[{href:partner,text:'EazyDiner'}]}
+const observed=obs.googleDiningObservation(googlePage,venue)
+assert.equal(observed.links[0].url,partner)
+assert.equal(observed.partners.join('|'),'EazyDiner|District Dining|Swiggy')
+assert.equal(obs.googleDiningObservation({...googlePage,title:'1522 The Pub Koramangala',text:'1522 The Pub Koramangala Continue with EazyDiner'},venue),null)
+assert.equal(obs.googleDiningObservation({...googlePage,url:'https://google.com.evil.example/maps/reserve'},venue),null)
+const privateLink='https://reservex.explorex.co.in/manage/00000000-0000-0000-0000-000000000001'
+const privateResult=obs.googleDiningObservation({...googlePage,links:[{href:privateLink,text:'ReserveX'},{href:partner+'?token=secret',text:'EazyDiner'}]},venue)
+assert.equal(privateResult.links.length,0)
+assert.ok(!JSON.stringify(privateResult).includes(privateLink))
+const native=obs.googleDiningObservation({...googlePage,text:venue+' Your reservation Party of 2 Contact Info Fixture Guest Marketing preferences In partnership with EazyDiner Book',links:[]},venue)
+assert.equal(native.nativeReview,true)
+assert.equal(native.links.length,0)
+assert.ok(!JSON.stringify(native).includes('Fixture Guest'))
+assert.ok(!JSON.stringify(native).includes('synthetic-review'))
+const guardBegin=sc.indexOf('async function isConsequentialControl('),guardEnd=sc.indexOf('// 11 Oct live Playo runs:',guardBegin)
+assert.ok(guardBegin>0&&guardEnd>guardBegin)
+const guardSrc=sc.slice(guardBegin,guardEnd)
+async function guarded(label:string,where:string,flag:boolean,options:any={}){
+  const attrs:Record<string,string>={'aria-label':label,...options.attrs}
+  const el:any={tagName:options.tag||'BUTTON',href:options.href||'',disabled:false,form:options.form||null,textContent:label,innerText:label,id:'',
+    getAttribute:(k:string)=>attrs[k]??null,closest:(selector:string)=>selector==='form'?(options.form||null):null}
+  const page={url:()=>where,locator:()=>({first:()=>({evaluate:async(fn:any,arg:any)=>fn(el,arg)})})}
+  const call=runInNewContext(guardSrc+'\n;isConsequentialControl',{location:{href:where},document:{getElementById:()=>null}})
+  return call(page,'fixture',()=>{},undefined,flag)
+}
+const place='https://www.google.com/maps/place/1522+The+Pub+Malleshwara'
+assert.equal(await guarded('Reserve a table',place,true),false)
+assert.equal(await guarded('Reserve a table',place,false),true)
+assert.equal(await guarded('Book',place,true),true)
+assert.equal(await guarded('Reserve a table',place,true,{attrs:{type:'submit'}}),true)
+assert.equal(await guarded('Reserve a table',place,true,{form:{}}),true)
+assert.equal(await guarded('Reserve a table','https://www.google.com/maps/reserve/v/dine/c/test',true),true)
+assert.equal(await guarded('Reserve a table','https://example.com/maps/place/1522',true),true)
+assert.equal(await guarded('Reserve a table',place,true,{tag:'A',href:'https://example.com/reserve',attrs:{role:'button'}}),true)
+console.log('PASS Maps discovery reads only observed public links and opens only the scoped non-submit launcher')
 console.log('BOOKING_ENGINE_OK')
 
 // ---- Compare across apps (20 Oct: "search dineout the best options and rank them by discount") ----
