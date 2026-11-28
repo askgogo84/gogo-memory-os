@@ -46,7 +46,7 @@ export type LoopResult = {
   stop: 'final' | 'max_steps' | 'time' | 'error' | 'no_tool'
 }
 
-export const LOOP_LIMITS = { maxToolCalls: 6, maxMs: 25_000, toolMs: 8_000, resultChars: 4_000, callMs: 12_000 }
+export const LOOP_LIMITS = { maxToolCalls: 6, maxModelCalls: 11, maxBatchToolUses: 10, maxMs: 25_000, toolMs: 8_000, resultChars: 4_000, callMs: 12_000 }
 const clip = (v: unknown, n: number) => String(v ?? '').replace(/\u0000/g, '').slice(0, n)
 
 /** Owners in GOGO_BRAIN_LOOP_USERS (digits of their WhatsApp number, comma separated). Off unless set. */
@@ -146,6 +146,8 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
   let turns = 0
   const done = (stop: LoopResult['stop'], final: LoopResult['final'] = { kind: 'none', text: '' }): LoopResult =>
     ({ final, prepared: state.prepared, steps, turns, ms: clock() - t0, usd: estimateCostUsd(model, total), usage: total, stop, model })
+  // Overrides may tighten defaults only. Malformed limits fail before contacting a model.
+  if (Object.entries(L).some(([key, value]) => !Number.isSafeInteger(value) || value <= 0 || value > LOOP_LIMITS[key as keyof typeof LOOP_LIMITS])) return done('error')
   if (validateTools(p.tools).length) return done('error')
   const byName = new Map(p.tools.map(t => [t.name, t]))
   const toolDefs: Anthropic.Tool[] = [...p.tools.map(t => ({ name: t.name, description: `[${t.klass}] ${t.description}`, input_schema: t.input_schema })), ...TERMINAL, NOTHING_TOOL, ...(p.alreadyReplied ? [] : [HANDOFF_TOOL])]
@@ -160,6 +162,7 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
       // The whole pass ends by maxMs: each model call and each tool gets at most what is left.
       const left = () => L.maxMs - (clock() - t0)
       if (left() < 1500) return done('time')
+      if (turns >= L.maxModelCalls) return done('max_steps')
       turns++
       const c0 = clock()
       let res: any
@@ -169,6 +172,9 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
       try { p.onModelCall?.({ model, ms: clock() - c0, ok: true, usage: brainUsage(res) }) } catch { /* never */ }
       const content: any[] = Array.isArray(res?.content) ? res.content : []
       const uses = content.filter(b => b?.type === 'tool_use')
+      // Reject an oversized tool batch before performing any of its operations. A malformed
+      // or unrecognized call is still an attempt; it cannot bypass the step budget.
+      if (uses.length > L.maxBatchToolUses) return done('max_steps')
       if (!uses.length) {
         const plain = isAdaptiveOnlyModel(model) ? textOf(content).trim() : ''
         const tidy = plain ? stripUnrequestedAddress(clip(plain, 3000), (p.ctx.sections?.['Standing preferences'] || []).join('\n')).trim() : ''
@@ -190,7 +196,7 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
         const tool = byName.get(String(u.name)), s0 = clock()
         let out = '', ok = false, executed = false
         if (!tool) out = 'No such tool.'
-        else if (steps.filter(s => s.klass !== 'unknown').length >= L.maxToolCalls) out = 'Tool limit reached for this message. Finish with reply or ask.'
+        else if (steps.length >= L.maxToolCalls) out = 'Tool limit reached for this message. Finish with reply or ask.'
         else if (tool.klass === 'act') { out = p.mode === 'live' ? ACT_NOT_DONE : SHADOW_NOT_RUN; ok = true }
         else if (tool.klass === 'prepare' && (p.mode !== 'live' || !tool.run)) { out = p.mode === 'live' ? LIVE_PREPARE_NOT_RUN : SHADOW_NOT_RUN; ok = true }
         else if (left() < 500) out = 'Out of time for this message. Finish with reply or ask.'
