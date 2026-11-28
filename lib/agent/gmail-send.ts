@@ -182,12 +182,16 @@ function gmailApprovalPayload(draft:any,wire:boolean){
     (!draft.newMessage&&(typeof draft.threadId!=='string'||!/^[A-Za-z0-9_-]{1,200}$/.test(draft.threadId)))||
     (draft.inReplyTo!=null&&(typeof draft.inReplyTo!=='string'||/[\r\n]/.test(draft.inReplyTo)||draft.inReplyTo.length>500))||
     (draft.newMessage&&draft.inReplyTo))throw Error('gmail_send_wire_invalid')
-  return {...legacy,wireVersion:'gmail-wire-v2',newMessage:draft.newMessage===true,inReplyTo:draft.inReplyTo||null,wireBody:gmailSendWireBody(draft)}
+  const sender=String(draft.senderAccount||'').trim().toLowerCase()
+  if(!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(sender))throw Error('gmail_send_sender_unverified')
+  return {...legacy,wireVersion:'gmail-wire-v2',senderAccount:sender,newMessage:draft.newMessage===true,inReplyTo:draft.inReplyTo||null,wireBody:gmailSendWireBody(draft)}
 }
 
 
-async function stageApproval(actor:AgentActor,draft:any,learningText:string){
-  const wire=governedGmailWriteFor(actor),payload=gmailApprovalPayload(draft,wire)
+async function stageApproval(actor:AgentActor,draft:any,learningText:string,senderAccount?:string){
+  const wire=governedGmailWriteFor(actor)
+  if(wire){const sender=String(senderAccount||'').trim().toLowerCase();if(draft.senderAccount&&draft.senderAccount!==sender)throw Error('gmail_send_sender_changed');draft={...draft,senderAccount:sender}}
+  const payload=gmailApprovalPayload(draft,wire)
   const now=new Date().toISOString()
   const {data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({
     telegram_id:String(actor.legacyTelegramId),type:'gmail_send',capability:'email',status:'waiting_approval',
@@ -206,7 +210,7 @@ async function stageApproval(actor:AgentActor,draft:any,learningText:string){
     telegram_id:String(actor.legacyTelegramId),run_id:runId,action_type:'send_email',
     title:draft.newMessage?`Send email to ${draft.to}`:`Send email reply to ${draft.to}`,description:draft.newMessage?'This will send a new external Gmail email.':'This will send an external Gmail reply.',
     payload_preview:[
-      {label:'To',value:draft.to},{label:'Subject',value:draft.subject},{label:'Message',value:wire?draft.body:clean(draft.body,700)},{label:'Risk',value:'high'},
+      ...(wire?[{label:'From',value:draft.senderAccount}]:[]),{label:'To',value:draft.to},{label:'Subject',value:draft.subject},{label:'Message',value:wire?draft.body:clean(draft.body,700)},{label:'Risk',value:'high'},
     ],
     execution_payload:{plan_type:'gmail_send',capability:'email',threadId:draft.threadId,...(wire?{gmail_binding:'gmail-wire-v2'}:{})},
     risk_level:'high',status:'pending',...binding,
@@ -316,9 +320,9 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
       }
       return {runId:'gmail-send-unavailable',status:'paused' as const,capability:'email' as const,risk:'high' as const,text:'Your Gmail connection needs to be reconnected before I can send.',handledBy:'gmail-send'}
     }
-    const staged=await stageApproval(params.actor,state.payload.draft,params.text)
+    const staged=await stageApproval(params.actor,state.payload.draft,params.text,String(sendAccess.user?.gmail_email||''))
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
-    return {runId:staged.runId,status:'waiting_approval' as const,capability:'email' as const,risk:'high' as const,approvalId:staged.approvalId,approvalRequired:true,text:`📧 Ready to send — approval required\n\n${preview(state.payload.draft)}\n\nNothing has been sent yet. Reply *APPROVE* to send or *REJECT* to stop.`,handledBy:'gmail-send'}
+    return {runId:staged.runId,status:'waiting_approval' as const,capability:'email' as const,risk:'high' as const,approvalId:staged.approvalId,approvalRequired:true,text:`📧 Ready to send — approval required\n\n${governedGmailWriteFor(params.actor)?`From: ${String(sendAccess.user?.gmail_email||'').trim().toLowerCase()}\n`:''}${preview(state.payload.draft)}\n\nNothing has been sent yet. Reply *APPROVE* to send or *REJECT* to stop.`,handledBy:'gmail-send'}
   }
 
   const compose=parseGmailComposeCommand(raw)
@@ -335,7 +339,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
           :`I couldn't find an email address for “${clean(compose.target,60)}” in your recent mail. Send the address, like “draft an email to name@example.com saying …”. Nothing was drafted or sent.`,handledBy:'gmail-send'}
     }
     const written=composeDraftFromDictation(compose.target,compose.said)
-    const draft={newMessage:true,threadId:'',sourceMessageId:'',to:recipient.email,subject:written.subject,body:written.body,inReplyTo:null}
+    const draft={newMessage:true,threadId:'',sourceMessageId:'',to:recipient.email,subject:written.subject,body:written.body,inReplyTo:null,...(governedGmailWriteFor(params.actor)?{senderAccount:String(access.user?.gmail_email||'').trim().toLowerCase()}:{})}
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     await saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft',{draft,created_at:new Date().toISOString()})
     // 23 Oct live: after a new-email draft, "send it" answered "Please select the exact object…" because the typed
@@ -376,6 +380,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     subject:String(message.subject||resolved.match.thread.subject||'(No subject)'),
     body:parsed.body,
     inReplyTo:String(message.messageId||'')||null,
+    ...(governedGmailWriteFor(params.actor)?{senderAccount:String(resolved.access.user?.gmail_email||'').trim().toLowerCase()}:{})
   }
   if(!draft.to)return {runId:'gmail-reply-recipient-missing',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'I found the thread, but I could not safely resolve the recipient address. Give me the email address explicitly.',handledBy:'gmail-send'}
 
@@ -391,9 +396,9 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     const url=buildGmailSendConnectUrl(params.actor.legacyTelegramId)
     return {runId:'gmail-send-upgrade',status:'paused' as const,capability:'email' as const,risk:'high' as const,text:url?`I drafted the reply, but Gmail Send is not enabled yet. Approve the one-time upgrade here:\n${url}\n\nThen say *send it*. Nothing has been sent.`:'Gmail Send is not enabled yet.',handledBy:'gmail-send'}
   }
-  const staged=await stageApproval(params.actor,draft,params.text)
+  const staged=await stageApproval(params.actor,draft,params.text,String(sendAccess.user?.gmail_email||''))
   await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
-  return {runId:staged.runId,status:'waiting_approval' as const,capability:'email' as const,risk:'high' as const,approvalId:staged.approvalId,approvalRequired:true,text:`📧 Ready to send — approval required\n\n${preview(draft)}\n\nNothing has been sent yet. Reply *APPROVE* to send or *REJECT* to stop.`,handledBy:'gmail-send'}
+  return {runId:staged.runId,status:'waiting_approval' as const,capability:'email' as const,risk:'high' as const,approvalId:staged.approvalId,approvalRequired:true,text:`📧 Ready to send — approval required\n\n${governedGmailWriteFor(params.actor)?`From: ${String(sendAccess.user?.gmail_email||'').trim().toLowerCase()}\n`:''}${preview(draft)}\n\nNothing has been sent yet. Reply *APPROVE* to send or *REJECT* to stop.`,handledBy:'gmail-send'}
 }
 
 export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:string}){
@@ -414,6 +419,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   if(approvalError||!approval||approval.status!=='approved')throw new Error('gmail_send_approval_missing')
   if(!['queued','waiting_approval'].includes(String(run.status)))throw new Error('agent_run_already_claimed')
   const draft:any=(run.metadata_json as any)?.draft
+  if((run.metadata_json as any)?.gmail_binding==='gmail-wire-v2'&&!wire)throw Error('gmail_send_governance_changed')
   if(wire&&((run.metadata_json as any)?.gmail_binding!=='gmail-wire-v2'||!params.actor.userId))throw Error('gmail_send_fresh_exact_approval_required')
   if((!draft?.threadId&&!draft?.newMessage)||!draft?.to||!draft?.subject||!draft?.body)throw new Error('gmail_send_draft_missing')
   assertApprovalBinding({
@@ -431,6 +437,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
 
   const access=await gmailAccess(params.actor,{requireSend:true})
   if(!access.ok)throw new Error(access.reason||'gmail_send_unavailable')
+  if(wire&&String(access.user?.gmail_email||'').trim().toLowerCase()!==draft.senderAccount)throw Error('gmail_send_sender_changed')
 
   // Claim exactly once, after bound approval and credentials are validated. A
   // running/unknown/completed run is never eligible for an automatic retry.
@@ -458,7 +465,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
       }
       approvedFetch=(async(input,init)=>{
         if(typeof input!=='string'||!init)throw Error('gmail_send_wire_invalid')
-        return governedApprovedGmailFetch(input,init,tg,{actorId:params.actor.userId,expectedBody,authorize})
+        return governedApprovedGmailFetch(input,init,tg,{actorId:params.actor.userId,senderAccount:draft.senderAccount,expectedBody,authorize})
       }) as typeof fetch
     }
     mutationStarted=true

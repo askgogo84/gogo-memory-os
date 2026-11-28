@@ -38,10 +38,11 @@ export async function bindReviewedVoicePlan(owner:string,plan:CallPlan,whatsappI
 }
 export async function voiceBindingStillValid(owner:string,plan:CallPlan,from:string,whatsappId:string):Promise<boolean>{
   const next=await bindReviewedVoicePlan(owner,plan,whatsappId,from)
-  return !!next?.governedCall&&JSON.stringify(next.governedCall)===JSON.stringify(plan.governedCall)
+  const a=next?.governedCall,b=plan.governedCall
+  return !!a&&!!b&&a.version===b.version&&a.agentId===b.agentId&&a.from===b.from&&a.contact===b.contact&&a.maxSeconds===b.maxSeconds
 }
 export async function approvedVoiceRunAuthority(owner:string,actorId:string,plan:CallPlan,approvalHash:string,livePlan:()=>Promise<boolean>):Promise<boolean>{
-  if(!governedVoiceSelected(owner)||capabilityPaused('voice_calls')||!plan.governedCall||voicePlanHash(owner,plan)!==approvalHash||Date.now()-Date.parse(plan.createdAt)>=900000||Date.parse(plan.createdAt)>Date.now())return false
+  if(!governedVoiceSelected(owner)||capabilityPaused('voice_calls')||!plan.governedCall||voicePlanHash(owner,plan)!==approvalHash||!Number.isFinite(Date.parse(plan.createdAt))||Date.now()-Date.parse(plan.createdAt)>=900000||Date.parse(plan.createdAt)>Date.now())return false
   if(!['draft','ask','auto'].includes(await capabilityPermissionLevel(owner,'contacts')))return false
   const [user,run]=await Promise.all([
     supabaseAdmin.from('users').select('id,telegram_id,access_status,whatsapp_id').eq('id',actorId).eq('telegram_id',owner).maybeSingle(),

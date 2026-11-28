@@ -58,10 +58,10 @@ async function permission(owner:string,op:GoogleOperation):Promise<boolean>{
   // read consent is still required before any mailbox call.
   return await permitted('files')||await permitted('contacts')||(await gmailConsentState(owner))==='on'&&await permitted('email')
 }
-type SendAuthority={actorId:string;expectedBody:string;authorize:()=>Promise<boolean>}
-async function primarySendSnapshot(owner:string,actorId:string):Promise<CredentialSnapshot|null>{
-  const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status,gmail_connected,gmail_send_connected,gmail_refresh_token,gmail_access_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
-  if(r.error||String(r.data?.id||'')!==actorId||exactSessionOwnerId(r.data?.telegram_id)!==owner||r.data?.access_status!=='active'||r.data.gmail_connected!==true||r.data.gmail_send_connected!==true)return null
+type SendAuthority={actorId:string;senderAccount:string;expectedBody:string;authorize:()=>Promise<boolean>}
+async function primarySendSnapshot(owner:string,actorId:string,senderAccount:string):Promise<CredentialSnapshot|null>{
+  const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status,gmail_connected,gmail_send_connected,gmail_email,gmail_refresh_token,gmail_access_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
+  if(r.error||String(r.data?.id||'')!==actorId||exactSessionOwnerId(r.data?.telegram_id)!==owner||r.data?.access_status!=='active'||r.data.gmail_connected!==true||r.data.gmail_send_connected!==true||String(r.data.gmail_email||'').trim().toLowerCase()!==senderAccount)return null
   const refreshHashes=new Set<string>(),accessHashes=new Set<string>()
   addHash(refreshHashes,r.data.gmail_refresh_token);addHash(accessHashes,r.data.gmail_access_token)
   return {refreshHashes,accessHashes}
@@ -81,7 +81,7 @@ export async function governedGoogleFetch(operation:GoogleOperation,url:string,i
 // Only the existing claimed Gmail send executor may provide this trusted
 // callback and exact wire body. Read connectors cannot invoke this lane.
 export async function governedApprovedGmailFetch(url:string,init:RequestInit,owner:string,authority:SendAuthority,deps?:Deps):Promise<Response>{
-  if(!authority?.actorId||typeof authority.expectedBody!=='string'||typeof authority.authorize!=='function'||init.body!==authority.expectedBody)throw new GovernedModelError('exact_send_approval_required')
+  if(!authority?.actorId||typeof authority.senderAccount!=='string'||!authority.senderAccount.trim()||typeof authority.expectedBody!=='string'||typeof authority.authorize!=='function'||init.body!==authority.expectedBody)throw new GovernedModelError('exact_send_approval_required')
   return governedGoogleRequest('google.gmail.send',url,init,owner,deps,authority)
 }
 async function governedGoogleRequest(operation:GoogleOperation,url:string,init:RequestInit={},explicit?:string|number,deps?:Deps,send?:SendAuthority):Promise<Response>{
@@ -104,7 +104,7 @@ async function governedGoogleRequest(operation:GoogleOperation,url:string,init:R
     if(send&&(operation!=='google.gmail.send'||pinned.body!==send.expectedBody||await send.authorize()!==true))return false
     if(parent&&await parent.authorize()!==true)return false
     if(!(await (deps?.permission||permission)(owner,operation)))return false
-    const current=deps?await deps.snapshot(owner,which):send?await primarySendSnapshot(owner,send.actorId):await readCredentialSnapshot(owner,which)
+    const current=deps?await deps.snapshot(owner,which):send?await primarySendSnapshot(owner,send.actorId,send.senderAccount):await readCredentialSnapshot(owner,which)
     return !!current&&credentialAuthorized(request,owner,current,minted.get(runtime)?.get(hash(request.credential)),now())&&(!parent||await parent.authorize()===true)&&(!send||await send.authorize()===true)
   }
   const inTime=()=>now()<deadline&&!pinned.signal?.aborted&&(parent?parent.inTime():foreground?foregroundInTime(owner):!!deps)

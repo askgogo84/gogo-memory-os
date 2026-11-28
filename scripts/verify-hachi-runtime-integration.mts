@@ -279,7 +279,7 @@ assert.ok(googleRequestShape('google.gmail.send',gmailUrl,sendInit))
 await assert.rejects(()=>governedGoogleFetch('google.gmail.send',gmailUrl,sendInit,'101',connectorDeps),/exact_send_approval_required/)
 let sendLive=true,mailDispatches=0
 const mailDeps={...connectorDeps,fetcher:async()=>{mailDispatches++;return new Response(JSON.stringify({id:'sent-fixture',threadId:'fixture_thread'}))}}
-const authority={actorId:'fixture-user-uuid',expectedBody:sendBody,authorize:async()=>sendLive}
+const authority={actorId:'fixture-user-uuid',senderAccount:'fixture@example.test',expectedBody:sendBody,authorize:async()=>sendLive}
 await assert.rejects(()=>governedApprovedGmailFetch(gmailUrl,{...sendInit,body:JSON.stringify({raw:'tampered'})},'101',authority,mailDeps),/exact_send_approval_required/)
 sendLive=false
 await assert.rejects(()=>governedApprovedGmailFetch(gmailUrl,sendInit,'101',authority,mailDeps),/not_authorized/)

@@ -150,6 +150,7 @@ export function callPlanText(p: CallPlan) {
     `To: ${p.venue} · ${displayPhone(p.to)}${p.source ? ` (${p.source})` : ''}`,
     `From: ${displayPhone(p.governedCall?.from||DEFAULT_FROM_NUMBER)}`,
     `"Hi, I'm an AI assistant from AskGogo, calling for ${p.guestName}. ${p.opening || ''}"`,
+    ...(p.governedCall?['Maximum call duration: '+p.governedCall.maxSeconds+' seconds.']:[]),
     `What I'll do: ${p.purpose}`,
     `Details I may share: ${p.details || 'only what is above'}.`,
     `Name given on the call: ${p.guestName} (add "under the name …" to change it).`,
@@ -339,7 +340,7 @@ export function voiceWireBody(plan:CallPlan,agentId:string,contactNumber:string)
 }
 export async function placeCall(plan: CallPlan, contactNumber: string, fetchImpl: typeof fetch = fetch, owner?: string) {
   let agentId: string
-  if(plan.governedCall)agentId=plan.governedCall.agentId
+  if(plan.governedCall){if(fetchImpl===fetch)throw Error('governed_voice_boundary_required');agentId=plan.governedCall.agentId}
   else if (plan.callLanguage !== undefined || plan.voiceAgentId !== undefined) {
     const { sarvamCallProfile } = await import('./voice-call-language')
     const profile = sarvamCallProfile(owner,plan.callLanguage,plan.kind ?? 'table')
@@ -714,6 +715,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     const contact = params.actor.whatsappId ? '+' + String(params.actor.whatsappId).replace(/\D/g, '') : ''
     const env=(globalThis as any).process?.env||{}
     const governed=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(String(tg))
+    if(plan.governedCall&&!governed)return {text:'That call plan was approved under a different calling policy. Nothing was called. A new reviewed plan is required.',handledBy:'voice-call'}
     let place=()=>placeCall(plan,contact,fetch,String(tg))
     if(governed){
       const gv=await import('./governed-voice'),provider=await import('./governed-provider-call')
@@ -735,7 +737,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       shownText: await latestAssistantText(tg), expectedText: callPlanText(plan), surface: params.surface,
       db: supabaseAdmin, place })
     if (placement.status === 'outcome_unknown') return { text: `The call to ${plan.venue} may have started, but I couldn't confirm its status. I haven't repeated it. Check the task before trying again.`, handledBy: 'voice-call' }
-    if (placement.status === 'rejected') return { text: `The calling provider rejected this attempt to ${plan.venue}. Nothing was called or booked. Ask for a fresh call plan to try again.`, handledBy: 'voice-call' }
+    if (placement.status === 'rejected') return { text: placement.reason==='governed_dispatch_denied'?'The call was blocked by the current approval, policy or budget. Nothing was called.':`The calling provider rejected this attempt to ${plan.venue}. Nothing was called or booked. Ask for a fresh call plan to try again.`, handledBy: 'voice-call' }
     if (placement.status === 'blocked') return { text: placement.reason === 'call_already_attempted' || placement.reason === 'previous_call_requires_reconciliation'
       ? `That call has already been attempted or still needs its outcome checked. I won't call again until that is resolved.`
       : `I couldn't safely start that call. Ask for a fresh call plan and approve the exact details again. Nothing new was called.`, handledBy: 'voice-call' }
@@ -804,7 +806,8 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
         return {text:`To call ${callee} I need their number. Please resend the entire request with the business number. Nothing was called.`,handledBy:'voice-call'}
       }
       const hit = { phone: general.phone, source: known ? known.source : 'the number you gave' }
-      const brief = await compileCallAsk(general.ask, general.venue, guestName)
+      const selectedForPlan=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&String((globalThis as any).process?.env?.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(String(tg))
+      const brief = selectedForPlan?fallbackCallBrief(general.ask,guestName):await compileCallAsk(general.ask, general.venue, guestName)
       plan = { ...voiceProfile, venue: general.venue, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
         purpose: brief.task, opening: brief.opening, details: brief.details, kind: 'general', test: false, redials: 0, createdAt: now }
       if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&String((globalThis as any).process?.env?.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(String(tg))){
@@ -914,6 +917,10 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
     let exec: any
     const env=(globalThis as any).process?.env||{}
     const governed=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(owner)
+    if(plan?.governedCall&&!governed){
+      await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'The approved call requires reconciliation because its calling policy changed. It was not repeated.',metadata_json:{...meta,outcome_state:'unknown',reconciliation_required:true},updated_at:new Date().toISOString()}).eq('id',run.id).eq('telegram_id',owner).eq('status','running').is('metadata_json->>result_claim',null)
+      continue
+    }
     try {
       exec=governed?await import('./governed-voice').then(m=>m.governedVoiceStatus(owner,String(run.id),String(meta.execution_id))):await getExecution(String(meta.execution_id))
     } catch (err: any) {
@@ -953,10 +960,15 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
         outcome = parseOutcome(r?.text || '')
       }
     }
+    // A model interpretation alone is not an independent booking confirmation.
+    // Keep a selected call's outcome unresolved rather than save a booking or
+    // invite a redial when the provider supplies no verified booking receipt.
+    const governedOutcomeUnverified=governed&&status==='completed'&&!plan.test
+    if(governedOutcomeUnverified)outcome=null
     let saved = { saved: false, reminderScheduled: false }
     // A general call (room, appointment, enquiry) is reported, never written to My bookings as a table.
     if (status === 'completed' && outcome?.booked && !plan.test && plan.kind !== 'general') saved = await recordPhoneBooking(owner, String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return { saved: false, reminderScheduled: false } })
-    const outcomeUncertain = !TERMINAL.has(status) || (status !== 'completed' && Boolean(transcript.trim()))
+    const outcomeUncertain = governedOutcomeUnverified || !TERMINAL.has(status) || (status !== 'completed' && Boolean(transcript.trim()))
     const text = !outcomeUncertain ? callResultText(plan, status, outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '', saved.saved, saved.reminderScheduled) : `I couldn't confirm the outcome of the call to ${plan.venue}. I haven't repeated it. Check the task before trying again.`
     const at = new Date().toISOString()
     const { data: finalized, error: finalizeError } = await supabaseAdmin.from('agent_runs').update({ status: outcomeUncertain ? 'outcome_unknown' : status === 'completed' ? 'completed' : 'failed', progress: 100, summary: text.slice(0, 500), completed_at: at, updated_at: at,
@@ -964,7 +976,9 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
     if (finalizeError || !finalized) continue
     const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id,telegram_id').eq('telegram_id', ownerKey).maybeSingle()
     const ownUser = user && (user.telegram_id == null || String(user.telegram_id) === owner) ? user : null
-    try { if (ownUser?.whatsapp_id) await deps.send(String(ownUser.whatsapp_id), text) } catch {}
+    // Selected accounts must not bypass the priced delivery boundary via a
+    // raw WhatsApp SDK send. Result is durable in Activity/conversation.
+    try { if (!governed&&ownUser?.whatsapp_id) await deps.send(String(ownUser.whatsapp_id), text) } catch {}
     await supabaseAdmin.from('conversations').insert({ telegram_id: ownerKey, role: 'assistant', content: text })
     done++
   }
