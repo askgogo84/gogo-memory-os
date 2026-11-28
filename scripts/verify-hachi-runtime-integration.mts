@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict'
+import {createHash} from 'node:crypto'
+import {readFileSync} from 'node:fs'
+import {runInNewContext} from 'node:vm'
+import ts from 'typescript'
+import {exactSessionOwnerId} from '../lib/dashboard/owner-identity'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
 const {makeGovernedRuntime,verifiedCeiling,meteredUsage,governedEnabled}=await import('../lib/agent/governed-runtime')
@@ -344,3 +349,126 @@ moveAllowed=true
 assert.equal((await governedApprovedCalendarMoveFetch(moveUrl,moveInit,'101',moveAuthority,moveDeps)).status,200)
 assert.equal(moveDispatches,1)
 console.log('Calendar exact event/version/time approval boundary passed in inert fixture')
+
+// Run the database-facing source with a closed fake PostgREST client. Raw bigint
+// JSON rounds adjacent IDs, while an explicit text projection preserves them.
+function isolateCalendarQueries(path:string,names:string[],bindings:Record<string,unknown>){
+  const source=ts.createSourceFile(path,readFileSync(path,'utf8'),ts.ScriptTarget.Latest,true)
+  const code=names.map(name=>{
+    const declaration=source.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name)
+    assert.ok(declaration,`Missing ${name} in ${path}`)
+    return declaration.getText(source)
+  }).join('\n')
+  const js=ts.transpileModule(`${code}\nObject.assign(exports,{${names.join(',')}})`,{
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}
+  }).outputText
+  const exports:Record<string,(...args:any[])=>Promise<any>>={}
+  runInNewContext(js,{...bindings,exports})
+  return exports
+}
+const exactOwner='9223372036854775807',adjacentOwner='9223372036854775806'
+assert.equal(Number(exactOwner),Number(adjacentOwner))
+const calendarActor={userId:'fixture-user-uuid',legacyTelegramId:101}
+const activeCalendarRow={id:calendarActor.userId,telegram_id:'101',access_status:'active',google_calendar_connected:true,google_refresh_token:'refresh-fixture'}
+let calendarRow:Record<string,unknown>|null=activeCalendarRow
+let tokenRefreshes=0
+const calendarQueries:{table:string;fields:string;filters:Record<string,unknown>}[]=[]
+const calendarDb={from(table:string){return {select(fields:string){
+  const filters:Record<string,unknown>={}
+  const query={
+    eq(key:string,value:unknown){filters[key]=value;return query},
+    async maybeSingle(){
+      assert.equal(table,'users')
+      calendarQueries.push({table,fields,filters})
+      if(!calendarRow)return {data:null,error:null}
+      const data=Object.fromEntries(fields.split(',').map(field=>{
+        const key=field.replace(/::text$/,'')
+        return [key,field==='telegram_id'?Number(calendarRow?.[key]):calendarRow?.[key]]
+      }))
+      return {data,error:null}
+    },
+    async limit(limit:number){
+      assert.equal(table,'google_calendar_accounts');assert.equal(limit,21)
+      calendarQueries.push({table,fields,filters})
+      return {data:[],error:null}
+    }
+  }
+  return query
+}}}}
+const calendarBindings={supabaseAdmin:calendarDb,exactSessionOwnerId,createHash,decryptGoogleToken:(value:string)=>value}
+const {calendarAccessForUpdate}=isolateCalendarQueries('lib/agent/calendar-update.ts',[
+  'governedCalendarSelected','calendarAccessForUpdate'
+],{
+  ...calendarBindings,process:{env:{GOGO_HACHI_ENFORCEMENT:'1',GOGO_HACHI_PERSONAL_OWNERS:'101,9223372036854776000'}},
+  currentGovernedForeground:()=>null,
+  capabilityPermissionLevel:async()=> 'ask',
+  refreshAccessToken:async(token:string)=>{assert.equal(token,'refresh-fixture');tokenRefreshes++;return 'access-fixture'}
+})
+for(const readOnly of [true,false]){
+  calendarRow=activeCalendarRow
+  assert.equal((await calendarAccessForUpdate(calendarActor,readOnly)).token,'access-fixture')
+  assert.match(calendarQueries.at(-1)?.fields||'',/\btelegram_id::text\b/)
+  assert.deepEqual(calendarQueries.at(-1)?.filters,{telegram_id:'101',id:calendarActor.userId})
+  for(const badRow of [null,{...activeCalendarRow,telegram_id:101},{...activeCalendarRow,telegram_id:'0101'},
+    {...activeCalendarRow,telegram_id:'102'},{...activeCalendarRow,id:'foreign'},{...activeCalendarRow,access_status:'disabled'}]){
+    calendarRow=badRow
+    await assert.rejects(()=>calendarAccessForUpdate(calendarActor,readOnly),/calendar_owner_unverified/)
+  }
+}
+const beforeUnsafe=calendarQueries.length
+await assert.rejects(()=>calendarAccessForUpdate({...calendarActor,legacyTelegramId:Number(exactOwner)}),/calendar_owner_unverified/)
+assert.equal(calendarQueries.length,beforeUnsafe)
+assert.equal(tokenRefreshes,2)
+
+const {readCredentialSnapshot,primaryMoveSnapshot}=isolateCalendarQueries('lib/agent/governed-google-read.ts',[
+  'nonemptyHash','addHash','readCredentialSnapshot','primaryMoveSnapshot'
+],{...calendarBindings,hash:fingerprint})
+for(const owner of [exactOwner,adjacentOwner,'-9223372036854775808']){
+  calendarRow={...activeCalendarRow,telegram_id:owner}
+  const snapshots=await Promise.all([
+    readCredentialSnapshot(owner,'calendar'),primaryMoveSnapshot(owner,calendarActor.userId,moveAuthority.credentialKey)
+  ])
+  for(const snapshot of snapshots)assert.equal(snapshot?.refreshHashes.has(moveAuthority.credentialKey),true)
+}
+for(const telegram_id of [adjacentOwner,Number(exactOwner),'invalid','9223372036854775808']){
+  calendarRow={...activeCalendarRow,telegram_id}
+  assert.equal(await readCredentialSnapshot(exactOwner,'calendar'),null)
+  assert.equal(await primaryMoveSnapshot(exactOwner,calendarActor.userId,moveAuthority.credentialKey),null)
+}
+calendarRow={...activeCalendarRow,telegram_id:exactOwner,id:'foreign'}
+assert.equal(await primaryMoveSnapshot(exactOwner,calendarActor.userId,moveAuthority.credentialKey),null)
+console.log('Calendar access and credential gates preserve exact owner IDs and reject invalid readbacks before dispatch')
+
+const {updateCalendarEvent,fetchPrimaryCalendarEventResponse}=await import('../lib/services/google-calendar')
+const priorCalendarFetch=globalThis.fetch
+let rawCalendarReads=0,acceptedCalendarPatches=0
+const startTime='2026-12-01T10:00:00Z',endTime='2026-12-01T11:00:00Z'
+try{
+  globalThis.fetch=async input=>{
+    assert.equal(input,moveUrl)
+    rawCalendarReads++
+    return Response.json({id:'fixture-event',status:'confirmed',start:{dateTime:startTime},end:{dateTime:endTime}})
+  }
+  process.env.GOGO_HACHI_ENFORCEMENT='1'
+  process.env.GOGO_HACHI_PERSONAL_OWNERS='101'
+  await withGovernedForeground(async()=>{
+    bindGovernedForegroundOwner('101')
+    const patch=await updateCalendarEvent('access-fixture','fixture-event',{startTime,endTime,ifMatch:'"fixture-etag"'},async(input,init)=>{
+      assert.equal(input,moveUrl);assert.equal(init?.method,'PATCH')
+      acceptedCalendarPatches++
+      process.env.GOGO_HACHI_ENFORCEMENT='0'
+      return Response.json({id:'fixture-event',status:'confirmed'})
+    })
+    assert.equal(patch.verification,'unknown')
+    await assert.rejects(()=>fetchPrimaryCalendarEventResponse('access-fixture','fixture-event'),/connector_identity_mismatch/)
+    assert.equal(rawCalendarReads,0)
+  })
+  assert.equal(acceptedCalendarPatches,1)
+  assert.equal((await fetchPrimaryCalendarEventResponse('access-fixture','fixture-event')).ok,true)
+  assert.equal(rawCalendarReads,1)
+}finally{
+  globalThis.fetch=priorCalendarFetch
+  if(savedEnforcement===undefined)delete process.env.GOGO_HACHI_ENFORCEMENT;else process.env.GOGO_HACHI_ENFORCEMENT=savedEnforcement
+  if(savedOwners===undefined)delete process.env.GOGO_HACHI_PERSONAL_OWNERS;else process.env.GOGO_HACHI_PERSONAL_OWNERS=savedOwners
+}
+console.log('Calendar PATCH verification stays unknown after pinned governance is revoked, with zero legacy readbacks')

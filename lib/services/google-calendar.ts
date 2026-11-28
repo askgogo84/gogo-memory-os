@@ -1,10 +1,17 @@
-
-async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
-  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,init)
-  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
-}
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
+import { currentGovernedForeground, currentGovernedRun } from '@/lib/agent/governed-run-context'
+
+async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
+  if(process.env.GOGO_HACHI_ENFORCEMENT!=='1'&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return fetch(url,init)
+  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
+}
+
+export function fetchPrimaryCalendarEventResponse(accessToken:string,eventId:string){
+  return governedRead('google.calendar.read',
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {headers:{Authorization:`Bearer ${accessToken}`},cache:'no-store'})
+}
 
 const CALENDAR_CALLBACK_URL = 'https://app.askgogo.in/api/calendar/callback'
 const CALENDAR_STATE_TTL_MS = 10 * 60 * 1000
@@ -307,9 +314,9 @@ export async function updateCalendarEvent(
   )
   const data = await response.json().catch(() => ({}))
   if (!response.ok) return { ok: false, verification: [400,401,403,404,409,410,412,422,429].includes(response.status) ? 'rejected' : 'unknown', error: data?.error?.message || `HTTP ${response.status}` }
-  const readback = await governedRead('google.calendar.read',`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
-  const actual = await readback.json().catch(() => null)
-  const matches = readback.ok && actual?.id === eventId && actual?.status !== 'cancelled'
+  const readback = await fetchPrimaryCalendarEventResponse(accessToken,eventId).catch(() => null)
+  const actual = readback?.ok ? await readback.json().catch(() => null) : null
+  const matches = readback?.ok && actual?.id === eventId && actual?.status !== 'cancelled'
     && (!patch.startTime || Date.parse(actual?.start?.dateTime) === Date.parse(patch.startTime))
     && (!patch.endTime || Date.parse(actual?.end?.dateTime) === Date.parse(patch.endTime))
     && (!patch.summary || actual?.summary === patch.summary)

@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { refreshAccessToken, updateCalendarEvent, fetchPrimaryCalendarAccount } from '@/lib/google-calendar'
+import { refreshAccessToken, updateCalendarEvent, fetchPrimaryCalendarAccount, fetchPrimaryCalendarEventResponse } from '@/lib/google-calendar'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { capabilityPermissionLevel } from './adaptive-autonomy'
 import { recordDecisionLearning } from './decision-learning'
@@ -10,6 +10,7 @@ import type { AgentActor } from './actor'
 import {createHash} from 'node:crypto'
 import {decryptGoogleToken} from '@/lib/security/google-token-crypto'
 import {exactSessionOwnerId} from '@/lib/dashboard/owner-identity'
+import {bindGovernedForegroundOwner, currentGovernedForeground, currentGovernedRun, withGovernedForeground} from './governed-run-context'
 
 export type CalendarUpdate={eventId:string;title:string;oldStart:string;oldEnd:string;startIso:string;endIso:string;etag:string;timezone:string;calendarAccount?:string;governanceVersion?:'calendar-move-v1'}
 const reply=(text:string,status:string,runId='')=>({text,status,runId,handledBy:'calendar-update',capability:'calendar' as const,risk:'medium' as const})
@@ -19,12 +20,21 @@ export async function calendarAccessForUpdate(actor:AgentActor,readOnly=false){
   const level=await capabilityPermissionLevel(actor.legacyTelegramId,'calendar')
   if(level==='off'||(!readOnly&&(level==='read'||level==='draft')))throw new Error('permission_insufficient')
   const governed=governedCalendarSelected(actor)
-  let q=supabaseAdmin.from('users').select(governed?'id,telegram_id,access_status,google_calendar_connected,google_refresh_token,timezone':'google_calendar_connected,google_refresh_token,timezone').eq('telegram_id',actor.legacyTelegramId)
-  if(governed){if(!actor.userId)throw Error('calendar_owner_unverified');q=q.eq('id',actor.userId)}
-  const {data,error}=await q.maybeSingle()
+  const owner=actor.legacyTelegramId
+  const ownerId=governed?exactSessionOwnerId(owner):null
+  if(governed&&(!actor.userId||!ownerId))throw new Error('calendar_owner_unverified')
+  if(governed&&ownerId&&currentGovernedForeground())bindGovernedForegroundOwner(ownerId,true)
+  const query=supabaseAdmin.from('users')
+  const {data,error}=await (governed&&ownerId
+    ? query.select('id,telegram_id::text,access_status,google_calendar_connected,google_refresh_token,timezone')
+      .eq('telegram_id',ownerId).eq('id',actor.userId).maybeSingle()
+    : query.select('google_calendar_connected,google_refresh_token,timezone').eq('telegram_id',owner).maybeSingle())
   if(error)throw new Error('calendar_account_read_failed')
+  if(governed&&(!data||!('id' in data)||data.id!==actor.userId||
+    typeof data.telegram_id!=='string'||exactSessionOwnerId(data.telegram_id)!==ownerId||data.access_status!=='active')){
+    throw new Error('calendar_owner_unverified')
+  }
   if(!data?.google_calendar_connected||!data.google_refresh_token)throw new Error('calendar_not_connected')
-  if(governed&&(String((data as any).id||'')!==actor.userId||exactSessionOwnerId((data as any).telegram_id)!==String(actor.legacyTelegramId)||(data as any).access_status!=='active'))throw Error('calendar_owner_unverified')
   const credential=governed?decryptGoogleToken(data.google_refresh_token):null
   if(governed&&!credential)throw Error('calendar_token_unavailable')
   const credentialKey=credential?createHash('sha256').update(credential).digest('hex'):null
@@ -33,9 +43,7 @@ export async function calendarAccessForUpdate(actor:AgentActor,readOnly=false){
   return {token,timezone:String(data.timezone||'Asia/Kolkata'),level,credentialKey}
 }
 export async function readExactCalendarEvent(token:string,eventId:string){
-  const url=`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`
-  const init={headers:{Authorization:`Bearer ${token}`},cache:'no-store' as const}
-  const r=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'?await (await import('./governed-google-read')).governedGoogleFetch('google.calendar.read',url,init):await fetch(url,init)
+  const r=await fetchPrimaryCalendarEventResponse(token,eventId)
   if(!r.ok)throw new Error('calendar_event_unavailable')
   const event=await r.json()
   if(event.id!==eventId||event.status==='cancelled')throw new Error('calendar_event_identity_mismatch')
@@ -69,8 +77,8 @@ export async function stageCalendarUpdate(actor:AgentActor,draft:CalendarUpdate,
 export async function executeApprovedCalendarUpdate({actor,runId}:{actor:AgentActor;runId:string}){
   const tg=String(actor.legacyTelegramId),governed=governedCalendarSelected(actor)
   if(governed){
-    const ctx=await import('./governed-run-context')
-    if(!ctx.currentGovernedRun()&&!ctx.currentGovernedForeground())return ctx.withGovernedForeground(async()=>{ctx.bindGovernedForegroundOwner(tg,true);return executeApprovedCalendarUpdate({actor,runId})})
+    if(currentGovernedForeground())bindGovernedForegroundOwner(tg,true)
+    else if(!currentGovernedRun())return withGovernedForeground(async()=>{bindGovernedForegroundOwner(tg,true);return executeApprovedCalendarUpdate({actor,runId})})
   }
   const [{data:run,error},{data:approval,error:ae}]=await Promise.all([
     supabaseAdmin.from('agent_runs').select('id,status,metadata_json').eq('telegram_id',tg).eq('id',runId).maybeSingle(),
@@ -80,7 +88,8 @@ export async function executeApprovedCalendarUpdate({actor,runId}:{actor:AgentAc
   if(!['queued','waiting_approval'].includes(run.status))throw new Error('agent_run_already_claimed')
   const draft:CalendarUpdate=run.metadata_json?.draft
   if(run.metadata_json?.plan_type!=='calendar_update'||!draft?.eventId||!draft.etag)throw new Error('calendar_update_payload_invalid')
-  if(governed!==(draft.governanceVersion==='calendar-move-v1')||governed&&!draft.calendarAccount)throw Error('calendar_fresh_exact_approval_required')
+  if(governed!==(draft.governanceVersion==='calendar-move-v1')||governed&&!draft.calendarAccount||
+    !governed&&(currentGovernedRun()||currentGovernedForeground()?.governanceRequired))throw Error('calendar_fresh_exact_approval_required')
   assertApprovalBinding(binding(runId,draft),approval)
   const {token,level,credentialKey}=await calendarAccessForUpdate(actor)
   if(governed&&(!credentialKey||(await fetchPrimaryCalendarAccount(token))?.trim().toLowerCase()!==draft.calendarAccount))throw Error('calendar_approved_account_changed')

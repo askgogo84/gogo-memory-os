@@ -24,8 +24,8 @@ function nonemptyHash(raw:unknown):string|null{
 }
 function addHash(set:Set<string>,value:unknown){const key=nonemptyHash(value);if(key)set.add(key)}
 async function readCredentialSnapshot(owner:string,which:Family):Promise<CredentialSnapshot|null>{
-  const r=await supabaseAdmin.from('users').select('telegram_id,access_status,google_calendar_connected,google_refresh_token,gmail_connected,gmail_refresh_token,gmail_access_token').eq('telegram_id',owner).maybeSingle()
-  if(r.error||exactSessionOwnerId(r.data?.telegram_id)!==owner||r.data?.access_status!=='active')return null
+  const r=await supabaseAdmin.from('users').select('telegram_id::text,access_status,google_calendar_connected,google_refresh_token,gmail_connected,gmail_refresh_token,gmail_access_token').eq('telegram_id',owner).maybeSingle()
+  if(r.error||typeof r.data?.telegram_id!=='string'||exactSessionOwnerId(r.data.telegram_id)!==owner||r.data.access_status!=='active')return null
   const refreshHashes=new Set<string>(),accessHashes=new Set<string>()
   if(which==='calendar'){
     if(r.data.google_calendar_connected===true)addHash(refreshHashes,r.data.google_refresh_token)
@@ -63,13 +63,13 @@ type SendAuthority={actorId:string;senderAccount:string;expectedBody:string;auth
 type MoveAuthority={actorId:string;credentialKey:string;expectedUrl:string;expectedBody:string;expectedEtag:string;authorize:()=>Promise<boolean>}
 type WriteAuthority=({kind:'gmail'}&SendAuthority)|({kind:'calendar'}&MoveAuthority)
 async function primaryMoveSnapshot(owner:string,actorId:string,credentialKey:string):Promise<CredentialSnapshot|null>{
-  const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status,google_calendar_connected,google_refresh_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
-  if(r.error||String(r.data?.id||'')!==actorId||exactSessionOwnerId(r.data?.telegram_id)!==owner||r.data?.access_status!=='active'||r.data.google_calendar_connected!==true||nonemptyHash(r.data.google_refresh_token)!==credentialKey)return null
+  const r=await supabaseAdmin.from('users').select('id,telegram_id::text,access_status,google_calendar_connected,google_refresh_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
+  if(r.error||r.data?.id!==actorId||typeof r.data.telegram_id!=='string'||exactSessionOwnerId(r.data.telegram_id)!==owner||r.data.access_status!=='active'||r.data.google_calendar_connected!==true||nonemptyHash(r.data.google_refresh_token)!==credentialKey)return null
   return {refreshHashes:new Set([credentialKey]),accessHashes:new Set<string>()}
 }
 async function primarySendSnapshot(owner:string,actorId:string,senderAccount:string):Promise<CredentialSnapshot|null>{
-  const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status,gmail_connected,gmail_send_connected,gmail_email,gmail_refresh_token,gmail_access_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
-  if(r.error||String(r.data?.id||'')!==actorId||exactSessionOwnerId(r.data?.telegram_id)!==owner||r.data?.access_status!=='active'||r.data.gmail_connected!==true||r.data.gmail_send_connected!==true||String(r.data.gmail_email||'').trim().toLowerCase()!==senderAccount)return null
+  const r=await supabaseAdmin.from('users').select('id,telegram_id::text,access_status,gmail_connected,gmail_send_connected,gmail_email,gmail_refresh_token,gmail_access_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
+  if(r.error||r.data?.id!==actorId||typeof r.data.telegram_id!=='string'||exactSessionOwnerId(r.data.telegram_id)!==owner||r.data.access_status!=='active'||r.data.gmail_connected!==true||r.data.gmail_send_connected!==true||String(r.data.gmail_email||'').trim().toLowerCase()!==senderAccount)return null
   const refreshHashes=new Set<string>(),accessHashes=new Set<string>()
   addHash(refreshHashes,r.data.gmail_refresh_token);addHash(accessHashes,r.data.gmail_access_token)
   return {refreshHashes,accessHashes}

@@ -72,7 +72,7 @@ assert.equal((await read(true,{from:narrow.until,until:narrow.from})).reservatio
 // needed above; a mocked final context object alone cannot prove that contract.
 const google:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/services/google-calendar.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
- {exports:google,require:()=>({}),Date:FixtureDate,URLSearchParams,console,process:{env:{}},fetch:async(url:string,options:any)=>{
+ {exports:google,require:(name:string)=>name==='@/lib/agent/governed-run-context'?{currentGovernedRun:()=>null,currentGovernedForeground:()=>null}:{},Date:FixtureDate,URLSearchParams,console,process:{env:{}},fetch:async(url:string,options:any)=>{
   assert.match(url,/^https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/primary\/events\?/)
   const token=options.headers.Authorization
   assert.ok(['Bearer inert-new-york','Bearer inert-kolkata'].includes(token))
