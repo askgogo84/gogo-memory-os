@@ -161,4 +161,45 @@ await withGovernedPersonalRun('101',searchRt,()=>true,async()=>{
     assert.equal(await authorizeGovernedFetch(url,init,fixtureEnv),'provider')
   })
 })
+// Foreground budget is one lazy run across model and search calls, even
+// concurrent initial attempts. No independent fallback after a failed open.
+const {withGovernedForeground,bindGovernedForegroundOwner,currentGovernedForeground,foregroundRuntime}=await import('../lib/agent/governed-run-context')
+let opens=0
+const sharedDeps={...adapterDeps,open:async()=>{opens++;return searchRt}}
+const sharedSearch={...searchDeps,open:sharedDeps.open}
+await withGovernedForeground(async()=>{
+  bindGovernedForegroundOwner('101')
+  const result=await Promise.all([governedModelCall(price.model,async()=>response,x=>x,'101',sharedDeps),governedSearchFetch('tavily.basic.v1',url,init,sharedSearch)])
+  assert.equal(result[0].model,price.model);assert.equal(result[1].status,200)
+  assert.equal(opens,1,'one foreground budget even with concurrent first calls')
+  reserve='steps'
+  const callsBefore=searchCalls
+  await assert.rejects(()=>governedSearchFetch('tavily.basic.v1',url,init,sharedSearch),/governed_model_steps/)
+  assert.equal(searchCalls,callsBefore)
+  assert.equal(opens,1)
+  assert.throws(()=>bindGovernedForegroundOwner('102'),/foreground_identity/)
+  reserve='reserved'
+})
+assert.equal(currentGovernedForeground(),null)
+await withGovernedForeground(async()=>{
+  bindGovernedForegroundOwner('101')
+  const absent=await foregroundRuntime('101',async()=>{opens++;return null})
+  assert.equal(absent,null)
+  assert.equal(await foregroundRuntime('101',async()=>{opens++;return searchRt}),null)
+  assert.equal(opens,2)
+})
+const {withTrustedMeterWrite}=await import('../lib/agent/governed-outbound-fence')
+let deferred:Promise<unknown>|undefined,release!:()=>void
+const trigger=new Promise<void>(r=>{release=r})
+await withGovernedPersonalRun('101',searchRt,()=>true,async()=>{
+  await withReservedOutbound('model','claude-fixture',async()=>{
+    deferred=trigger.then(()=>withTrustedMeterWrite(async()=>{
+      assert.equal(await authorizeGovernedFetch('https://fixture.supabase.co/rest/v1/admin_rate_card?select=key',{method:'GET'},fixtureEnv),'database')
+      assert.equal(await authorizeGovernedFetch('https://fixture.supabase.co/rest/v1/admin_cost_events',{method:'POST'},fixtureEnv),'database')
+      await assert.rejects(()=>authorizeGovernedFetch('https://fixture.supabase.co/rest/v1/users',{method:'GET'},fixtureEnv),/meter_egress_denied/)
+      await assert.rejects(()=>authorizeGovernedFetch('https://api.anthropic.com/v1/messages',{method:'POST'},fixtureEnv),/meter_egress_denied/)
+    }))
+  })
+})
+release();await deferred
 console.log('Hachi scoped runtime boundary fixtures passed')

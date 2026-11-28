@@ -157,8 +157,13 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
   // opening a policy-backed run is mandatory; never fall back to unmetered calls.
   const env=(globalThis as any).process?.env||{}
   const selected=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(p.actor.legacyTelegramId))
+  if((selected||governed)&&p.mode==='shadow'){governance={reason:'shadow_disabled'};return done('final',{kind:'nothing',text:''})}
   if(selected&&!governed){
-    try{governed=(await import('./governed-runtime').then(m=>m.openPersonalGovernedRuntime(p.actor)))||undefined}catch{/* fail closed */}
+    try{
+      const c=await import('./governed-run-context'),m=await import('./governed-runtime'),owner=String(p.actor.legacyTelegramId)
+      const foreground=c.currentGovernedForeground()
+      governed=(foreground&&!foreground.closed?await c.foregroundRuntime(owner,()=>m.openPersonalGovernedRuntime(p.actor)):await m.openPersonalGovernedRuntime(p.actor))||undefined
+    }catch{/* fail closed */}
     if(!governed){governance={reason:'policy_unavailable'};return done('error')}
   }
   const byName = new Map(p.tools.map(t => [t.name, t]))

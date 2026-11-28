@@ -1,7 +1,7 @@
 // Server-side adapter for three reviewed search request shapes. These are
 // code-bound endpoints, not an arbitrary network tool. Never log request bodies.
 import {selectGovernedOwner,selectedModelOwner,GovernedModelError} from './governed-model-call'
-import {currentGovernedRun} from './governed-run-context'
+import {currentGovernedRun,currentGovernedForeground,foregroundRuntime,foregroundInTime} from './governed-run-context'
 import {openPersonalGovernedRuntimeForOwner,type GovernedRuntime,type SearchOperation} from './governed-runtime'
 const ENDPOINTS:Record<SearchOperation,string>={
   'tavily.basic.v1':'https://api.tavily.com/search',
@@ -40,7 +40,8 @@ export async function governedSearchFetch(op:SearchOperation,url:string,init:Req
   // a redirect or a changed payload after the price check.
   const request={...init,headers:new Headers(init.headers),body:String(init.body),redirect:'error' as const}
   const deadline=d.now()+30_000
-  const rt=parent?parent.runtime:await d.open(s.owner).catch(()=>null)
+  const requestScope=currentGovernedForeground()
+  const rt=parent?parent.runtime:requestScope?await foregroundRuntime(s.owner,()=>d.open(s.owner)):deps?await d.open(s.owner).catch(()=>null):null
   if(!rt)throw new GovernedModelError('policy_unavailable')
   const result=await rt.boundedSearch(op,async()=>{
     const timeout=AbortSignal.timeout(15_000)
@@ -49,7 +50,7 @@ export async function governedSearchFetch(op:SearchOperation,url:string,init:Req
     const data:unknown=await response.clone().json()
     if(!object(data))throw Error('search_response_not_verified')
     return response
-  },()=>d.now()<deadline&&!request.signal?.aborted&&(!parent||parent.inTime()))
+  },()=>d.now()<deadline&&!request.signal?.aborted&&(parent?parent.inTime():requestScope?foregroundInTime(s.owner):!!deps))
   if(result.state!=='completed')throw new GovernedModelError(result.reason)
   return result.value
 }

@@ -206,7 +206,11 @@ async function callPlanWasLastReply(telegramId:number|string){
   }catch{return false}
 }
 
-export async function POST(req: NextRequest) { return withChatChannel(req) }
+export async function POST(req: NextRequest) {
+  return (globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+    ?import('@/lib/agent/governed-run-context').then(m=>m.withGovernedForeground(()=>withChatChannel(req)))
+    :withChatChannel(req)
+}
 
 async function handleChatPost(req: NextRequest) {
   const __trace = startTrace('web')
@@ -219,6 +223,7 @@ async function handleChatPost(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'user_not_found' }, { status: 404 })
   if (!user.whatsapp_id) return NextResponse.json({ error: 'whatsapp_not_linked' }, { status: 409 })
   meterAs(session.telegramId, 'dashboard')
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1')await import('@/lib/agent/governed-run-context').then(m=>m.bindGovernedForegroundOwner(session.telegramId))
 
   const body = await req.json().catch(() => null) as any
   __trace.mark('body')

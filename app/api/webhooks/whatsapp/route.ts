@@ -279,7 +279,9 @@ const TASTE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|m
 export async function POST(req: NextRequest) {
   // QA: replies to simulated messages (MessageSid SMqa…) are logged as QA_REPLY.
   const qaSid=String((await req.clone().formData().catch(()=>null))?.get('MessageSid')||'')
-  return runWithQaTrace(qaSid,()=>handleWhatsAppPost(req))
+  return runWithQaTrace(qaSid,()=> (globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+    ?import('@/lib/agent/governed-run-context').then(m=>m.withGovernedForeground(()=>handleWhatsAppPost(req)))
+    :handleWhatsAppPost(req))
 }
 
 async function makeDocWasLastReply(telegramId: number | string) {
@@ -389,6 +391,7 @@ async function handleWhatsAppPost(req: NextRequest) {
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
     meterAs(resolvedUser.telegramId, 'whatsapp')
+    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1')await import('@/lib/agent/governed-run-context').then(m=>m.bindGovernedForegroundOwner(resolvedUser.telegramId))
 
     brainUserKey = `user:${resolvedUser.telegramId}`
     // Several photos forwarded together arrive as separate webhooks while the first is still

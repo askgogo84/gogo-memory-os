@@ -546,7 +546,7 @@ await check('LIVE 19 Oct: "24k" after "22K or 24K gold?" completes the gold requ
   const dash = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
   assert.match(dash, /if\(pendingAnswer\?\.rewrite\)\{[\s\S]{0,200}text=pendingAnswer\.rewrite/)
   const pim = readFileSync(new URL('../lib/bot/process-message.ts', import.meta.url), 'utf8')
-  assert.match(pim, /if \(pendingAnswer\?\.rewrite\) return processIncomingMessage\(\{ \.\.\.params, text: pendingAnswer\.rewrite, semantic: null, pendingQuestionChecked: true \}\)/)
+  assert.match(pim, /if \(pendingAnswer\?\.rewrite\) return processIncomingMessage\(\{ \.\.\.params, text: pendingAnswer\.rewrite, memorySource:'derived', semantic: null, pendingQuestionChecked: true \}\)/)
 })
 
 await check('LIVE 19 Oct: "Move to 8pm" is the reminder button, never a reservation time answer', async () => {

@@ -5,6 +5,10 @@ import {currentGovernedRun} from './governed-run-context'
 type Permit={kind:'model'|'search';name:string;used:boolean;closed:boolean}
 const store:AsyncLocalStorage<Permit>=(globalThis as any).__gogoGovernedPermitStore||new AsyncLocalStorage<Permit>()
 ;(globalThis as any).__gogoGovernedPermitStore=store
+const meterStore:AsyncLocalStorage<{deadline:number}>=(globalThis as any).__gogoGovernedMeterWriteStore||new AsyncLocalStorage<{deadline:number}>()
+;(globalThis as any).__gogoGovernedMeterWriteStore=meterStore
+/** Only the trusted metering writer may use this bounded DB-only lane. */
+export function withTrustedMeterWrite<T>(work:()=>Promise<T>):Promise<T>{return meterStore.run({deadline:Date.now()+10_000},work)}
 const searchUrls:Record<string,string>={'tavily.basic.v1':'https://api.tavily.com/search','serper.search.v1':'https://google.serper.dev/search','parallel.fast.v1':'https://api.parallel.ai/v1/search'}
 function modelUrl(model:string):string|null{
   if(/^claude-/.test(model))return 'https://api.anthropic.com/v1/messages'
@@ -44,7 +48,16 @@ function internalDatabase(url:string,env:Record<string,string|undefined>):boolea
   }catch{return false}
 }
 export async function authorizeGovernedFetch(input:RequestInfo|URL,init?:RequestInit,env:Record<string,string|undefined>=process.env):Promise<'legacy'|'database'|'provider'>{
-  const active=currentGovernedRun(),p=store.getStore()
+  const active=currentGovernedRun(),p=store.getStore(),meter=meterStore.getStore()
+  if(meter){
+    if(Date.now()>=meter.deadline)throw Error('governed_meter_deadline')
+    const url=urlOf(input),method=String(init?.method||(typeof input==='object'&&'method' in input?input.method:'GET')).toUpperCase()
+    if(internalDatabase(url,env)){
+      const path=new URL(url).pathname
+      if(path==='/rest/v1/admin_rate_card'&&['GET','HEAD'].includes(method)||path==='/rest/v1/admin_cost_events'&&method==='POST')return 'database'
+    }
+    throw Error('governed_meter_egress_denied')
+  }
   if(!active&&!p)return 'legacy'
   if(active&&!active.inTime()||p?.closed)throw Error('governed_egress_deadline')
   const url=urlOf(input)

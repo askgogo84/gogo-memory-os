@@ -5,7 +5,7 @@
 import { currentMeterContext } from '@/lib/metering/core'
 import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { governedEnabled,openPersonalGovernedRuntimeForOwner,type GovernedRuntime } from './governed-runtime'
-import {currentGovernedRun} from './governed-run-context'
+import {currentGovernedRun,currentGovernedForeground,foregroundRuntime,foregroundInTime} from './governed-run-context'
 type Env=Record<string,string|undefined>
 type Owner=string|number|null|undefined
 type Selection={kind:'legacy'}|{kind:'governed';owner:string}|{kind:'invalid'}
@@ -26,7 +26,14 @@ export function selectGovernedOwner(explicit:Owner,context:Owner,env:Env):Select
 }
 export function selectedModelOwner(explicit?:Owner):Selection{
   const active=currentGovernedRun(),context=currentMeterContext()?.telegramId
-  if(!active)return selectGovernedOwner(explicit,context,process.env)
+  if(!active){
+    const request=currentGovernedForeground()
+    if(!request)return selectGovernedOwner(explicit,context,process.env)
+    const selected=selectGovernedOwner(explicit,request.owner||context,process.env)
+    if(selected.kind==='legacy')return selected
+    if(selected.kind!=='governed'||!foregroundInTime(selected.owner)||context!=null&&context!==''&&exactSessionOwnerId(context)!==selected.owner)return {kind:'invalid'}
+    return selected
+  }
   // A nested task cannot fall through to legacy on lost context, changed
   // flags, deadline, or mismatched owner. Parent scope remains authoritative.
   if(!active.inTime()||!governedEnabled('personal',active.owner)||
@@ -47,13 +54,16 @@ export async function governedModelCall<T>(model:string,invoke:(guarded:boolean)
   if(selected.kind==='legacy')return invoke(false)
   if(selected.kind!=='governed')throw new GovernedModelError('identity_mismatch')
   const deadline=d.now()+30_000
-  const runtime=parent?parent.runtime:await d.open(selected.owner).catch(()=>null)
+  const request=currentGovernedForeground()
+  // Selected production calls without a trusted request/worker scope fail
+  // closed instead of creating an independent allowance for each fallback.
+  const runtime=parent?parent.runtime:request?await foregroundRuntime(selected.owner,()=>d.open(selected.owner)):deps?await d.open(selected.owner).catch(()=>null):null
   if(!runtime)throw new GovernedModelError('policy_unavailable')
   const result=await runtime.model(model,async()=>{
     const value=await invoke(true)
     const proof=receipt(value)
     return {model:proof.model,usage:proof.usage,value}
-  },()=>d.now()<deadline&&(!parent||parent.inTime()))
+  },()=>d.now()<deadline&&(parent?parent.inTime():request?foregroundInTime(selected.owner):!!deps))
   if(result.state!=='completed')throw new GovernedModelError(result.reason)
   return result.value.value
 }

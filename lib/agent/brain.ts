@@ -513,6 +513,8 @@ type LoopShadowDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId
 export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean; surface?: 'whatsapp' | 'web' }, ctx: BrainContext | null, pipelineKind: string, deps: LoopShadowDeps = {}): Promise<void> {
   const env = deps.env || process.env
   const live = p.surface === 'whatsapp' && !p.forwarded && brainLoopLiveFor(p.phone, env)
+  const hachiSelected=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map(x=>x.trim()).includes(String(p.telegramId))
+  if(hachiSelected&&!live)return
   if (!live && !(await import('./brain-loop').then(m => m.brainLoopShadowFor(p.phone, env), () => false))) return
   // The id is used for look-ups: only an exact, positive integer is accepted.
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
@@ -540,6 +542,7 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
         ? await Promise.resolve(deps.pendingApprovals ? deps.pendingApprovals(p.telegramId) : pendingApprovalCount(p.telegramId)).catch(() => 1)
         : 1
       const goLive = live && !!already && waiting === 0
+      if(hachiSelected&&!goLive)return
       const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
       const onModelCall = (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => meterBrainCall({ telegramId: p.telegramId, source: 'brain_shadow', ...e })
       // In live mode a venue may be looked up only if the person named it in this message, which they typed themselves
@@ -626,6 +629,7 @@ type FrontDoorDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId:
 export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean }, deps: FrontDoorDeps = {}): Promise<void> {
   const env = deps.env || process.env
   const messageAt = (deps.now || Date.now)()
+  if(env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map(x=>x.trim()).includes(String(p.telegramId)))return
   if (!frontDoorShadowFor(p.phone, env)) return
   // Legacy owner ids can be negative (group-style ids): any exact, non-zero safe integer is accepted.
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId === 0) return
