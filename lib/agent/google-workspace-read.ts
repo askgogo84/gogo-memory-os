@@ -1,3 +1,8 @@
+
+async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,init)
+  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
+}
 import {decodeHtmlEntities,formatEmailSnippet} from '@/lib/security/email-redaction'
 export {decodeHtmlEntities,formatEmailSnippet,redactEmailAuthSecrets} from '@/lib/security/email-redaction'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -128,7 +133,7 @@ function fixedWindowMailboxVerifier():MailboxVerifier {
       // Check the exact credential about to read messages; never reuse proof
       // from a different token or account, including after token refresh.
       proof=(async()=>{
-        const response=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile',{
+        const response=await governedRead('google.gmail.read','https://gmail.googleapis.com/gmail/v1/users/me/profile',{
           headers:{Authorization:`Bearer ${token}`},cache:'no-store',redirect:'error',
         })
         if(!response.ok)return response
@@ -160,7 +165,10 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
   // the Composio connection was never tried. Composio is now used when native is missing OR answers 401/403.
   let viaComposio:((url:string)=>Promise<Response>)|null=null
   if(url.startsWith('https://www.googleapis.com/drive/v3/')){
-    viaComposio=await composioDriveFor(actor)
+    // Unpriced Composio proxy requests must not bypass a selected owner's
+    // native connector budget. Existing non-canary fallback is unchanged.
+    const guarded=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&await import('./governed-model-call').then(m=>m.modelGoverned(actor.legacyTelegramId))
+    viaComposio=guarded?null:await composioDriveFor(actor)
     if(viaComposio){
       let native:any=null
       try{native=await credentials(actor)}catch{}
@@ -191,11 +199,11 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
   const run = async (accessToken:string) => {
     const profileFailure=verifyMailbox?await verifyMailbox(accessToken,creds.gmail_email):null
     if(profileFailure)return profileFailure
-    return fetch(url, {
-      ...init,
-      headers: { ...(init.headers || {}), Authorization:`Bearer ${accessToken}` },
-      cache:'no-store',
-    })
+    const request={...init,headers:{...(init.headers||{}),Authorization:`Bearer ${accessToken}`},cache:'no-store' as const}
+    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,request)
+    const op=(await import('./governed-connector-shapes')).googleReadOperation(url)
+    if(!op)throw Error('workspace_connector_shape_unreviewed')
+    return governedRead(op,url,request,actor.legacyTelegramId)
   }
   let response = await run(token)
   if (response.status === 401 && creds.gmail_refresh_token) {

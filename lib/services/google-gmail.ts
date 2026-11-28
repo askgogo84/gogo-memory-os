@@ -1,3 +1,8 @@
+
+async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,init)
+  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
+}
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -237,7 +242,7 @@ export async function revokeGoogleToken(token:string):Promise<boolean> {
 
 export async function refreshGmailAccessToken(refreshToken: string): Promise<string | null> {
   try {
-    const response = await fetch('https://oauth2.googleapis.com/token', {
+    const response = await governedRead('google.workspace.refresh','https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -264,7 +269,7 @@ function getHeader(headers: any[], name: string) {
 
 async function gmailFetchJson(accessToken: string, url: string) {
   const res = await withTimeout(
-    fetch(url, {
+    governedRead('google.gmail.read',url, {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',
     }),

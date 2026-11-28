@@ -1,3 +1,8 @@
+
+async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,init)
+  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
+}
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 
@@ -119,7 +124,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<string |
   try {
     const decryptedRefreshToken = decryptGoogleToken(refreshToken)
     if (!decryptedRefreshToken) return null
-    const response = await fetch('https://oauth2.googleapis.com/token', {
+    const response = await governedRead('google.calendar.refresh','https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -172,7 +177,7 @@ export async function createCalendarEvent(
   // Never claim success from the POST alone. Read the created resource back from
   // Google so a permission/scope/account inconsistency cannot masquerade as success.
   try {
-    const verify = await fetch(
+    const verify = await governedRead('google.calendar.read',
       `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(body.id)}`,
       { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' }
     )
@@ -196,7 +201,7 @@ export async function createCalendarEvent(
  * Returns null when it cannot be read or the calendar was renamed to something that is not an email. */
 export async function fetchPrimaryCalendarAccount(accessToken: string): Promise<string | null> {
   try {
-    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1&fields=summary', {
+    const response = await governedRead('google.calendar.read','https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1&fields=summary', {
       headers: { 'Authorization': `Bearer ${accessToken}` },
       cache: 'no-store',
     })
@@ -231,7 +236,7 @@ async function readPrimaryCalendarEventsPage(accessToken:string,timeMin:string,t
   })
   if(limit)params.set('maxResults',String(limit))
 
-  const response = await fetch(
+  const response = await governedRead('google.calendar.read',
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
     {
       headers: { 'Authorization': `Bearer ${accessToken}` },
@@ -272,7 +277,7 @@ export async function listUpcomingEvents(accessToken: string, days = 7): Promise
     orderBy: 'startTime',
     maxResults: '50',
   })
-  const response = await fetch(
+  const response = await governedRead('google.calendar.read',
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
     { headers: { Authorization: `Bearer ${accessToken}` }, cache:'no-store' }
   )
@@ -301,7 +306,7 @@ export async function updateCalendarEvent(
   )
   const data = await response.json().catch(() => ({}))
   if (!response.ok) return { ok: false, verification: [400,401,403,404,409,410,412,422,429].includes(response.status) ? 'rejected' : 'unknown', error: data?.error?.message || `HTTP ${response.status}` }
-  const readback = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
+  const readback = await governedRead('google.calendar.read',`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
   const actual = await readback.json().catch(() => null)
   const matches = readback.ok && actual?.id === eventId && actual?.status !== 'cancelled'
     && (!patch.startTime || Date.parse(actual?.start?.dateTime) === Date.parse(patch.startTime))

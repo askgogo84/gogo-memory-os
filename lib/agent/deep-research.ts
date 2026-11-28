@@ -32,13 +32,17 @@ type Model = (prompt: string, maxTokens: number, model: string) => Promise<strin
 // The cheapest configured provider first (public web research only), Claude as the backstop.
 // Scan each complete per-invocation prompt: no process-global request data or cross-user race.
 const defaultModel: Model = async (prompt, maxTokens, model) => {
-  const { cheapComplete } = await import('@/lib/inference/cheap')
-  const cheap = await cheapComplete({ taskClass: 'public_web_research', prompt, scanText: prompt, maxTokens }).catch(() => null)
-  if (cheap) return cheap
+  const guarded=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&await import('./governed-model-call').then(m=>m.modelGoverned())
+  if(!guarded){
+    const { cheapComplete } = await import('@/lib/inference/cheap')
+    const cheap = await cheapComplete({ taskClass: 'public_web_research', prompt, scanText: prompt, maxTokens }).catch(() => null)
+    if (cheap) return cheap
+  }
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('no_model')
   const client = new Anthropic({ apiKey: key })
-  const res = await client.messages.create(forModel({ model, max_tokens: maxTokens, temperature: 0.2, messages: [{ role: 'user' as const, content: prompt }] }), { timeout: 30_000 })
+  const request:Anthropic.MessageCreateParamsNonStreaming=forModel({model,max_tokens:maxTokens,temperature:0.2,messages:[{role:'user' as const,content:prompt}]})
+  const res=guarded?await import('./governed-model-call').then(g=>g.governedModelCall<Anthropic.Message>(model,()=>client.messages.create(request,{timeout:25_000,maxRetries:0}),x=>x)):await client.messages.create(request,{timeout:30_000})
   return textOf(res.content)
 }
 

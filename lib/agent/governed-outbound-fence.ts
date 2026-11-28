@@ -2,7 +2,7 @@
 // scope. Not a network sandbox: custom SDK transports must still be audited.
 import {AsyncLocalStorage} from 'node:async_hooks'
 import {currentGovernedRun} from './governed-run-context'
-type Permit={kind:'model'|'search';name:string;used:boolean;closed:boolean}
+type Permit={kind:'model'|'search'|'connector';name:string;method?:'GET'|'POST';used:boolean;closed:boolean}
 const store:AsyncLocalStorage<Permit>=(globalThis as any).__gogoGovernedPermitStore||new AsyncLocalStorage<Permit>()
 ;(globalThis as any).__gogoGovernedPermitStore=store
 const meterStore:AsyncLocalStorage<{deadline:number}>=(globalThis as any).__gogoGovernedMeterWriteStore||new AsyncLocalStorage<{deadline:number}>()
@@ -17,8 +17,8 @@ function modelUrl(model:string):string|null{
   if(/^mercury-/.test(model))return 'https://api.inceptionlabs.ai/v1/chat/completions'
   return null
 }
-export async function withReservedOutbound<T>(kind:Permit['kind'],name:string,work:()=>Promise<T>):Promise<T>{
-  const p:Permit={kind,name,used:false,closed:false}
+export async function withReservedOutbound<T>(kind:Permit['kind'],name:string,work:()=>Promise<T>,method?:'GET'|'POST'):Promise<T>{
+  const p:Permit={kind,name,method,used:false,closed:false}
   try{return await store.run(p,work)}finally{p.closed=true}
 }
 export function governedFenceInstalled(){return (globalThis as any).__gogoGovernedFetchFence===true}
@@ -64,7 +64,7 @@ export async function authorizeGovernedFetch(input:RequestInfo|URL,init?:Request
   if(internalDatabase(url,env))return 'database'
   if(!p||p.used)throw Error('governed_egress_unreserved')
   const method=String(init?.method||(typeof input==='object'&&'method' in input?input.method:'GET')).toUpperCase()
-  if(method!=='POST'||url!==(p.kind==='model'?modelUrl(p.name):searchUrls[p.name]))throw Error('governed_egress_shape')
+  if(method!==(p.kind==='connector'?p.method:'POST')||url!==(p.kind==='model'?modelUrl(p.name):p.kind==='search'?searchUrls[p.name]:p.name))throw Error('governed_egress_shape')
   if(p.kind==='model'&&!exactReservedModelBody(await bodyOf(input,init),p.name))throw Error('governed_egress_model_shape')
   // Recheck after asynchronous body inspection. One reservation authorizes
   // one physical fetch, never a provider SDK retry or another destination.

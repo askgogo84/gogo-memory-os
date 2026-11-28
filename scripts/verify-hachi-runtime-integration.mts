@@ -202,4 +202,43 @@ await withGovernedPersonalRun('101',searchRt,()=>true,async()=>{
   })
 })
 release();await deferred
+const {googleRequestShape}=await import('../lib/agent/governed-connector-shapes')
+const {governedGoogleFetch,credentialAuthorized}=await import('../lib/agent/governed-google-read')
+const {createHash}=await import('node:crypto')
+const fingerprint=(s:string)=>createHash('sha256').update(s).digest('hex')
+const calendarUrl='https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=40'
+const calendarInit={headers:{Authorization:'Bearer access-fixture'}}
+assert.ok(googleRequestShape('google.calendar.read',calendarUrl,calendarInit))
+assert.equal(googleRequestShape('google.calendar.read',calendarUrl,{...calendarInit,method:'POST'}),null)
+assert.equal(googleRequestShape('google.calendar.read',calendarUrl.replace('maxResults=40','maxResults=999'),calendarInit),null)
+assert.equal(googleRequestShape('google.gmail.read','https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{method:'POST',headers:calendarInit.headers}),null)
+assert.equal(googleRequestShape('google.gmail.read','https://gmail.googleapis.com.evil.example/gmail/v1/users/me/messages',calendarInit),null)
+const connectorPrice={operation:'google.calendar.read',max_cost_micros:0,valid_until:price.valid_until,verified_source:'fixture:reviewed'}
+let googleCalls=0,credentialLive=true,permissionLive=true,priceLive=true
+const googleRt=makeGovernedRuntime(scope,{...deps,connectorTariff:async op=>priceLive?{...connectorPrice,operation:op}:null})
+const credentialSnapshot={refreshHashes:new Set([fingerprint('refresh-fixture')]),accessHashes:new Set<string>()}
+const googleDeps={selection:adapterDeps.selection,open:async()=>googleRt,now:()=>now,permission:async()=>permissionLive,snapshot:async()=>credentialLive?credentialSnapshot:null,
+  fetcher:async(input:any)=>{googleCalls++;return String(input).includes('oauth2.googleapis.com/token')?new Response(JSON.stringify({access_token:'access-fixture',expires_in:3600})):new Response(JSON.stringify({items:[]}))}}
+const refreshInit={method:'POST',body:new URLSearchParams({refresh_token:'refresh-fixture',client_id:'fixture-client',client_secret:'fixture-secret',grant_type:'refresh_token'})}
+const tokenUrl='https://oauth2.googleapis.com/token'
+await assert.rejects(()=>governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',googleDeps),/not_authorized/)
+assert.equal(googleCalls,0)
+assert.equal((await governedGoogleFetch('google.calendar.refresh',tokenUrl,refreshInit,'101',googleDeps)).status,200)
+assert.equal((await governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',googleDeps)).status,200)
+assert.equal(googleCalls,2)
+credentialLive=false
+await assert.rejects(()=>governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',googleDeps),/not_authorized/)
+credentialLive=true;permissionLive=false
+await assert.rejects(()=>governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',googleDeps),/not_authorized/)
+permissionLive=true;priceLive=false
+await assert.rejects(()=>governedGoogleFetch('google.calendar.read',calendarUrl,calendarInit,'101',googleDeps),/price_unavailable/)
+assert.equal(googleCalls,2)
+priceLive=true
+await assert.rejects(()=>governedGoogleFetch('google.calendar.read',calendarUrl,{headers:{Authorization:'Bearer another-owner-token'}},'101',googleDeps),/not_authorized/)
+assert.equal(googleCalls,2)
+await withReservedOutbound('connector',calendarUrl,async()=>{
+  await assert.rejects(()=>authorizeGovernedFetch(calendarUrl,{method:'POST'},fixtureEnv),/shape/)
+  assert.equal(await authorizeGovernedFetch(calendarUrl,calendarInit,fixtureEnv),'provider')
+  await assert.rejects(()=>authorizeGovernedFetch(calendarUrl,calendarInit,fixtureEnv),/unreserved/)
+},'GET')
 console.log('Hachi scoped runtime boundary fixtures passed')

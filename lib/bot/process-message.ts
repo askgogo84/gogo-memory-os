@@ -583,7 +583,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const query=catalog.skillQuery(incomingText)
     if(query!==null){
       const actor={userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'}
-      const runtime=await import('@/lib/agent/governed-runtime').then(m=>m.openPersonalGovernedRuntime(actor)).catch(()=>null)
+      const runtime=await import('@/lib/agent/governed-run-context').then(async c=>{
+        const r=await import('@/lib/agent/governed-runtime'),owner=String(actor.legacyTelegramId)
+        return c.currentGovernedForeground()?c.foregroundRuntime(owner,()=>r.openPersonalGovernedRuntime(actor)):null
+      }).catch(()=>null)
       const until=Date.now()+15_000
       const result=runtime?await runtime.local('personal_skill_catalog',async()=>{
         const a=await import('@/lib/agent/adaptive-autonomy')

@@ -6,6 +6,7 @@ import type { AgentActor } from './actor'
 import { runGovernedAttempt, type GovernedScope, type BudgetOutcome, type Usage } from './governed-budget-ledger'
 import {withGovernedPersonalRun} from './governed-run-context'
 import {withReservedOutbound,governedFenceInstalled} from './governed-outbound-fence'
+import {GOOGLE_OPERATIONS,type GoogleOperation} from './governed-connector-shapes'
 
 type Env=Record<string,string|undefined>
 export function governedEnabled(kind:'personal'|'workspace',id:string,env:Env=(globalThis as any).process?.env||{}):boolean {
@@ -19,7 +20,7 @@ type ProviderResponse={model?:unknown;usage?:{input_tokens?:unknown;output_token
 export type SearchOperation='tavily.basic.v1'|'serper.search.v1'|'parallel.fast.v1'
 const SEARCH_OPERATIONS=new Set<string>(['tavily.basic.v1','serper.search.v1','parallel.fast.v1'])
 type OperationTariff={operation:string;max_cost_micros:unknown;valid_until:string;verified_source:string}
-type Deps={rpc:Rpc;authorize:()=>Promise<boolean>;currentRun:()=>Promise<boolean>;tariff:(model:string)=>Promise<ModelTariff|null>;operationTariff?:(operation:SearchOperation)=>Promise<OperationTariff|null>;now:()=>number;nextAttempt:()=>string}
+type Deps={rpc:Rpc;authorize:()=>Promise<boolean>;currentRun:()=>Promise<boolean>;tariff:(model:string)=>Promise<ModelTariff|null>;operationTariff?:(operation:SearchOperation)=>Promise<OperationTariff|null>;connectorTariff?:(operation:GoogleOperation)=>Promise<OperationTariff|null>;now:()=>number;nextAttempt:()=>string}
 const denied=(reason:string):BudgetOutcome<never>=>({state:'blocked',reason})
 function count(v:unknown):number|null {
   if(typeof v==='string'&&/^(0|[1-9][0-9]*)$/.test(v)&&String(Number(v))===v)v=Number(v)
@@ -47,10 +48,16 @@ export function verifiedOperationCeiling(t:OperationTariff|null,operation:Search
   const cost=count(t.max_cost_micros)
   return cost!==null&&cost>0?{tokens:0,costMicrosInr:cost}:null
 }
+export function verifiedConnectorCeiling(t:OperationTariff|null,operation:GoogleOperation,now:number):Usage|null{
+  if(!(GOOGLE_OPERATIONS as readonly string[]).includes(operation)||!t||t.operation!==operation||typeof t.verified_source!=='string'||!t.verified_source.trim()||!Number.isFinite(now)||!(Date.parse(t.valid_until)>now))return null
+  const cost=count(t.max_cost_micros)
+  return cost===null?null:{tokens:0,costMicrosInr:cost}
+}
 export type GovernedRuntime={
   model:<T extends ProviderResponse>(model:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   boundedSearch:<T>(operation:SearchOperation,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
-  nestedSearch:<T>(operation:'web_search'|'venue_contact',execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
+  boundedConnector:<T>(operation:GoogleOperation,url:string,method:'GET'|'POST',authorize:()=>Promise<boolean>,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
+  nestedSearch:<T>(operation:'web_search'|'venue_contact'|'calendar_read',execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   workerStep:<T>(operation:string,attemptId:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   local:<T>(operation:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
 }
@@ -92,12 +99,26 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         // Transport/invalid response throws and retains the reservation.
         execute:async()=>({value:await withReservedOutbound('search',operation,execute),usage:ceiling})})
     },
+    async boundedConnector(operation,url,method,authorize,execute,inTime){
+      if(s.kind!=='personal'||!inTime()||!d.connectorTariff||!(GOOGLE_OPERATIONS as readonly string[]).includes(operation))return denied('unreviewed_connector')
+      let tariff:OperationTariff|null
+      try{tariff=await d.connectorTariff(operation)}catch{return denied('price_unavailable')}
+      const ceiling=verifiedConnectorCeiling(tariff,operation,d.now())
+      if(!ceiling||!tariff)return denied('price_unavailable')
+      const pinned={...tariff}
+      return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling},rpc:d.rpc,
+        authorize:async()=>{
+          if(!await current(inTime)||await authorize()!==true)return false
+          const live=await d.connectorTariff!(operation),c=verifiedConnectorCeiling(live,operation,d.now())
+          return !!c&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&inTime()
+        },execute:async()=>({value:await withReservedOutbound('connector',url,execute,method),usage:ceiling})})
+    },
     async nestedSearch(operation,execute,inTime){
       // The inspected first-slice search tools call only the bounded web
       // adapters (venue lookup does not read pages or dispatch an action).
       // The orchestration step is zero provider cost; each nested provider
       // call must independently reserve against THIS same run.
-      if(s.kind!=='personal'||!['web_search','venue_contact'].includes(operation))return denied('unpriced_tool')
+      if(s.kind!=='personal'||!['web_search','venue_contact','calendar_read'].includes(operation))return denied('unpriced_tool')
       return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling:{tokens:0,costMicrosInr:0}},rpc:d.rpc,
         authorize:()=>current(inTime),
         execute:async()=>({value:await withGovernedPersonalRun(s.actorId,runtime,inTime,execute),usage:{tokens:0,costMicrosInr:0}})})
@@ -154,6 +175,10 @@ async function open(kind:'personal'|'workspace',scopeId:string,actorId:string,au
       },
       operationTariff:async(operation)=>{
         const r=await supabaseAdmin.from('gogo_governed_search_prices').select('operation,max_cost_micros,valid_until,verified_source').eq('operation',operation).maybeSingle()
+        return r.error?null:r.data as OperationTariff|null
+      },
+      connectorTariff:async(operation)=>{
+        const r=await supabaseAdmin.from('gogo_governed_connector_prices').select('operation,max_cost_micros,valid_until,verified_source').eq('operation',operation).maybeSingle()
         return r.error?null:r.data as OperationTariff|null
       }
     })

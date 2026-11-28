@@ -618,4 +618,16 @@ alter table if exists public.memories add column if not exists gogo_provenance j
     jsonb_typeof(gogo_provenance->'observed_at')='string' and
     (gogo_provenance - 'origin' - 'surface' - 'explicit_save' - 'observed_at')='{}'::jsonb
   ));
+-- Independently verified fixed upper bound for each native connector read or
+-- refresh. Zero is permitted only as an explicit current operator price row;
+-- an absent/expired row is never inferred to be free.
+create table public.gogo_governed_connector_prices (
+  operation text primary key check(operation in ('google.calendar.refresh','google.calendar.read','google.workspace.refresh','google.gmail.read','google.drive.read','google.contacts.read')),
+  max_cost_micros bigint not null check(max_cost_micros between 0 and 9007199254740991),
+  valid_until timestamptz not null,
+  verified_source text not null check(length(trim(verified_source)) between 1 and 300)
+);
+alter table public.gogo_governed_connector_prices enable row level security;
+revoke all on public.gogo_governed_connector_prices from public,anon,authenticated,service_role;
+grant select on public.gogo_governed_connector_prices to service_role;
 commit;

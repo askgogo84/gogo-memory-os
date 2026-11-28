@@ -233,7 +233,7 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
               return Promise.race([tool.run!(p.actor,input,state),new Promise<string>((_r,rej)=>{timer=setTimeout(()=>rej(new Error('timeout')),Math.max(50,Math.min(L.toolMs,left())))})])
             }
             if(governed){
-              const metered=tool.klass==='read'&&(tool.name==='web_search'||tool.name==='venue_contact')
+              const metered=tool.klass==='read'&&(tool.name==='web_search'||tool.name==='venue_contact'||tool.name==='calendar_read')
                 ?await governed.nestedSearch(tool.name,invoke,()=>left()>=500)
                 :await governed.local(tool.name,invoke,()=>left()>=500)
               if(metered.state!=='completed'){
