@@ -268,12 +268,15 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     return{status:'outcome_unknown' as const,runId}
   }
 
-  const isReserveX=reserveXBookingUrl(url)
+  // The browser may redirect an approved restaurant URL into a widget. A
+  // resulting ReserveX page must never fall through to generic completion.
+  const isReserveX=reserveXHost(url)||reserveXHost(result.url)||reserveXHost(result.sourceUrl)||reserveXHost(result.originalUrl)
+  const unboundReserveX=isReserveX&&!reserveXBookingUrl(url)
   // A failed consequential control can have reached the provider even when the
   // browser did not receive its response. Do not claim no booking or hand over
   // a second booking link when the first submission may already have succeeded.
   const possibleSubmit=Array.isArray(result?.actions)&&result.actions.some((a:any)=>(a?.kind==='submit'||a?.consequential===true)&&a?.status!=='skipped')
-  if(isReserveX&&possibleSubmit&&(result.status!=='completed'||!hasSubmit(result))){
+  if(isReserveX&&possibleSubmit&&(unboundReserveX||result.status!=='completed'||!hasSubmit(result))){
     const summary='The ReserveX submission may have reached the provider, but its outcome is not verified. I will not submit again or switch booking routes. Reconcile this same reservation before trying again.'
     await failSafe({action,event,runId,approvalId,status:'outcome_unknown',summary,error:'restaurant_reservation_confirmation_unknown',actor})
     await notify(actor,summary)
