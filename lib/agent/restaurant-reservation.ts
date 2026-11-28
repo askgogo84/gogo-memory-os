@@ -380,8 +380,48 @@ async function findBookingOptions(intent:RestaurantReservationIntent,connectedSi
   const options=engine.collectBookingOptions(scored.map(c=>({url:c.url,title:c.title,snippet:String(byUrl.get(c.url)?.snippet||'')})),connectedSiteIds)
   return typeof engine.enrichOffersFromListings==='function'?engine.enrichOffersFromListings(options):options
 }
+// Google is a discovery surface: only public Maps entry URLs and observed
+// partner listings are passed into the existing approved booking executor.
+function googleDiningHost(raw:string){
+  try{return new URL(raw).hostname.toLowerCase().replace(/^www\./,'').replace(/\.+$/,'')==='google.com'}catch{return false}
+}
+function publicMapsEntry(raw:string){
+  try{
+    const u=new URL(raw)
+    return u.protocol==='https:'&&['google.com','www.google.com'].includes(u.hostname)&&!u.username&&!u.password&&!u.port
+      &&/^\/maps\/(?:search|place)(?:\/|$)/.test(u.pathname)
+  }catch{return false}
+}
+export function googleDiningSearchUrl(restaurant:string){
+  const place=resolveIndiaPlace(restaurant)
+  if(!place.city)return null
+  const city=restaurant.toLowerCase().includes(place.city.toLowerCase())?'':', '+place.city
+  return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(restaurant+city+', India')
+}
+async function discoverGoogleDining(actor:AgentActor,intent:RestaurantReservationIntent,deadline:number){
+  const url=googleDiningSearchUrl(intent.restaurant)
+  if(!url||!intent.requestedDate||deadline-Date.now()<75_000)return null
+  try{
+    const observed=await runSecureBrowser({userId:actor.userId,url,mode:'read',publicOnly:true,
+      readDeadline:Math.min(deadline-60_000,Date.now()+105_000),
+      googleDiningDiscovery:{restaurant:intent.restaurant},
+      objective:JSON.stringify({task:'Find the exact restaurant branch on Google Maps. Open its public Reserve a table launcher, and read the displayed booking partner choices and any direct public venue links. Do not open a login, change account settings, fill contact details, select marketing, pay, confirm or submit. Do not click the final Book button. A partner choice is discovery, not a booking.',restaurant:intent.restaurant,date:intent.requestedDate,party:intent.partySize,time:intent.preferredStart})})
+    if(observed.status!=='completed'||observed.actions.some(a=>(a.kind==='submit'||a.consequential)&&a.status!=='skipped')||!observed.googleDining)return null
+    const evidence=observed.googleDining
+    const providers:ReservationProvider[]=[]
+    for(const link of evidence.links||[]){
+      const u=new URL(link.url),kind=reservationLinkKind(link.url,intent.restaurant)
+      if(u.protocol!=='https:'||u.username||u.password||u.port||u.search||u.hash||!['widget','aggregator'].includes(kind))continue
+      if(isReserveXHost(link.url)&&!publicReserveXVenue(link.url))continue
+      if(!providers.some(p=>p.url===link.url))providers.push({url:link.url,title:intent.restaurant,source:'google_maps_browser',location:resolveIndiaPlace(intent.restaurant).city||null,firstParty:kind==='widget'})
+    }
+    const partners=(evidence.partners||[]).filter(name=>['EazyDiner','District Dining','Swiggy','ReserveX','ReserveGo'].includes(name))
+    return {url,providers,partners,nativeReview:evidence.nativeReview===true}
+  }catch{return null}
+}
 async function discoverProviders(intent:RestaurantReservationIntent):Promise<ReservationProvider[]>{
   if(intent.sourceUrl){
+    if(googleDiningHost(intent.sourceUrl))return []
     if(isReserveXHost(intent.sourceUrl)&&!publicReserveXVenue(intent.sourceUrl))return []
     return [{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url',firstParty:reservationLinkKind(intent.sourceUrl,intent.restaurant)!=='aggregator'}]
   }
@@ -992,9 +1032,16 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     }
     return paused(text)
   }
-  const providers=await discoverProviders(intent)
+  const readDeadline=Date.now()+165_000
+  let providers=await discoverProviders(intent)
+  // Prefer established venue widgets; otherwise use the browser to discover
+  // the exact branch's booking options before spending time on aggregator pages.
+  const maps=(!intent.sourceUrl||publicMapsEntry(intent.sourceUrl))&&intent.requestedDate&&!providers.some(p=>p.firstParty)
+    ?await discoverGoogleDining(params.actor,intent,readDeadline):null
+  if(maps?.providers.length)providers=[...maps.providers,...providers.filter(p=>!maps.providers.some(m=>m.url===p.url))].slice(0,5)
   let provider=providers[0]
   if(!provider){
+    if(maps?.partners.length)return safeFallback(`Google Maps shows booking options for ${intent.restaurant}: ${maps.partners.join(', ')}. I could not verify a transferable public booking route. Availability is not confirmed and no reservation was submitted. You can review the options here: ${maps.url}`)
     return safeFallback(`I couldn't verify a public booking page for ${intent.restaurant} after checking multiple routes. No booking attempt was made in this request. I can also prepare a restaurant phone call for your approval if you want me to try that.`)
   }
   const timezone=await actorTimezone(params.actor)
@@ -1069,7 +1116,6 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     if(!connected)return connectFirst()
   }
   let inspected:Awaited<ReturnType<typeof runSecureBrowser>>
-  const readDeadline=Date.now()+165_000
   const inspectProvider=(candidate:ReservationProvider,publicOnly=false)=>runSecureBrowser({
       userId:params.actor.userId,
       url:candidate.url,
