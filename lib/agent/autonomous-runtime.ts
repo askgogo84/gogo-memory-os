@@ -481,7 +481,36 @@ export async function executeAutonomousRun(params: {
           return { stepId: row.id, claimed: true, status: boundary.superseded ? 'superseded' : 'blocked' }
         }
       }
-      const result = await runMeteredTask(telegramId, {runId:params.runId,stepId:row.id,attempt:claimed.attempt,approvalId:claimed.approvalGrantedId||claimed.approvalId||undefined}, () => handler({ actor: params.actor, runId: params.runId, objective, step: row, runtime: claimed, idempotencyKey: claimed.idempotencyKey }))
+      const invoke=()=>runMeteredTask(telegramId, {runId:params.runId,stepId:row.id,attempt:claimed.attempt,approvalId:claimed.approvalGrantedId||claimed.approvalId||undefined}, () => handler({ actor: params.actor, runId: params.runId, objective, step: row, runtime: claimed, idempotencyKey: claimed.idempotencyKey }))
+      const env=(globalThis as any).process?.env||{}
+      const governed=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(telegramId)
+      let result:AutonomousToolResult
+      if(governed){
+        // Recheck the actual claimed row, immutable dispatch digest, lease and
+        // exact approval after the budget RPCs, before every nested dispatch.
+        const authorize=async()=>{
+          const latest=await loadAutonomousRun(params.runId,telegramId)
+          const step=latest.steps.find(x=>x.id===row.id),meta=step?runtimeMeta(step):null
+          if(!step||!meta||!isReconcilable(latest.run)||step.status!=='running'||meta.attempt!==claimed.attempt||meta.idempotencyKey!==claimed.idempotencyKey||meta.approvalId!==claimed.approvalId||meta.approvalGrantedId!==claimed.approvalGrantedId||dispatchInputDigest(run,row)!==dispatchInputDigest(latest.run,step)||!(Date.parse(meta.leaseUntil||'')>Date.now()))return false
+          if(claimed.requiresApproval){
+            const r=await supabaseAdmin.from('agent_approvals').select('id,status,run_id,action_hash,policy_version,requested_at,execution_payload').eq('id',claimed.approvalGrantedId||'').eq('telegram_id',telegramId).eq('run_id',params.runId).eq('status','approved').maybeSingle()
+            if(r.error||!r.data)return false
+            try{assertRuntimeApproval(latest.run,step,telegramId,r.data)}catch{return false}
+          }
+          return true
+        }
+        const runtime=await import('./governed-runtime').then(m=>m.openPersonalGovernedRuntime(params.actor,{missionId:params.runId,authorize})).catch(()=>null)
+        const attempt=runtime?await runtime.workerStep(row.tool_name,'worker:'+row.id+':'+claimed.attempt,invoke,()=>Date.parse(claimed.leaseUntil||'')>Date.now()):null
+        if(!attempt||attempt.state!=='completed'){
+          const unknown=attempt?.state==='unknown'
+          const reason=attempt&&attempt.state!=='completed'?attempt.reason:'policy_unavailable'
+          result={status:'blocked',error:'governed_worker_'+reason,output:unknown?{outcome_state:'unknown',reconciliation_required:true}:{}}
+        }else if(attempt.value.status==='retryable_failure'){
+          // A governed step may have nested provider reservations outstanding.
+          // Do not let the generic worker retry it without reconciliation.
+          result={status:'blocked',error:'governed_worker_reconciliation_required',output:{...attempt.value.output,outcome_state:'unknown',reconciliation_required:true}}
+        }else result=attempt.value
+      }else result=await invoke()
       if (result.status === 'waiting_approval') {
         if (!await markWaitingApproval(row, telegramId, claimed, result.approvalId, result.output || {})) return { stepId: row.id, claimed: true, status: 'superseded' }
         await activity(telegramId, params.runId, 'autonomous_step_waiting_approval', row.title, { step_id: row.id, step_key: claimed.stepKey, approval_id: result.approvalId })

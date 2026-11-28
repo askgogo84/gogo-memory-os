@@ -5,6 +5,7 @@ import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import type { AgentActor } from './actor'
 import { runGovernedAttempt, type GovernedScope, type BudgetOutcome, type Usage } from './governed-budget-ledger'
 import {withGovernedPersonalRun} from './governed-run-context'
+import {withReservedOutbound,governedFenceInstalled} from './governed-outbound-fence'
 
 type Env=Record<string,string|undefined>
 export function governedEnabled(kind:'personal'|'workspace',id:string,env:Env=(globalThis as any).process?.env||{}):boolean {
@@ -50,6 +51,7 @@ export type GovernedRuntime={
   model:<T extends ProviderResponse>(model:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   boundedSearch:<T>(operation:SearchOperation,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   nestedSearch:<T>(operation:'web_search'|'venue_contact',execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
+  workerStep:<T>(operation:string,attemptId:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   local:<T>(operation:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
 }
 export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime {
@@ -69,7 +71,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
           const live=await d.tariff(model),c=verifiedCeiling(live,model,d.now())
           return !!c&&c.tokens===ceiling.tokens&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&inTime()
         },
-        execute:async()=>{const value=await execute();return {value,usage:meteredUsage(value,pinned)}}})
+        execute:async()=>{const value=await withReservedOutbound('model',model,execute);return {value,usage:meteredUsage(value,pinned)}}})
     },
     async boundedSearch(operation,execute,inTime){
       // Fixed-cost, bounded search requests only; never classify arbitrary
@@ -88,7 +90,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         },
         // Charge the verified maximum, not a guessed actual provider invoice.
         // Transport/invalid response throws and retains the reservation.
-        execute:async()=>({value:await execute(),usage:ceiling})})
+        execute:async()=>({value:await withReservedOutbound('search',operation,execute),usage:ceiling})})
     },
     async nestedSearch(operation,execute,inTime){
       // The inspected first-slice search tools call only the bounded web
@@ -97,6 +99,16 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
       // call must independently reserve against THIS same run.
       if(s.kind!=='personal'||!['web_search','venue_contact'].includes(operation))return denied('unpriced_tool')
       return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling:{tokens:0,costMicrosInr:0}},rpc:d.rpc,
+        authorize:()=>current(inTime),
+        execute:async()=>({value:await withGovernedPersonalRun(s.actorId,runtime,inTime,execute),usage:{tokens:0,costMicrosInr:0}})})
+    },
+    async workerStep(operation,attemptId,execute,inTime){
+      // Only the existing statically bound persistent general-plan handlers.
+      // No arbitrary procedure, browser, voice, payment or mutation adapter
+      // gains authority here. Existing deterministic safety/approval rules
+      // still apply; the fetch fence denies unreserved connector egress.
+      if(s.kind!=='personal'||!governedFenceInstalled()||!['tasks.safe','lists.verified','reminders.verified','memory.verified','web_search.verified','files.read','travel.read'].includes(operation)||!/^worker:[A-Za-z0-9_-]{1,100}:[0-9]{1,8}$/.test(attemptId))return denied('unreviewed_worker_tool')
+      return runGovernedAttempt({scope:s,attempt:{id:attemptId,kind:'tool',ceiling:{tokens:0,costMicrosInr:0}},rpc:d.rpc,
         authorize:()=>current(inTime),
         execute:async()=>({value:await withGovernedPersonalRun(s.actorId,runtime,inTime,execute),usage:{tokens:0,costMicrosInr:0}})})
     },
@@ -112,14 +124,20 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
   }
   return runtime
 }
-async function open(kind:'personal'|'workspace',scopeId:string,actorId:string,authorize:()=>Promise<boolean>):Promise<GovernedRuntime|null>{
+async function open(kind:'personal'|'workspace',scopeId:string,actorId:string,authorize:()=>Promise<boolean>,missionId?:string):Promise<GovernedRuntime|null>{
   try{
     if(!governedEnabled(kind,scopeId)||exactSessionOwnerId(actorId)!==actorId||await authorize()!==true)return null
-    const scope:GovernedScope={kind,id:scopeId,actorId,runId:randomUUID()}
+    if(missionId!==undefined&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(missionId))return null
+    const scope:GovernedScope={kind,id:scopeId,actorId,runId:missionId?'auto-'+missionId:randomUUID()}
     const rpc:Rpc=(name,args)=>supabaseAdmin.rpc(name,args)
     const a={p_scope_kind:kind,p_scope_id:scopeId,p_run_id:scope.runId,p_actor_id:actorId}
     const opened=await rpc('gogo_open_governed_run',a)
-    if(opened.error||opened.data!=='opened')return null
+    if(opened.error)return null
+    if(opened.data!=='opened'){
+      if(!missionId||opened.data!=='duplicate')return null
+      const previous=await supabaseAdmin.from('gogo_governed_runs').select('deadline_at,breached').eq('scope_kind',kind).eq('scope_id',scopeId).eq('run_id',scope.runId).eq('actor_id',actorId).maybeSingle()
+      if(previous.error||previous.data?.breached!==false||!(Date.parse(previous.data.deadline_at)>Date.now()))return null
+    }
     return makeGovernedRuntime(scope,{
       rpc,authorize,now:Date.now,nextAttempt:randomUUID,
       currentRun:async()=>{
@@ -141,14 +159,14 @@ async function open(kind:'personal'|'workspace',scopeId:string,actorId:string,au
     })
   }catch{return null}
 }
-export async function openPersonalGovernedRuntime(actor:AgentActor):Promise<GovernedRuntime|null>{
+export async function openPersonalGovernedRuntime(actor:AgentActor,worker?:{missionId:string;authorize:()=>Promise<boolean>}):Promise<GovernedRuntime|null>{
   const owner=exactSessionOwnerId(actor.legacyTelegramId)
   if(!owner||!actor.userId)return null
   const actorId=actor.userId
   return open('personal',owner,owner,async()=>{
     const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
-    return !r.error&&String(r.data?.id??'')===actorId&&exactSessionOwnerId(r.data?.telegram_id)===owner&&r.data?.access_status==='active'
-  })
+    return !r.error&&String(r.data?.id??'')===actorId&&exactSessionOwnerId(r.data?.telegram_id)===owner&&r.data?.access_status==='active'&&(!worker||await worker.authorize()===true)
+  },worker?.missionId)
 }
 // Only callers that already resolved the authenticated or metering owner may
 // use this helper. Pin the database user identity; recheck active access on

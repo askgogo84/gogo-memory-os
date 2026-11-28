@@ -141,4 +141,23 @@ await withGovernedPersonalRun('101',searchRt,()=>true,async()=>{
 await late!()
 assert.equal((await searchRt.nestedSearch('web_search',async()=>{searchCalls++;return 'not reached'},()=>false)).state,'blocked')
 assert.equal(searchCalls,1)
+const {authorizeGovernedFetch,withReservedOutbound,exactReservedModelBody}=await import('../lib/agent/governed-outbound-fence')
+assert.equal(exactReservedModelBody({model:'claude-fixture',stream:true},'claude-fixture'),false)
+assert.equal(exactReservedModelBody({model:'claude-fixture',tools:[{type:'web_search_20250305'}]},'claude-fixture'),false)
+assert.equal(await authorizeGovernedFetch('https://example.com'), 'legacy')
+const fixtureEnv={NEXT_PUBLIC_SUPABASE_URL:'https://fixture.supabase.co'}
+await withGovernedPersonalRun('101',searchRt,()=>true,async()=>{
+  assert.equal(await authorizeGovernedFetch('https://fixture.supabase.co/rest/v1/users',{},fixtureEnv),'database')
+  await assert.rejects(()=>authorizeGovernedFetch('https://api.openai.com/v1/chat/completions',{method:'POST'},fixtureEnv),/unreserved/)
+  await assert.rejects(()=>authorizeGovernedFetch('https://fixture.supabase.co.evil.example/rest/v1/users',{},fixtureEnv),/unreserved/)
+  await withReservedOutbound('model','claude-fixture',async()=>{
+    const request={method:'POST',body:JSON.stringify({model:'claude-fixture',messages:[]})}
+    assert.equal(await authorizeGovernedFetch('https://api.anthropic.com/v1/messages',request,fixtureEnv),'provider')
+    await assert.rejects(()=>authorizeGovernedFetch('https://api.anthropic.com/v1/messages',request,fixtureEnv),/unreserved/)
+  })
+  await withReservedOutbound('search','tavily.basic.v1',async()=>{
+    await assert.rejects(()=>authorizeGovernedFetch('https://example.com',{method:'POST'},fixtureEnv),/shape/)
+    assert.equal(await authorizeGovernedFetch(url,init,fixtureEnv),'provider')
+  })
+})
 console.log('Hachi scoped runtime boundary fixtures passed')
