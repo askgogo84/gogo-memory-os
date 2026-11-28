@@ -1,0 +1,7 @@
+# Cashfree AgentPay sandbox check
+
+Cashfree AgentPay's India wallet beta supports Bharat Connect (BBPS) bills. Food delivery, groceries, shopping and travel are listed as upcoming. Cashfree provisions separate sandbox and production client keys through its integration team. [Wallet availability](https://www.cashfree.com/cashfree-wallet/) · [AgentPay integration guide](https://www.cashfree.com/docs/tools-ai/agentpay-mcp/integration-guide)
+
+Run the offline check with `node scripts/verify-cashfree-agentpay-sandbox.mjs`. Once Cashfree provisions AskGogo, the owner can inject the sandbox key as `CASHFREE_AGENTPAY_SANDBOX_CLIENT_KEY` in a local secret environment and run `node scripts/check-cashfree-agentpay-sandbox.mjs`. The command calls the documented sandbox catalogue tool and prints a category count. It takes no customer identifiers, never calls a payment tool, and has no production endpoint override.
+
+The catalogue check proves sandbox client access. Before customer enablement, verify the fetched bill and its expiry, hosted wallet consent and revocation, approval tied to one owner and one exact amount, duplicate and timed-out debit reconciliation, and BBPS settlement with a receipt reference. Keep authorization artifacts server-side and encrypted. Represent a successful wallet debit with pending settlement as pending until Cashfree confirms the biller payment. [Tool reference](https://www.cashfree.com/docs/tools-ai/agentpay-mcp/tool-reference)
