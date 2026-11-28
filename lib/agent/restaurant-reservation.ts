@@ -614,9 +614,41 @@ async function actorTimezone(actor:AgentActor){
   return normalizeTimezone(String(data?.timezone||'Asia/Kolkata'))
 }
 
-function dedupeKey(actor:AgentActor,intent:RestaurantReservationIntent,url:string){
+// Provider URLs belong to the exact approval, not to the durable reservation objective.
+function reservationObjectiveName(value:unknown){
+  return String(value||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim()
+}
+function dedupeKey(actor:AgentActor,intent:RestaurantReservationIntent){
+  const stable=JSON.stringify(['restaurant_objective_v1',String(actor.legacyTelegramId),reservationObjectiveName(intent.restaurant),intent.partySize,intent.preferredStart,intent.preferredEnd,intent.requestedDate||''])
+  return createHash('sha256').update(stable).digest('hex').slice(0,40)
+}
+function legacyDedupeKey(actor:AgentActor,intent:RestaurantReservationIntent,url:string){
   const stable=[actor.legacyTelegramId,intent.restaurant,url,intent.partySize,intent.preferredStart,intent.preferredEnd,intent.requestedDate||'next'].join('|').toLowerCase()
   return createHash('sha256').update(stable).digest('hex').slice(0,40)
+}
+
+// Old missions used a provider-specific hash. Inspect the owner's durable objective
+// fields rather than trying to guess every historical booking URL. A partial or
+// unreadable inventory must not be interpreted as permission to submit again.
+async function matchingReservationEvents(actor:AgentActor,intent:RestaurantReservationIntent){
+  const limit=501
+  let query=supabaseAdmin.from('life_events').select('id,dedupe_key,metadata_json,preferences_json,lifecycle_state')
+    .eq('telegram_id',String(actor.legacyTelegramId)).eq('subtype','restaurant_booking_release')
+    .eq('preferences_json->>partySize',String(intent.partySize))
+  if(intent.requestedDate)query=query.eq('preferences_json->>requestedDate',intent.requestedDate)
+  const {data,error}=await query.limit(limit)
+  if(error||!Array.isArray(data)||data.length>=limit)throw new Error('restaurant_objective_inventory_unverified')
+  return data.filter(row=>{
+    const prefs=row.preferences_json||{},meta=row.metadata_json||{}
+    return reservationObjectiveName(meta.restaurant)===reservationObjectiveName(intent.restaurant)
+      &&String(prefs.requestedDate||'')===String(intent.requestedDate||'')
+      &&String(prefs.partySize)===String(intent.partySize)
+      &&String(prefs.preferredStart||'')===intent.preferredStart
+      &&String(prefs.preferredEnd||'')===intent.preferredEnd
+  })
+}
+function reservationReconciliationReply(runId=''){
+  return{runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'An earlier reservation mission already exists for this restaurant, date, time and party. Its outcome must be reconciled on the same task before trying another booking route. No new approval or booking attempt was created.'}
 }
 
 export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null;timeConstraint?:unknown;guestName?:string|null;contextGapDisclosed?:boolean}){
@@ -649,10 +681,13 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
 }
 
 async function existingMission(tg:number,key:string){
-  const{data}=await supabaseAdmin.from('life_events').select('id,metadata_json,next_action_at,lifecycle_state').eq('telegram_id',String(tg)).eq('dedupe_key',key).maybeSingle()
+  const{data,error}=await supabaseAdmin.from('life_events').select('id,metadata_json,next_action_at,lifecycle_state').eq('telegram_id',String(tg)).eq('dedupe_key',key).maybeSingle()
+  if(error)throw new Error('restaurant_objective_event_unverified')
   if(!data?.id)return null
-  const{data:run}=await supabaseAdmin.from('agent_runs').select('id,status,error,updated_at,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown','completed']).order('started_at',{ascending:false}).limit(1).maybeSingle()
-  const{data:approval}=run?.id?await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',String(run.id)).eq('telegram_id',String(tg)).eq('action_type','booking').order('requested_at',{ascending:false}).limit(1).maybeSingle():{data:null}
+  const{data:run,error:runError}=await supabaseAdmin.from('agent_runs').select('id,status,error,updated_at,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown','completed']).order('started_at',{ascending:false}).limit(1).maybeSingle()
+  if(runError)throw new Error('restaurant_objective_run_unverified')
+  const{data:approval,error:approvalError}=run?.id?await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',String(run.id)).eq('telegram_id',String(tg)).eq('action_type','booking').order('requested_at',{ascending:false}).limit(1).maybeSingle():{data:null,error:null}
+  if(approvalError)throw new Error('restaurant_objective_approval_unverified')
   return{event:data,run:run||null,approval:approval||null}
 }
 
@@ -1156,8 +1191,29 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
   if(conflictReview)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:conflictReview}
   const contextWindows=diningContext.windows
   const contextRefs=[...contextWindows.flatMap(window=>window.sourceRefs),...diningContext.calendar.windows.flatMap(window=>window.sourceRefs)].slice(0,30)
-  const key=dedupeKey(params.actor,intent,provider.url)
-  const existing=await existingMission(params.actor.legacyTelegramId,key)
+  // Check historical rows as well as the new provider-independent key. Never
+  // transfer an old approval or replace an uncertain action just because discovery
+  // found a different route. A legacy same-route mission retains its original key.
+  let key=dedupeKey(params.actor,intent)
+  let existing:Awaited<ReturnType<typeof existingMission>>
+  try{
+    const matches=await matchingReservationEvents(params.actor,intent)
+    if(matches.length>1||matches.some(row=>row.metadata_json?.reservationUrl!==provider.url))return reservationReconciliationReply()
+    if(matches.length===1){
+      if(typeof matches[0].dedupe_key!=='string'||!matches[0].dedupe_key)return reservationReconciliationReply()
+      key=matches[0].dedupe_key
+    }
+    existing=await existingMission(params.actor.legacyTelegramId,key)
+    if(!existing&&matches.length)return reservationReconciliationReply()
+    if(!existing&&matches.length===0){
+      const oldKey=legacyDedupeKey(params.actor,intent,provider.url)
+      existing=await existingMission(params.actor.legacyTelegramId,oldKey)
+      if(existing)key=oldKey
+    }
+  }catch{return reservationReconciliationReply()}
+  if(existing&&(existing.event.metadata_json?.reservationUrl&&existing.event.metadata_json.reservationUrl!==provider.url))return reservationReconciliationReply(String(existing.run?.id||''))
+  if(existing&&!existing.run)return reservationReconciliationReply()
+  if(existing?.run?.status==='outcome_unknown'||/restaurant_(?:reservation_(?:outcome|confirmation)_unknown|confirmation_recording|reconciliation_pending)/.test(String(existing?.run?.error||'')))return reservationReconciliationReply(String(existing?.run?.id||''))
   if(existing?.event?.metadata_json?.reservationConfirmed===true||existing?.run?.metadata_json?.providerConfirmationVerified===true)return{runId:String(existing?.run?.id||''),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'A provider confirmation is already recorded for this reservation. Do not book it again. Review that same task; specify a different dining date if you intend a separate reservation.'}
   const refreshInProgress=String(existing?.run?.error||'').startsWith('restaurant_context_refresh:')
   const refreshUpdated=Date.parse(String(existing?.run?.updated_at||''))
@@ -1207,7 +1263,11 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
     dedupe_key:key,
     next_action_at:releaseAt,
     updated_at:now,
-  },{onConflict:'telegram_id,dedupe_key'}).select('id').single()
+  // For a new objective the unique owner/key constraint is an atomic claim.
+  // A concurrent contender may not overwrite the winner's event/action or create
+  // another approval. Only the already CAS-claimed context refresh may update.
+  },{onConflict:'telegram_id,dedupe_key',ignoreDuplicates:!refreshing}).select('id').single()
+  if(!refreshing&&(!event?.id&&(!eventError||['23505','PGRST116'].includes(String(eventError.code)))))return reservationReconciliationReply()
   if(eventError||!event?.id)throw new Error(`restaurant_reservation_event_failed:${eventError?.message||'unknown'}`)
   const lifeEventId=String(event.id)
   const{data:action,error:actionError}=await supabaseAdmin.from('life_event_actions').upsert({
