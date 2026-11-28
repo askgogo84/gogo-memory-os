@@ -201,4 +201,150 @@ create table public.gogo_governed_search_prices (
 alter table public.gogo_governed_search_prices enable row level security;
 revoke all on public.gogo_governed_search_prices from public,anon,authenticated,service_role;
 grant select on public.gogo_governed_search_prices to service_role;
+-- Reviewed descriptive revisions only: executable code and capability gates stay
+-- in the static registry. Independent receipts are operator-owned and immutable
+-- to the app's service role. The app cannot fabricate a test or security receipt.
+create table public.gogo_skill_revisions (
+  id uuid primary key default gen_random_uuid(),
+  scope_kind text not null,
+  scope_id text not null,
+  skill_id text not null check(skill_id ~ '^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*){1,3}$'),
+  version text not null check(version ~ '^(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})$'),
+  base_digest text not null check(base_digest ~ '^[0-9a-f]{64}$'),
+  static_digest text not null check(static_digest ~ '^[0-9a-f]{64}$'),
+  revision_digest text not null check(revision_digest ~ '^[0-9a-f]{64}$'),
+  build_sha text not null check(build_sha ~ '^[0-9a-f]{40}$'),
+  title text not null check(length(trim(title)) between 1 and 100),
+  purpose text not null check(length(trim(purpose)) between 1 and 240),
+  author_id text not null check(author_id ~ '^[A-Za-z0-9_:.@/-]{1,200}$'),
+  evidence_refs text[] not null check(cardinality(evidence_refs) between 1 and 20),
+  summary text not null check(length(trim(summary)) between 1 and 1000),
+  expires_at timestamptz not null,
+  created_at timestamptz not null default clock_timestamp(),
+  unique(scope_kind,scope_id,skill_id,version),
+  unique(scope_kind,scope_id,skill_id,id),
+  foreign key(scope_kind,scope_id) references public.gogo_governed_policies(scope_kind,scope_id) on delete restrict
+);
+create table public.gogo_skill_revision_receipts (
+  revision_id uuid not null references public.gogo_skill_revisions(id) on delete restrict,
+  review_kind text not null check(review_kind in ('test','security')),
+  reviewer_id text not null check(reviewer_id ~ '^[A-Za-z0-9_:.@/-]{1,200}$'),
+  receipt_ref text not null check(receipt_ref ~ '^[A-Za-z0-9_:.@/-]{1,200}$'),
+  revision_digest text not null check(revision_digest ~ '^[0-9a-f]{64}$'),
+  build_sha text not null check(build_sha ~ '^[0-9a-f]{40}$'),
+  valid_until timestamptz not null,
+  primary key(revision_id,review_kind)
+);
+create table public.gogo_skill_active (
+  scope_kind text not null, scope_id text not null, skill_id text not null,
+  revision_id uuid,
+  generation bigint not null check(generation between 1 and 9007199254740991),
+  active_digest text not null check(active_digest ~ '^[0-9a-f]{64}$'),
+  build_sha text not null check(build_sha ~ '^[0-9a-f]{40}$'),
+  changed_at timestamptz not null default clock_timestamp(),
+  primary key(scope_kind,scope_id,skill_id),
+  foreign key(scope_kind,scope_id) references public.gogo_governed_policies(scope_kind,scope_id) on delete restrict,
+  foreign key(scope_kind,scope_id,skill_id,revision_id) references public.gogo_skill_revisions(scope_kind,scope_id,skill_id,id) on delete restrict
+);
+create table public.gogo_skill_review_events (
+  id uuid primary key default gen_random_uuid(),
+  scope_kind text not null, scope_id text not null, skill_id text not null,
+  actor_id text not null, action text not null check(action in ('publish','rollback')),
+  generation bigint not null, old_digest text not null, new_digest text not null,
+  revision_id uuid, build_sha text not null,
+  occurred_at timestamptz not null default clock_timestamp(),
+  unique(scope_kind,scope_id,skill_id,generation)
+);
+alter table public.gogo_skill_revisions enable row level security;
+alter table public.gogo_skill_revision_receipts enable row level security;
+alter table public.gogo_skill_active enable row level security;
+alter table public.gogo_skill_review_events enable row level security;
+revoke all on public.gogo_skill_revisions,public.gogo_skill_revision_receipts,public.gogo_skill_active,public.gogo_skill_review_events from public,anon,authenticated,service_role;
+grant select on public.gogo_skill_revisions,public.gogo_skill_revision_receipts to service_role;
+grant select,insert,update on public.gogo_skill_active to service_role;
+grant select,insert on public.gogo_skill_review_events to service_role;
+
+-- Atomic version pointer and audit. The authenticated server checks scope
+-- and reconstructs the complete definition digest from its static registry;
+-- this RPC rechecks actor role, policy, CAS, and independent receipts.
+create function public.gogo_change_skill_revision(
+  p_scope_kind text,p_scope_id text,p_actor_id text,p_skill_id text,p_action text,
+  p_revision_id uuid,p_expected_generation bigint,p_expected_digest text,p_static_digest text,p_build_sha text
+) returns text language plpgsql security invoker set search_path='' as $$
+declare
+  pol public.gogo_governed_policies%rowtype;
+  ptr public.gogo_skill_active%rowtype;
+  rev public.gogo_skill_revisions%rowtype;
+  t public.gogo_skill_revision_receipts%rowtype;
+  s public.gogo_skill_revision_receipts%rowtype;
+  role_value text;
+  gen bigint:=0;
+  digest text;
+  new_digest text;
+begin
+  if p_scope_kind is null or p_scope_kind not in ('personal','workspace') or p_scope_id is null or
+    p_actor_id is null or p_actor_id !~ '^-?[1-9][0-9]{0,18}$' or p_skill_id is null or p_skill_id !~ '^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*){1,3}$' or
+    p_action is null or p_action not in ('publish','rollback') or p_expected_generation is null or p_expected_generation not between 0 and 9007199254740990 or
+    p_expected_digest is null or p_expected_digest !~ '^[0-9a-f]{64}$' or p_static_digest is null or p_static_digest !~ '^[0-9a-f]{64}$' or
+    p_build_sha is null or p_build_sha !~ '^[0-9a-f]{40}$' or ((p_action='publish') is distinct from (p_revision_id is not null)) then return 'invalid'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('skill:'||p_scope_kind||':'||p_scope_id||':'||p_skill_id,0));
+  select * into pol from public.gogo_governed_policies where scope_kind=p_scope_kind and scope_id=p_scope_id for share;
+  if not found or not pol.enabled or pol.valid_until<=clock_timestamp() then return 'unavailable'; end if;
+  -- The member/active access rows are checked in the mutation transaction,
+  -- not inferred from an earlier UI role or a model instruction.
+  perform 1 from public.users where telegram_id::text=p_actor_id and access_status='active' for share;
+  if not found then return 'forbidden'; end if;
+  if p_scope_kind='personal' then
+    if p_scope_id<>p_actor_id then return 'forbidden'; end if;
+  else
+    select role::text into role_value from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=p_actor_id for share;
+    if not found or role_value not in ('owner','admin') then return 'forbidden'; end if;
+  end if;
+  select * into ptr from public.gogo_skill_active where scope_kind=p_scope_kind and scope_id=p_scope_id and skill_id=p_skill_id for update;
+  if found then gen:=ptr.generation; digest:=ptr.active_digest; else digest:=p_static_digest; end if;
+  if gen<>p_expected_generation or digest<>p_expected_digest then return 'stale'; end if;
+  if p_action='publish' then
+    select * into rev from public.gogo_skill_revisions where id=p_revision_id and scope_kind=p_scope_kind and scope_id=p_scope_id and skill_id=p_skill_id;
+    if not found or rev.expires_at<=clock_timestamp() or rev.author_id=p_actor_id or rev.base_digest<>digest or rev.static_digest<>p_static_digest or rev.build_sha<>p_build_sha then return 'unreviewed'; end if;
+    select * into t from public.gogo_skill_revision_receipts where revision_id=rev.id and review_kind='test';
+    if not found then return 'unreviewed'; end if;
+    select * into s from public.gogo_skill_revision_receipts where revision_id=rev.id and review_kind='security';
+    if not found then return 'unreviewed'; end if;
+    if t.valid_until<=clock_timestamp() or s.valid_until<=clock_timestamp() or
+      t.revision_digest<>rev.revision_digest or s.revision_digest<>rev.revision_digest or
+      t.build_sha<>p_build_sha or s.build_sha<>p_build_sha or
+      t.reviewer_id=s.reviewer_id or t.reviewer_id=rev.author_id or s.reviewer_id=rev.author_id or
+      t.reviewer_id=p_actor_id or s.reviewer_id=p_actor_id or t.receipt_ref=s.receipt_ref then return 'unreviewed'; end if;
+    new_digest:=rev.revision_digest;
+  else
+    if gen=0 or ptr.revision_id is null then return 'no_active_revision'; end if;
+    new_digest:=p_static_digest;
+  end if;
+  insert into public.gogo_skill_active(scope_kind,scope_id,skill_id,revision_id,generation,active_digest,build_sha)
+    values(p_scope_kind,p_scope_id,p_skill_id,p_revision_id,gen+1,new_digest,p_build_sha)
+    on conflict(scope_kind,scope_id,skill_id) do update set revision_id=excluded.revision_id,generation=excluded.generation,
+      active_digest=excluded.active_digest,build_sha=excluded.build_sha,changed_at=clock_timestamp();
+  insert into public.gogo_skill_review_events(scope_kind,scope_id,skill_id,actor_id,action,generation,old_digest,new_digest,revision_id,build_sha)
+    values(p_scope_kind,p_scope_id,p_skill_id,p_actor_id,p_action,gen+1,digest,new_digest,p_revision_id,p_build_sha);
+  return 'changed';
+end $$;
+revoke all on function public.gogo_change_skill_revision(text,text,text,text,text,uuid,bigint,text,text,text) from public,anon,authenticated,service_role;
+grant execute on function public.gogo_change_skill_revision(text,text,text,text,text,uuid,bigint,text,text,text) to service_role;
+
+-- Privacy-preserving quarantine audit only. The rejected directive and its
+-- source content are deliberately NOT copied into a new memory store. Retain
+-- no raw text, content hash, URL, external message ID or inferred facts.
+create table public.gogo_memory_block_events (
+  id uuid primary key default gen_random_uuid(),
+  scope_kind text not null, scope_id text not null,
+  origin text not null check(origin in ('model','email','web','document','tool')),
+  reason text not null check(reason in ('untrusted_directive','secret_rejected','missing_authority')),
+  created_at timestamptz not null default clock_timestamp(),
+  expires_at timestamptz not null default (clock_timestamp()+interval '7 days'),
+  foreign key(scope_kind,scope_id) references public.gogo_governed_policies(scope_kind,scope_id) on delete restrict
+);
+create index gogo_memory_block_scope_idx on public.gogo_memory_block_events(scope_kind,scope_id,created_at);
+alter table public.gogo_memory_block_events enable row level security;
+revoke all on public.gogo_memory_block_events from public,anon,authenticated,service_role;
+grant select,insert,delete on public.gogo_memory_block_events to service_role;
 commit;

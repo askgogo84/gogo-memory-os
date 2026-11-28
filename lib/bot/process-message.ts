@@ -581,7 +581,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const until=Date.now()+15_000
       const result=runtime?await runtime.local('personal_skill_catalog',async()=>{
         const a=await import('@/lib/agent/adaptive-autonomy')
-        return catalog.personalSkillCatalog(query,c=>a.capabilityPermissionLevel(actor.legacyTelegramId,c))
+        const reviewed=await import('@/lib/agent/governed-review-store').then(m=>m.reviewedCatalogDefinitions(String(actor.legacyTelegramId),{kind:'personal',id:String(actor.legacyTelegramId)}))
+        return catalog.personalSkillCatalog(query,c=>a.capabilityPermissionLevel(actor.legacyTelegramId,c),reviewed)
       },()=>Date.now()<until):null
       const reply=result?.state==='completed'?result.value:'The governed skill catalog is unavailable or has reached its limits. Nothing was executed.'
       await saveConversation(resolvedUser.telegramId,'user',incomingText)

@@ -15,6 +15,7 @@ const workspace:SkillDefinition[]=[
   {id:'workspace.orders.summary',sopVersion:'1.0.0',title:'Recorded orders and cancellations',purpose:'All-history recorded order totals and cancellations in the read-only hospitality workspace pilot.',input:{},output:{},limits:{maxSteps:1,maxMinutes:1,maxCostPaise:0},requiredCapabilities:['merchant'],exactActionApproval:false,evidence:['ledger_row'],risk:'low',irreversible:false},
   {id:'workspace.stock.summary',sopVersion:'1.0.0',title:'Recorded stock availability',purpose:'Recorded menu item availability across the member’s pilot outlets; not live POS status.',input:{},output:{},limits:{maxSteps:1,maxMinutes:1,maxCostPaise:0},requiredCapabilities:['merchant'],exactActionApproval:false,evidence:['ledger_row'],risk:'low',irreversible:false}
 ]
+export function catalogBaseDefinitions(kind:'personal'|'workspace'):SkillDefinition[]{return [...(kind==='personal'?personal:workspace)]}
 function render(defs:readonly SkillDefinition[],query:string,allowed:Set<string>):string{
   const refs=query?searchSkillIndex(defs,query,allowed).map(x=>({id:x.id,version:x.version})):defs.map(ref)
   const descriptions=previewSkills(defs,refs,allowed)
@@ -24,16 +25,16 @@ function render(defs:readonly SkillDefinition[],query:string,allowed:Set<string>
     return '• '+title+' ('+d.id+' v'+d.version+'): '+d.purpose
   })].join('\n')
 }
-export async function personalSkillCatalog(query:string,permission:(c:AgentCapability)=>Promise<AgentPermissionLevel>):Promise<string>{
+export async function personalSkillCatalog(query:string,permission:(c:AgentCapability)=>Promise<AgentPermissionLevel>,reviewed:readonly SkillDefinition[]=personal):Promise<string>{
   const allowed=new Set<string>()
-  for(const d of personal){
+  for(const d of reviewed){
     try{
       const levels=await Promise.all(d.requiredCapabilities.map(permission))
       if(levels.every(x=>['read','draft','ask','auto'].includes(x)))allowed.add(key(d))
     }catch{/* missing permission data hides the skill */}
   }
-  return render(personal,query,allowed)
+  return render(reviewed,query,allowed)
 }
-export function workspaceSkillCatalog(query:string,pilotEnabled:boolean):string{
-  return render(workspace,query,new Set(pilotEnabled?workspace.map(key):[]))
+export function workspaceSkillCatalog(query:string,pilotEnabled:boolean,reviewed:readonly SkillDefinition[]=workspace):string{
+  return render(reviewed,query,new Set(pilotEnabled?reviewed.map(key):[]))
 }
