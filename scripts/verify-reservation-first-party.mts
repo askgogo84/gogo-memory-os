@@ -26,7 +26,7 @@ const EAZY={title:'Toit Indiranagar, Bengaluru - Book a Table | EazyDiner',url:'
 const RESERVEGO={title:'Toit Indiranagar - Reserve a table | ReserveGo',url:WIDGET,snippet:'Reserve a table at Toit Brewpub, 100 Feet Road, Indiranagar, Bengaluru.'}
 const transpile=(file:string)=>ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 
-function makeDb(seed:Record<string,any[]>={}){
+function makeDb(seed:Record<string,any[]>={},faults:{competingClaim?:boolean;inventoryError?:boolean}={}){
   const tables:Record<string,any[]>=JSON.parse(JSON.stringify(seed));let ids=0
   const writes:Array<{table:string;op:string;value:any}>=[]
   const get=(r:any,k:string)=>{if(k.includes('->>')){const[a,b]=k.split('->>');const v=r[a]?.[b];return v==null?undefined:String(v)}return r[k]}
@@ -35,7 +35,13 @@ function makeDb(seed:Record<string,any[]>={}){
     let op='select',payload:any=null,limitN=Infinity,orderKey='',asc=true,ignoreDuplicates=false
     const filters:Array<(r:any)=>boolean>=[]
     const exec=(single:boolean)=>{
+      if(table==='life_events'&&op==='select'&&!single&&faults.inventoryError)return{data:null,error:{message:'inert inventory unavailable'}}
       if(op==='upsert'&&table==='life_events'){
+        // A competing writer claims the exact unique key between lookup and insert.
+        if(faults.competingClaim){
+          faults.competingClaim=false
+          rows().push({id:'competing-event',...JSON.parse(JSON.stringify(payload)),metadata_json:{...payload.metadata_json,reservationUrl:'https://toit.in/reservations',winner:true}})
+        }
         const existing=rows().find(r=>String(r.telegram_id)===String(payload.telegram_id)&&r.dedupe_key===payload.dedupe_key)
         if(existing){
           if(ignoreDuplicates)return{data:single?null:[],error:single?{code:'PGRST116',message:'No rows returned'}:null}
@@ -495,6 +501,27 @@ await check('new booking objective key is provider-independent, while approval r
   assert.equal(a.tables.life_events[0].dedupe_key,b.tables.life_events[0].dedupe_key)
   // Exact provider approval remains separately bound.
   assert.notEqual(a.tables.agent_approvals[0].action_hash,b.tables.agent_approvals[0].action_hash)
+})
+
+await check('concurrent provider claim cannot overwrite winner or stage a second approval',async()=>{
+  const db=makeDb({users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}]},{competingClaim:true})
+  const {result}=await prepareToitRoute(db,false)
+  assert.equal(result.status,'paused')
+  assert.match(result.text,/reconcil/i)
+  assert.equal(db.tables.life_events.length,1)
+  assert.equal(db.tables.life_events[0].id,'competing-event')
+  assert.equal(db.tables.life_events[0].metadata_json.reservationUrl,alternateToit.url)
+  assert.equal(db.tables.life_events[0].metadata_json.winner,true)
+  assert.equal(db.tables.life_event_actions?.length||0,0)
+  assert.equal(db.tables.agent_approvals?.length||0,0)
+})
+await check('unreadable objective inventory fails closed before mutation authority',async()=>{
+  const db=makeDb({users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}]},{inventoryError:true})
+  const {result}=await prepareToitRoute(db,false)
+  assert.equal(result.status,'paused')
+  assert.equal(db.tables.life_events?.length||0,0)
+  assert.equal(db.tables.life_event_actions?.length||0,0)
+  assert.equal(db.tables.agent_approvals?.length||0,0)
 })
 
 await check('release-time providers (Naru) keep the existing release mission path',async()=>{
