@@ -188,6 +188,21 @@ for(const [label,change] of [
  try{await worker.processOne(original)}catch{}
  assert.equal(providerCalls,1)
 })
+await check('own-site redirect into ReserveX cannot fall through to generic completion or leak private URL',async()=>{
+ reserveXFixture()
+ rows.life_event_actions.payload_json.reservationUrl='https://synthetic.example/reservations'
+ rebindCurrent()
+ const original=structuredClone(rows.life_event_actions)
+ const response=await worker.processOne(original)
+ assert.equal(response.status,'outcome_unknown')
+ assert.equal(providerCalls,1)
+ assert.equal(rows.life_event_actions.status,'blocked')
+ assert.notEqual(rows.life_event_actions.payload_json.providerConfirmationVerified,true)
+ assert.equal(calendarCalls,0)
+ assert.ok(!JSON.stringify({rows,writes,notifications}).includes(reserveXPrivate))
+ try{await worker.processOne(original)}catch{}
+ assert.equal(providerCalls,1)
+})
 await check('legacy private ReserveX route cannot reach a new provider dispatch',async()=>{
  reserveXFixture()
  rows.life_event_actions.payload_json.reservationUrl=reserveXPrivate
