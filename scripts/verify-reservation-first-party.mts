@@ -32,9 +32,16 @@ function makeDb(seed:Record<string,any[]>={}){
   const get=(r:any,k:string)=>{if(k.includes('->>')){const[a,b]=k.split('->>');const v=r[a]?.[b];return v==null?undefined:String(v)}return r[k]}
   function from(table:string){
     const rows=()=>tables[table]||(tables[table]=[])
-    let op='select',payload:any=null,limitN=Infinity,orderKey='',asc=true
+    let op='select',payload:any=null,limitN=Infinity,orderKey='',asc=true,ignoreDuplicates=false
     const filters:Array<(r:any)=>boolean>=[]
     const exec=(single:boolean)=>{
+      if(op==='upsert'&&table==='life_events'){
+        const existing=rows().find(r=>String(r.telegram_id)===String(payload.telegram_id)&&r.dedupe_key===payload.dedupe_key)
+        if(existing){
+          if(ignoreDuplicates)return{data:single?null:[],error:single?{code:'PGRST116',message:'No rows returned'}:null}
+          Object.assign(existing,payload);return{data:single?existing:[existing],error:null}
+        }
+      }
       if(op==='insert'||op==='upsert'){const row={id:`${table}-${++ids}`,...payload};rows().push(row);return{data:single?row:[row],error:null}}
       let matched=rows().filter(r=>filters.every(f=>f(r)))
       if(op==='update'){matched.forEach(r=>Object.assign(r,payload));return{data:single?(matched[0]||null):matched,error:null}}
@@ -51,7 +58,7 @@ function makeDb(seed:Record<string,any[]>={}){
       order:(k:string,o?:any)=>{orderKey=k;asc=o?.ascending!==false;return q},limit:(n:number)=>{limitN=n;return q},
       update:(v:any)=>{op='update';payload=v;writes.push({table,op,value:v});return q},
       insert:(v:any)=>{op='insert';payload=v;writes.push({table,op,value:v});return q},
-      upsert:(v:any)=>{op='upsert';payload=v;writes.push({table,op,value:v});return q},
+      upsert:(v:any,options?:{ignoreDuplicates?:boolean})=>{op='upsert';payload=v;ignoreDuplicates=options?.ignoreDuplicates===true;writes.push({table,op,value:v});return q},
       maybeSingle:async()=>exec(true),single:async()=>exec(true),
       then:(res:any,rej:any)=>Promise.resolve().then(()=>exec(false)).then(res,rej),
     }
@@ -419,6 +426,75 @@ await check('one owner: tryRunRestaurantReservation never reads a bare name; the
   assert.ok(webhook.indexOf('await tryResolvePendingQuestion({')<webhook.indexOf('const unsupported=unsupportedCapability(text)'))
   assert.ok(agentRun.indexOf('await tryResolvePendingQuestion(')>0&&agentRun.indexOf('await tryResolvePendingQuestion(')<agentRun.indexOf('await tryRunRestaurantReservation('),'agent API resolves the question before reservation routing')
   assert.ok(dash.indexOf('await tryResolvePendingQuestion(')<dash.indexOf('await queueRestaurantReservationResearch('))
+})
+
+// The provider route may change after a lost response, but an earlier mutation
+// remains one objective. Use real preparation/resumption with inert transports.
+const alternateToit={title:'Toit Indiranagar - Reserve a table',url:'https://toit.in/reservations',snippet:'Toit Indiranagar Bengaluru reservations'}
+async function prepareToitRoute(db:ReturnType<typeof makeDb>,alternate:boolean,request=REQUEST){
+  const h=loadReservation({db,search:()=>alternate?[RESERVEGO,alternateToit]:[RESERVEGO],browser:async p=>{
+    assert.equal(p.mode,'read')
+    if(alternate&&p.url===WIDGET)throw Error('browser_objective_unverified')
+    return {...await widgetPage(['7:00 PM'])(),url:p.url}
+  }})
+  const read=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:request})
+  assert.match(read.text,/available/)
+  return {h,result:await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Fixture Guest'})}
+}
+const reservationDb=()=>makeDb({users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}]})
+await check('cross-provider retry after unknown outcome preserves original action and approval, including legacy key',async()=>{
+  for(const legacy of [false,true]){
+    const db=reservationDb()
+    const first=await prepareToitRoute(db,false)
+    assert.equal(first.result.status,'waiting_approval')
+    const event=db.tables.life_events[0],action=db.tables.life_event_actions[0]
+    const run=db.tables.agent_runs.find(r=>r.metadata_json?.plan_type==='restaurant_reservation_release')!
+    if(legacy)event.dedupe_key=createHash('sha256').update([actor.legacyTelegramId,'Toit Indiranagar',WIDGET,2,'19:00','19:00','2026-10-20'].join('|').toLowerCase()).digest('hex').slice(0,40)
+    run.status='outcome_unknown';run.error='restaurant_reservation_outcome_unknown'
+    action.status='blocked';action.payload_json.blockedReason=run.error
+    db.tables.agent_approvals[0].status='approved'
+    const before=JSON.stringify({event,action,run,approvals:db.tables.agent_approvals})
+    const retry=await prepareToitRoute(db,true,REQUEST.replace('Toit Indiranagar','toit indiranagar'))
+    assert.equal(retry.result.status,'paused')
+    assert.match(retry.result.text,/reconcil/i)
+    assert.equal(db.tables.life_events.length,1)
+    assert.equal(db.tables.life_event_actions.length,1)
+    assert.equal(db.tables.agent_approvals.length,1)
+    assert.equal(JSON.stringify({event,action,run,approvals:db.tables.agent_approvals}),before)
+    assert.deepEqual(retry.h.browserCalls.map(p=>[p.mode,p.url]),[['read',WIDGET],['read',alternateToit.url]])
+  }
+})
+await check('active or confirmed mission blocks a different provider; another owner is not a duplicate',async()=>{
+  for(const state of ['waiting_approval','completed']){
+    const db=reservationDb()
+    const first=await prepareToitRoute(db,false)
+    assert.equal(first.result.status,'waiting_approval')
+    const run=db.tables.agent_runs.find(r=>r.metadata_json?.plan_type==='restaurant_reservation_release')!
+    run.status=state
+    if(state==='completed')db.tables.life_events[0].metadata_json.reservationConfirmed=true
+    const retry=await prepareToitRoute(db,true)
+    assert.equal(retry.result.status,'paused')
+    assert.equal(db.tables.agent_approvals.length,1)
+    assert.equal(db.tables.life_event_actions.length,1)
+  }
+  const db=reservationDb()
+  const first=await prepareToitRoute(db,false)
+  assert.equal(first.result.status,'waiting_approval')
+  for(const table of ['life_events','life_event_actions','agent_approvals','agent_runs'])for(const row of db.tables[table])row.telegram_id='456'
+  const other=await prepareToitRoute(db,true)
+  assert.equal(other.result.status,'waiting_approval')
+  assert.equal(db.tables.agent_approvals.length,2)
+  assert.notEqual(db.tables.life_events[0].dedupe_key,undefined)
+})
+await check('new booking objective key is provider-independent, while approval remains provider-bound',async()=>{
+  const a=reservationDb(),b=reservationDb()
+  const one=await prepareToitRoute(a,false)
+  const two=await prepareToitRoute(b,true)
+  assert.equal(one.result.status,'waiting_approval')
+  assert.equal(two.result.status,'waiting_approval')
+  assert.equal(a.tables.life_events[0].dedupe_key,b.tables.life_events[0].dedupe_key)
+  // Exact provider approval remains separately bound.
+  assert.notEqual(a.tables.agent_approvals[0].action_hash,b.tables.agent_approvals[0].action_hash)
 })
 
 await check('release-time providers (Naru) keep the existing release mission path',async()=>{
