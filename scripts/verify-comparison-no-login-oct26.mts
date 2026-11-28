@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 const read = (p: string) => readFileSync(new URL('../' + p, import.meta.url), 'utf8')
 const cmd = read('lib/agent/browser-command.ts'), sc = read('lib/agent/secure-computer.ts')
 assert.match(cmd, /\.\.\.\(runMetadata\.comparison_parent_id&&params\.mode==='read'\?\{publicOnly:true\}:\{\}\)/, 'comparison reads pass publicOnly')
-assert.match(sc, /readDeadline\?:number;publicOnly\?:boolean\}\):Promise<SecureBrowserResult>/)
+assert.match(sc, /readDeadline\?:number;publicOnly\?:boolean;googleDiningDiscovery\?:\{restaurant:string\}\}\):Promise<SecureBrowserResult>/)
 assert.match(sc, /if\(params\.publicOnly\)signedOutEntry=false/, 'a header Sign in link never starts a login on a public read')
 assert.match(sc, /if\(!params\.publicOnly&&!params\.resumePage&&!params\.loginCode&&!signedOutEntry/, 'the phone-site sign-in at start is skipped')
 assert.match(sc, /if\(!params\.publicOnly && !vaultAttempted && params\.accountCreation!==true/, 'no saved login is used on a public read')
