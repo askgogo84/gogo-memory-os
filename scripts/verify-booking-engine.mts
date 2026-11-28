@@ -46,7 +46,7 @@ assert.match(rr, /if\(inspected\.status==='blocked'\)\{\n\s+if\(!signInSite\)ret
 assert.match(rr, /status:'needs_reauth'\}\)/, 'a sign-in wall marks the saved connection for reconnect')
 assert.match(rr, /if\(signInSite\)\{await markSignInForReconnect\(\);return connectFirst\(\)\}/, 'a timeout marks it too')
 const worker = readFileSync(new URL('../lib/agent/restaurant-reservation-worker.ts', import.meta.url), 'utf8')
-const vi = worker.indexOf("const verified=submitted&&confirmedText(result)"), ri = worker.indexOf('start_at:startAt')
+const vi = worker.indexOf("const verified=submitted&&(isReserveX?Boolean(verifiedReceipt):confirmedText(result))"), ri = worker.indexOf('start_at:startAt')
 assert.ok(vi > 0 && ri > vi, 'start_at is recorded only after the provider confirmation is verified')
 assert.match(worker, /eq\('id',event\.id\)\.eq\('telegram_id',tg\)/)
 const route = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
