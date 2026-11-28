@@ -25,7 +25,7 @@ const db={from(table:string){let updating=false;const q:any={
  maybeSingle:async()=>({data:updating?(claimLost?null:{id:'existing-context-run'}):table==='users'?{timezone:'Asia/Kolkata'}:revising&&table==='life_events'?{id:'synthetic-life_events'}:revising&&table==='agent_runs'?{id:'existing-context-run',status:runStatus,error:runError,updated_at:runUpdated,metadata_json:{}}:revising&&table==='agent_approvals'?{id:'old-approval',status:approvalStatus}:null,error:null}),
  upsert:(payload:any)=>{assert.equal(String(payload.telegram_id),'123');writes.push({table,payload});return q},
  insert:(payload:any)=>{assert.equal(String(payload.telegram_id),'123');writes.push({table,payload});return q},
- single:async()=>({data:{id:revising&&table==='agent_runs'?'existing-context-run':'synthetic-'+table},error:approvalWriteFailed&&table==='agent_approvals'?{message:'synthetic insert failure'}:null}),then:(resolve:any)=>resolve({error:null})};return q}}
+ single:async()=>({data:{id:revising&&table==='agent_runs'?'existing-context-run':'synthetic-'+table},error:approvalWriteFailed&&table==='agent_approvals'?{message:'synthetic insert failure'}:null}),then:(resolve:any)=>resolve({data:[],error:null})};return q}}
 let inspected=0,calendarRequested=false,lastCalendarCoverage:any
 let bindingInput:any
 const actual=load('lib/agent/restaurant-reservation.ts',{
