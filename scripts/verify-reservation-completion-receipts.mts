@@ -169,6 +169,9 @@ for(const [label,change] of [
  ['conflicting fields',(r:any)=>{r.pageText=receiptPage+' Guests: 4'}],
  ['wrong origin',(r:any)=>{r.url='https://other.example/confirmation'}],
  ['wrong public venue',(r:any)=>{r.url=reserveXPublic.replace(/0001$/,'0003')}],
+ ['multiple submissions',(r:any)=>{r.actions=[{kind:'submit',status:'done'},{kind:'submit',status:'done'}]}],
+ ['request acknowledgement',(r:any)=>{r.pageText=receiptPage.replace('Reservation confirmed','Thank you for your reservation request')}],
+ ['wrong original route',(r:any)=>{r.originalUrl=reserveXPublic.replace(/0001$/,'0003')}],
  ['uncertain submit',(r:any)=>{r.status='blocked';r.actions=[{kind:'submit',status:'failed'}]}],
  ['blocked after submit',(r:any)=>{r.status='blocked';r.actions=[{kind:'submit',status:'done'}]}],
 ] as Array<[string,(r:any)=>void]>)await check('ReserveX '+label+' never claims a booking or submits twice',async()=>{
@@ -184,6 +187,17 @@ for(const [label,change] of [
  assert.ok(!JSON.stringify({rows,writes,notifications}).includes(reserveXPrivate))
  try{await worker.processOne(original)}catch{}
  assert.equal(providerCalls,1)
+})
+await check('legacy private ReserveX route cannot reach a new provider dispatch',async()=>{
+ reserveXFixture()
+ rows.life_event_actions.payload_json.reservationUrl=reserveXPrivate
+ rebindCurrent()
+ const response=await worker.processOne(structuredClone(rows.life_event_actions))
+ assert.equal(response.status,'paused')
+ assert.equal(providerCalls,0)
+ assert.equal(rows.life_event_actions.status,'blocked')
+ assert.equal(calendarCalls,0)
+ assert.ok(!notifications.some(t=>t.includes(reserveXPrivate)))
 })
 await check('ReserveX 8:01 receipt does not inherit an exact 8:00 approval',async()=>{
  reserveXFixture()
