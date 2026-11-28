@@ -120,6 +120,7 @@ for(const [files,hasMore,expected] of [
     'Review whether Google Drive has an exact match for the exact filename "'+lookupTitle+'".',
     'Read my Google Drive document with the exact filename "'+lookupTitle+'". Do not open it yet.',
     'Check the exact filename "'+lookupTitle+'" in my Google Drive and do not summarize it.',
+    'Read my Google Drive document with the exact filename "'+lookupTitle+'". Do not show me the contents.',
   ]){
     const lookup=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:lookupPrompt})
     assert.match(lookup.text,expected)
@@ -165,6 +166,8 @@ for(const contentPrompt of [
   'Read my Google Drive document with the exact filename "'+normalizedTitle+'".',
   'Find my Google Drive document with the exact filename "'+normalizedTitle+'" and summarize it.',
   'Find my Google Drive document with the exact filename '+normalizedTitle+' and read it.',
+  'Show me the contents of my Google Drive document with the exact filename "'+normalizedTitle+'".',
+  'Find my Google Drive document with the exact filename "'+normalizedTitle+'" and display the document text.',
 ]){
   const contentRead=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:contentPrompt})
   assert.equal(contentRead.status,'completed')

@@ -55,8 +55,10 @@ function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|nul
   const after=calendarAffirmativeText(tail.slice(title.length).replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,''))
   const request=outsideQuotes.replace(/’/g,"'")
   const wantsExistence=/\b(?:existence[- ]only|metadata[- ]only|only\s+(?:whether|if)|(?:whether|if)\b[^.;!?\n]*\b(?:exists?|exact\s+match))\b/i.test(request)
-  const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|show(?:ing)?\s+(?:the\s+)?(?:file\s+)?contents?)\b/i.test(request)
-  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|review|open)\b/i.test(before+' '+after)
+  const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.test(request)
+  const affirmative=before+' '+after
+  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|review|open)\b/i.test(affirmative)
+    || /\b(?:show|display)\s+(?:me\s+)?(?:the\s+)?(?:(?:file|document)\s+)?(?:contents?|text)\b/i.test(affirmative)
   return {name:name.trim()&&name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly:wantsExistence||prohibitsReading||!explicitlyReads}
 }
 
