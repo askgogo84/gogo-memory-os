@@ -159,3 +159,7 @@ Selected Gmail approval binds and displays the current sender mailbox as well as
 ### Voice single dispatch and pinned request authority
 
 The approved voice executor selects a transport before its single `placeCall` invocation, preserving the existing single-dispatch source guard. Foreground request binding permanently records whether governance was required; disabling enforcement or removing an owner during the request cannot restore legacy model execution. The status worker explicitly inherits that requirement before synthesis and refuses a legacy callback. Added adapter-level revocation and JSONB identity regression coverage. No live call was made.
+
+### Selected primary Calendar rescheduling
+
+The existing typed-event move executor stages the exact current primary account, event ETag, original and proposed times, and requires a fresh immutable approval. It checks the exact primary user UUID, active account and provider-read account identity, then sends only a time-only PATCH with the approved If-Match and wire body through its priced connector. A same-run token must originate from the exact current primary refresh credential; other connected accounts cannot supply it. Approval expiry/revocation, account changes and insufficient permissions deny dispatch. The existing exact provider readback remains required for success. Selected old approvals cannot silently enter the new lane. This does not integrate legacy event creation, deletion, secondary-calendar writes or every other calendar mutation path. No live Calendar action was performed.

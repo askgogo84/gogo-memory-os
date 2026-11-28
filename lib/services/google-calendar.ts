@@ -288,7 +288,8 @@ export async function listUpcomingEvents(accessToken: string, days = 7): Promise
 export async function updateCalendarEvent(
   accessToken: string,
   eventId: string,
-  patch: { summary?: string; startTime?: string; endTime?: string; location?: string; ifMatch?: string; timezone?: string }
+  patch: { summary?: string; startTime?: string; endTime?: string; location?: string; ifMatch?: string; timezone?: string },
+  approvedFetch?:typeof fetch
 ): Promise<{ ok: boolean; event?: any; error?: string; verification?: 'verified' | 'unknown' | 'rejected' }> {
   const body: any = {}
   if (patch.summary) body.summary = patch.summary
@@ -296,7 +297,7 @@ export async function updateCalendarEvent(
   if (patch.endTime) body.end = { dateTime: patch.endTime, timeZone: patch.timezone || 'Asia/Kolkata' }
   if (patch.location) body.location = patch.location
 
-  const response = await fetch(
+  const response = await (approvedFetch||fetch)(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
     {
       method: 'PATCH',

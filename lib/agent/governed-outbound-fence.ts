@@ -2,7 +2,7 @@
 // scope. Not a network sandbox: custom SDK transports must still be audited.
 import {AsyncLocalStorage} from 'node:async_hooks'
 import {currentGovernedRun} from './governed-run-context'
-type Permit={kind:'model'|'search'|'connector';name:string;method?:'GET'|'POST';used:boolean;closed:boolean;authorize?:()=>Promise<boolean>}
+type Permit={kind:'model'|'search'|'connector';name:string;method?:'GET'|'POST'|'PATCH';used:boolean;closed:boolean;authorize?:()=>Promise<boolean>}
 const store:AsyncLocalStorage<Permit>=(globalThis as any).__gogoGovernedPermitStore||new AsyncLocalStorage<Permit>()
 ;(globalThis as any).__gogoGovernedPermitStore=store
 const meterStore:AsyncLocalStorage<{deadline:number}>=(globalThis as any).__gogoGovernedMeterWriteStore||new AsyncLocalStorage<{deadline:number}>()
@@ -17,7 +17,7 @@ function modelUrl(model:string):string|null{
   if(/^mercury-/.test(model))return 'https://api.inceptionlabs.ai/v1/chat/completions'
   return null
 }
-export async function withReservedOutbound<T>(kind:Permit['kind'],name:string,work:()=>Promise<T>,method?:'GET'|'POST',authorize?:()=>Promise<boolean>):Promise<T>{
+export async function withReservedOutbound<T>(kind:Permit['kind'],name:string,work:()=>Promise<T>,method?:'GET'|'POST'|'PATCH',authorize?:()=>Promise<boolean>):Promise<T>{
   const p:Permit={kind,name,method,used:false,closed:false,authorize}
   try{return await store.run(p,work)}finally{p.closed=true}
 }

@@ -320,3 +320,27 @@ try{
   if(savedOwners===undefined)delete process.env.GOGO_HACHI_PERSONAL_OWNERS;else process.env.GOGO_HACHI_PERSONAL_OWNERS=savedOwners
 }
 console.log('Originally governed foreground and resumed worker cannot downgrade to legacy after selection revocation')
+
+
+// Selected Calendar move permits only an exact time-only PATCH with If-Match;
+// the ordinary read adapter cannot dispatch it. No real Calendar is modified.
+const {governedApprovedCalendarMoveFetch}=await import('../lib/agent/governed-google-read')
+const moveUrl='https://www.googleapis.com/calendar/v3/calendars/primary/events/fixture-event'
+const moveBody=JSON.stringify({start:{dateTime:'2026-12-01T10:00:00Z',timeZone:'Asia/Kolkata'},end:{dateTime:'2026-12-01T11:00:00Z',timeZone:'Asia/Kolkata'}})
+const moveInit={method:'PATCH',headers:{Authorization:'Bearer access-fixture','If-Match':'"fixture-etag"','Content-Type':'application/json'},body:moveBody}
+assert.ok(googleRequestShape('google.calendar.move',moveUrl,moveInit))
+assert.equal(googleRequestShape('google.calendar.move',moveUrl,{...moveInit,headers:{...moveInit.headers,'If-Match':'*'}}),null)
+assert.equal(googleRequestShape('google.calendar.move',moveUrl,{...moveInit,body:JSON.stringify({...JSON.parse(moveBody),attendees:[]})}),null)
+assert.equal(googleRequestShape('google.calendar.move',moveUrl+'?sendUpdates=all',moveInit),null)
+await assert.rejects(()=>governedGoogleFetch('google.calendar.move',moveUrl,moveInit,'101',connectorDeps),/exact_send_approval_required/)
+let moveAllowed=true,moveDispatches=0
+const moveDeps={...connectorDeps,fetcher:async()=>{moveDispatches++;return new Response(JSON.stringify({id:'fixture-event',status:'confirmed'}))}}
+const moveAuthority={actorId:'fixture-user-uuid',credentialKey:fingerprint('refresh-fixture'),expectedUrl:moveUrl,expectedBody:moveBody,expectedEtag:'"fixture-etag"',authorize:async()=>moveAllowed}
+await assert.rejects(()=>governedApprovedCalendarMoveFetch(moveUrl,{...moveInit,headers:{...moveInit.headers,'If-Match':'"different"'}},'101',moveAuthority,moveDeps),/exact_calendar_approval_required/)
+moveAllowed=false
+await assert.rejects(()=>governedApprovedCalendarMoveFetch(moveUrl,moveInit,'101',moveAuthority,moveDeps),/not_authorized/)
+assert.equal(moveDispatches,0)
+moveAllowed=true
+assert.equal((await governedApprovedCalendarMoveFetch(moveUrl,moveInit,'101',moveAuthority,moveDeps)).status,200)
+assert.equal(moveDispatches,1)
+console.log('Calendar exact event/version/time approval boundary passed in inert fixture')

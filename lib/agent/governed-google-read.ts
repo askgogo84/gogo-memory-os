@@ -49,6 +49,7 @@ export function credentialAuthorized(request:GoogleRequest,owner:string,snapshot
 }
 async function permission(owner:string,op:GoogleOperation):Promise<boolean>{
   const permitted=async(c:AgentCapability)=>allowedLevel(await capabilityPermissionLevel(owner,c))
+  if(op==='google.calendar.move')return ['ask','auto'].includes(String(await capabilityPermissionLevel(owner,'calendar')))
   if(op.startsWith('google.calendar.'))return permitted('calendar')
   if(op==='google.gmail.read')return (await gmailConsentState(owner))==='on'&&await permitted('email')
   if(op==='google.gmail.send')return (await gmailConsentState(owner))==='on'&&['draft','ask','auto'].includes(String(await capabilityPermissionLevel(owner,'email')))
@@ -59,6 +60,13 @@ async function permission(owner:string,op:GoogleOperation):Promise<boolean>{
   return await permitted('files')||await permitted('contacts')||(await gmailConsentState(owner))==='on'&&await permitted('email')
 }
 type SendAuthority={actorId:string;senderAccount:string;expectedBody:string;authorize:()=>Promise<boolean>}
+type MoveAuthority={actorId:string;credentialKey:string;expectedUrl:string;expectedBody:string;expectedEtag:string;authorize:()=>Promise<boolean>}
+type WriteAuthority=({kind:'gmail'}&SendAuthority)|({kind:'calendar'}&MoveAuthority)
+async function primaryMoveSnapshot(owner:string,actorId:string,credentialKey:string):Promise<CredentialSnapshot|null>{
+  const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status,google_calendar_connected,google_refresh_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
+  if(r.error||String(r.data?.id||'')!==actorId||exactSessionOwnerId(r.data?.telegram_id)!==owner||r.data?.access_status!=='active'||r.data.google_calendar_connected!==true||nonemptyHash(r.data.google_refresh_token)!==credentialKey)return null
+  return {refreshHashes:new Set([credentialKey]),accessHashes:new Set<string>()}
+}
 async function primarySendSnapshot(owner:string,actorId:string,senderAccount:string):Promise<CredentialSnapshot|null>{
   const r=await supabaseAdmin.from('users').select('id,telegram_id,access_status,gmail_connected,gmail_send_connected,gmail_email,gmail_refresh_token,gmail_access_token').eq('id',actorId).eq('telegram_id',owner).maybeSingle()
   if(r.error||String(r.data?.id||'')!==actorId||exactSessionOwnerId(r.data?.telegram_id)!==owner||r.data?.access_status!=='active'||r.data.gmail_connected!==true||r.data.gmail_send_connected!==true||String(r.data.gmail_email||'').trim().toLowerCase()!==senderAccount)return null
@@ -75,21 +83,25 @@ type Deps={
   fetcher:typeof fetch
 }
 export async function governedGoogleFetch(operation:GoogleOperation,url:string,init:RequestInit={},explicit?:string|number,deps?:Deps):Promise<Response>{
-  if(operation==='google.gmail.send')throw new GovernedModelError('exact_send_approval_required')
+  if(operation==='google.gmail.send'||operation==='google.calendar.move')throw new GovernedModelError('exact_send_approval_required')
   return governedGoogleRequest(operation,url,init,explicit,deps)
 }
 // Only the existing claimed Gmail send executor may provide this trusted
 // callback and exact wire body. Read connectors cannot invoke this lane.
 export async function governedApprovedGmailFetch(url:string,init:RequestInit,owner:string,authority:SendAuthority,deps?:Deps):Promise<Response>{
   if(!authority?.actorId||typeof authority.senderAccount!=='string'||!authority.senderAccount.trim()||typeof authority.expectedBody!=='string'||typeof authority.authorize!=='function'||init.body!==authority.expectedBody)throw new GovernedModelError('exact_send_approval_required')
-  return governedGoogleRequest('google.gmail.send',url,init,owner,deps,authority)
+  return governedGoogleRequest('google.gmail.send',url,init,owner,deps,{...authority,kind:'gmail'})
 }
-async function governedGoogleRequest(operation:GoogleOperation,url:string,init:RequestInit={},explicit?:string|number,deps?:Deps,send?:SendAuthority):Promise<Response>{
+export async function governedApprovedCalendarMoveFetch(url:string,init:RequestInit,owner:string,authority:MoveAuthority,deps?:Deps):Promise<Response>{
+  if(!authority?.actorId||!(/^[a-f0-9]{64}$/).test(authority.credentialKey)||url!==authority.expectedUrl||init.body!==authority.expectedBody||new Headers(init.headers).get('if-match')!==authority.expectedEtag||typeof authority.authorize!=='function')throw new GovernedModelError('exact_calendar_approval_required')
+  return governedGoogleRequest('google.calendar.move',url,init,owner,deps,{...authority,kind:'calendar'})
+}
+async function governedGoogleRequest(operation:GoogleOperation,url:string,init:RequestInit={},explicit?:string|number,deps?:Deps,write?:WriteAuthority):Promise<Response>{
   const selected=deps?deps.selection():selectedModelOwner(explicit)
   const parent=currentGovernedRun(),foreground=currentGovernedForeground()
   if(parent&&(selected.kind!=='governed'||selected.owner!==parent.owner||!parent.inTime()))throw new GovernedModelError('connector_scope_mismatch')
   if(selected.kind==='legacy'){
-    if(send)throw new GovernedModelError('connector_scope_mismatch')
+    if(write||foreground?.governanceRequired)throw new GovernedModelError('connector_scope_mismatch')
     return (deps?.fetcher||fetch)(url,init)
   }
   if(selected.kind!=='governed')throw new GovernedModelError('connector_identity_mismatch')
@@ -101,11 +113,11 @@ async function governedGoogleRequest(operation:GoogleOperation,url:string,init:R
   if(!runtime)throw new GovernedModelError('policy_unavailable')
   const deadline=now()+15_000,which=family(operation)
   const check=async()=>{
-    if(send&&(operation!=='google.gmail.send'||pinned.body!==send.expectedBody||await send.authorize()!==true))return false
+    if(write&&(pinned.body!==write.expectedBody||await write.authorize()!==true||write.kind==='gmail'&&operation!=='google.gmail.send'||write.kind==='calendar'&&(operation!=='google.calendar.move'||request.url!==write.expectedUrl||new Headers(pinned.headers).get('if-match')!==write.expectedEtag)))return false
     if(parent&&await parent.authorize()!==true)return false
     if(!(await (deps?.permission||permission)(owner,operation)))return false
-    const current=deps?await deps.snapshot(owner,which):send?await primarySendSnapshot(owner,send.actorId,send.senderAccount):await readCredentialSnapshot(owner,which)
-    return !!current&&credentialAuthorized(request,owner,current,minted.get(runtime)?.get(hash(request.credential)),now())&&(!parent||await parent.authorize()===true)&&(!send||await send.authorize()===true)
+    const current=deps?await deps.snapshot(owner,which):write?.kind==='gmail'?await primarySendSnapshot(owner,write.actorId,write.senderAccount):write?.kind==='calendar'?await primaryMoveSnapshot(owner,write.actorId,write.credentialKey):await readCredentialSnapshot(owner,which)
+    return !!current&&credentialAuthorized(request,owner,current,minted.get(runtime)?.get(hash(request.credential)),now())&&(!parent||await parent.authorize()===true)&&(!write||await write.authorize()===true)
   }
   const inTime=()=>now()<deadline&&!pinned.signal?.aborted&&(parent?parent.inTime():foreground?foregroundInTime(owner):!!deps)
   const r=await runtime.boundedConnector(operation,request.url,request.method,check,async()=>{
@@ -114,6 +126,11 @@ async function governedGoogleRequest(operation:GoogleOperation,url:string,init:R
     // Definite provider rejection is a completed HTTP attempt, not successful
     // work. Transport errors and ambiguous server outcomes remain reserved.
     if(!response.ok&&![400,401,403,404,409,410,412,422,429].includes(response.status))throw Error('google_transport_outcome_unverified')
+    if(response.ok&&operation==='google.calendar.move'){
+      const value=await response.clone().json().catch(()=>null)
+      const id=decodeURIComponent(new URL(request.url).pathname.split('/').at(-1)||'')
+      if(value?.id!==id||value?.status==='cancelled')throw Error('calendar_move_receipt_unverified')
+    }
     if(response.ok&&operation==='google.gmail.send'){
       const value=await response.clone().json().catch(()=>null)
       if(typeof value?.id!=='string'||!value.id||value.id.length>200||typeof value?.threadId!=='string'||!value.threadId||value.threadId.length>200)throw Error('gmail_send_receipt_unverified')

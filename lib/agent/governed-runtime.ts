@@ -56,7 +56,7 @@ export function verifiedConnectorCeiling(t:OperationTariff|null,operation:Connec
 export type GovernedRuntime={
   model:<T extends ProviderResponse>(model:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   boundedSearch:<T>(operation:SearchOperation,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
-  boundedConnector:<T>(operation:ConnectorOperation,url:string,method:'GET'|'POST',authorize:()=>Promise<boolean>,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
+  boundedConnector:<T>(operation:ConnectorOperation,url:string,method:'GET'|'POST'|'PATCH',authorize:()=>Promise<boolean>,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   nestedSearch:<T>(operation:'web_search'|'venue_contact'|'calendar_read'|'recovery_read',execute:()=>Promise<T>,inTime:()=>boolean,authorize?:()=>Promise<boolean>)=>Promise<BudgetOutcome<T>>
   workerStep:<T>(operation:string,attemptId:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
   local:<T>(operation:string,execute:()=>Promise<T>,inTime:()=>boolean)=>Promise<BudgetOutcome<T>>
