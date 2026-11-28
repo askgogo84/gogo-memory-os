@@ -289,6 +289,34 @@ dispatchRunCurrent=true
 assert.equal((await dispatchRead()).state,'completed')
 assert.equal(runtimeDispatches,1)
 
+const dispatchModelPrice={...price,model:'claude-fixture'}
+for(const lane of ['model','search'] as const){
+  let tariffReads=0,runCurrent=true,providerCalls=0
+  const readTariff=()=>{if(++tariffReads===3)runCurrent=false}
+  const dispatchRuntime=makeGovernedRuntime(scope,{
+    ...deps,currentRun:async()=>runCurrent,
+    tariff:async()=>{readTariff();return dispatchModelPrice},
+    operationTariff:async()=>{readTariff();return searchPrice}
+  })
+  const dispatch=()=>lane==='model'
+    ? dispatchRuntime.model(dispatchModelPrice.model,async()=>{
+      const body=JSON.stringify({model:dispatchModelPrice.model,messages:[]})
+      await authorizeGovernedFetch('https://api.anthropic.com/v1/messages',{method:'POST',body},fixtureEnv)
+      providerCalls++
+      return {...response,model:dispatchModelPrice.model}
+    },()=>true)
+    : dispatchRuntime.boundedSearch('tavily.basic.v1',async()=>{
+      await authorizeGovernedFetch(url,init,fixtureEnv)
+      providerCalls++
+      return Response.json({results:[]})
+    },()=>true)
+  assert.equal((await dispatch()).state,'unknown')
+  assert.equal(providerCalls,0)
+  runCurrent=true
+  assert.equal((await dispatch()).state,'completed')
+  assert.equal(providerCalls,1)
+}
+
 let connectorSelected=true
 const revokedConnectorDeps={
   ...connectorDeps,

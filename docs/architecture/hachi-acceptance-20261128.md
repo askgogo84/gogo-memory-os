@@ -178,7 +178,7 @@ The existing typed-event move executor stages the exact current primary account,
 
 The Calendar account lookup uses static typed projections. Governed lookups and native Google credential rechecks read the persisted owner ID as signed-64 text. The existing numeric actor route rejects unsafe numbers before a credential read or refresh. If enforcement is revoked after an accepted PATCH, the verification read remains governed and the executor keeps the outcome unknown. Inert fixtures cover adjacent signed-64 IDs, malformed and foreign owner readbacks, and zero unreserved readbacks after a single accepted PATCH followed by revocation.
 
-The physical connector permit also rechecks the database run, policy and actor after connector-specific authorization. Gmail verification, native Workspace reads and Drive binary reads retain the pinned scope after enforcement changes. A pinned Drive read cannot use the unpriced Composio fallback. Inert fixtures revoke the run during the final tariff read and revoke governance between provider acceptance and verification. No external dispatch is made by these fixtures.
+The physical model, search and connector permits also recheck the database run, policy and actor. Connector permits do so after connector-specific authorization. Gmail verification, native Workspace reads and Drive binary reads retain the pinned scope after enforcement changes. A pinned Drive read cannot use the unpriced Composio fallback. Inert fixtures revoke the run during the final tariff read and revoke governance between provider acceptance and verification. No external dispatch is made by these fixtures.
 
 ### Workspace internal cancellation-review execution
 

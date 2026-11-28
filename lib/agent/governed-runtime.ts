@@ -82,7 +82,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
           const live=await d.tariff(model),c=verifiedCeiling(live,model,d.now())
           return !!c&&c.tokens===ceiling.tokens&&c.costMicrosInr===ceiling.costMicrosInr&&live?.verified_source===pinned.verified_source&&live?.valid_until===pinned.valid_until&&await nestedAuthority()&&inTime()
         },
-        execute:async()=>{const value=await withReservedOutbound('model',model,execute);return {value,usage:meteredUsage(value,pinned)}}})
+        execute:async()=>{const value=await withReservedOutbound('model',model,execute,undefined,()=>current(inTime));return {value,usage:meteredUsage(value,pinned)}}})
     },
     async boundedSearch(operation,execute,inTime){
       // Fixed-cost, bounded search requests only; never classify arbitrary
@@ -101,7 +101,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
         },
         // Charge the verified maximum, not a guessed actual provider invoice.
         // Transport/invalid response throws and retains the reservation.
-        execute:async()=>({value:await withReservedOutbound('search',operation,execute),usage:ceiling})})
+        execute:async()=>({value:await withReservedOutbound('search',operation,execute,undefined,()=>current(inTime)),usage:ceiling})})
     },
     async boundedConnector(operation,url,method,authorize,execute,inTime){
       if(s.kind!=='personal'||!inTime()||!d.connectorTariff||!(CONNECTOR_OPERATIONS as readonly string[]).includes(operation))return denied('unreviewed_connector')
