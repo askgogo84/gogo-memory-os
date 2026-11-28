@@ -122,6 +122,9 @@ for(const [files,hasMore,expected] of [
     'Check the exact filename "'+lookupTitle+'" in my Google Drive and do not summarize it.',
     'Read my Google Drive document with the exact filename "'+lookupTitle+'". Do not show me the contents.',
     'Review whether the exact filename exists in Google Drive. Check the exact filename "'+lookupTitle+'".',
+    'Review my Google Drive for the exact filename "'+lookupTitle+'". Only tell me whether it exists. Do not show other filenames or contents.',
+    'Review the Google Drive document with the exact filename "'+lookupTitle+'". Only tell me whether it exists.',
+    'Read the exact filename "'+lookupTitle+'" from my Google Drive. Do not show other filenames or contents.',
   ]){
     const lookup=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:lookupPrompt})
     assert.match(lookup.text,expected)
@@ -175,6 +178,8 @@ for(const contentPrompt of [
   'Show me the contents of my Google Drive document with the exact filename "'+normalizedTitle+'".',
   'Find my Google Drive document with the exact filename "'+normalizedTitle+'" and display the document text.',
   'Read my Google Drive document with the exact filename "'+normalizedTitle+'" and tell me whether a contingency fund exists.',
+  'Read the document with the exact filename '+normalizedTitle+' from my Google Drive.',
+  'Review my Google Drive document with the exact filename "'+normalizedTitle+'".',
 ]){
   const contentRead=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:contentPrompt})
   assert.equal(contentRead.status,'completed')

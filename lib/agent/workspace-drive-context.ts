@@ -53,16 +53,17 @@ function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|nul
   const tail=text.slice((match.index??0)+match[0].length).trim()
   const quoted=tail.match(/^(?:"([^"\r\n]+)"|“([^”\r\n]+)”)/)
   const title=quoted?.[0] ?? tail.split(/[.!?](?:\s|$)|[;\r\n]|\s+and\s+(?:tell|show|read|summari[sz]e|open|extract|review)\b/i,1)[0]
-  const name=quoted ? quoted[1]||quoted[2] : title.trim()
+  const name=quoted ? quoted[1]||quoted[2] : title.replace(/\s+(?:from|in|on)\s+(?:my\s+)?(?:connected\s+)?(?:google\s+)?drive\s*$/i,'').trim()
   const before=calendarAffirmativeText(outsideQuotes.slice(0,match.index))
   const after=calendarAffirmativeText(tail.slice(title.length).replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,''))
   const request=outsideQuotes.replace(/’/g,"'")
   const asksForExactMatch=/\b(?:whether|if)\s+(?:there\s+(?:is|was)|(?:my\s+)?(?:google\s+)?drive\s+(?:has|contains|found|returned))\s+(?:an?\s+)?exact\s+match\b/i.test(request)
-  const asksIfFileExists=/\b(?:whether|if)\s+(?:(?:the|this|that|a|an|my|exact)\s+)*(?:file(?:\s*name)?|document|title|_{2,})\s+(?:exists?|is\s+(?:present|there|in\s+(?:my\s+)?(?:google\s+)?drive))\b/i.test(request)
+  const asksIfFileExists=/\b(?:whether|if)\s+(?:(?:the|this|that|a|an|my|exact)\s+)*(?:file(?:\s*name)?|document|title|it|_{2,})\s+(?:exists?|is\s+(?:present|there|in\s+(?:my\s+)?(?:google\s+)?drive))\b/i.test(request)
   const wantsExistence=asksForExactMatch||asksIfFileExists||/\b(?:existence[- ]only|metadata[- ]only)\b/i.test(request)
-  const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.test(request)
+  const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:other\s+(?:file(?:\s*name)?s?|titles)\s+or\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.test(request)
   const affirmative=before+' '+after
-  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|review|open)\b/i.test(affirmative)
+  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|open)\b/i.test(affirmative)
+    || /\breview\s+(?:it\b|(?:(?:my|the|this|that|google|drive)\s+)*(?:document|file|spreadsheet|sheet|presentation|contents?)\b)/i.test(affirmative)
     || /\b(?:show|display)\s+(?:me\s+)?(?:the\s+)?(?:(?:file|document)\s+)?(?:contents?|text)\b/i.test(affirmative)
   return {name:name.trim()&&name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly:wantsExistence||prohibitsReading||!explicitlyReads}
 }
