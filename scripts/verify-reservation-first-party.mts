@@ -208,14 +208,55 @@ await check('one definite read failure can switch to a distinct public route, ne
   assert.match(result.text,/7pm tomorrow is available/)
   assert.equal(h.db.tables.agent_approvals?.length||0,0)
 })
-await check('no public route offers phone escalation without asking for a booking link or placing a call',async()=>{
-  const h=loadReservation({search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+await check('no public route tries Maps once, then offers phone escalation without booking or calling',async()=>{
+  const h=loadReservation({search:()=>[],browser:async p=>{assert.equal(p.mode,'read');assert.equal(p.publicOnly,true);assert.ok(p.googleDiningDiscovery);throw Error('browser_objective_unverified')}})
   const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST})
   assert.match(result.text,/phone call for your approval/)
   assert.doesNotMatch(result.text,/send me the booking link/i)
-  assert.equal(h.browserCalls.length,0)
+  assert.equal(h.browserCalls.length,1)
 })
 
+await check('numeric venue with time-first request uses Google Maps observed public partner and stages exact approval',async()=>{
+  const venue='1522 The Pub Malleshwara'
+  const request='Book a table for 2 at 9pm tomorrow at '+venue
+  const partner='https://www.eazydiner.com/bengaluru/1522-the-pub-malleshwaram-123456'
+  const h=loadReservation({search:()=>[],browser:async p=>{
+    assert.equal(p.mode,'read')
+    if(p.googleDiningDiscovery){
+      assert.equal(p.publicOnly,true)
+      assert.equal(p.googleDiningDiscovery.restaurant,venue)
+      assert.equal(new URL(p.url).searchParams.get('query'),venue+', Bengaluru, India')
+      return {status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner','District Dining','Swiggy'],links:[{url:partner,label:'EazyDiner'}],nativeReview:false}}
+    }
+    assert.equal(p.url,partner)
+    return {status:'completed',url:partner,title:venue,pageText:'1522 The Pub Malleshwara. Selected date: 2026-10-20. Party of 2. Available slots: 9:00 PM.',summary:'Available slots: 9:00 PM',actions:[]}
+  }})
+  const parsed=h.mod.parseRestaurantReservationIntent(request)
+  assert.equal(parsed.restaurant,venue)
+  assert.equal(parsed.partySize,2)
+  assert.equal(parsed.preferredStart,'21:00')
+  const read=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:request})
+  assert.match(read.text,/9pm tomorrow is available for 2/)
+  assert.equal(h.browserCalls.length,2)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  const approval=await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Fixture Guest'})
+  assert.equal(approval.status,'waiting_approval')
+  const event=h.db.tables.life_events[0]
+  assert.equal(event.metadata_json.reservationUrl,partner)
+  assert.equal(event.metadata_json.providerDiscovery,'google_maps_browser')
+  assert.equal(event.preferences_json.preferredStart,'21:00')
+  assert.equal(h.db.tables.agent_approvals.length,1)
+  assert.ok(h.browserCalls.every(p=>p.mode==='read'))
+})
+await check('native Google chooser with no public partner handoff never claims availability or creates approval',async()=>{
+  const h=loadReservation({search:()=>[],browser:async p=>({status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner','District Dining','Swiggy'],links:[],nativeReview:false}})})
+  const out=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:'Book a table for 2 tomorrow at 9pm at 1522 The Pub Malleshwara'})
+  assert.equal(out.status,'paused')
+  assert.match(out.text,/Google Maps shows booking options/)
+  assert.match(out.text,/Availability is not confirmed/)
+  assert.equal(h.browserCalls.length,1)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
 await check('read-only provider failure cannot recommend a second route when prior objective exists at another time',async()=>{
   const seed={users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}],life_events:[{id:'prior-objective',telegram_id:String(actor.legacyTelegramId),subtype:'restaurant_booking_release',dedupe_key:'old-objective',lifecycle_state:'planned',metadata_json:{restaurant:'Toit Indiranagar',reservationUrl:WIDGET},preferences_json:{partySize:2,requestedDate:'2026-10-20',preferredStart:'19:01',preferredEnd:'19:01'}}]}
   for(const providerFound of [false,true]){
@@ -465,6 +506,7 @@ async function prepareToitRoute(db:ReturnType<typeof makeDb>,alternate:boolean,r
     return {...await widgetPage(['7:00 PM'])(),url:p.url}
   }})
   const read=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:request})
+  if(!/What name should I book under\?/i.test(read.text))return {h,result:read}
   assert.match(read.text,/available/)
   return {h,result:await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Fixture Guest'})}
 }
@@ -512,6 +554,20 @@ await check('active or confirmed mission blocks a different provider; another ow
   assert.equal(other.result.status,'waiting_approval')
   assert.equal(db.tables.agent_approvals.length,2)
   assert.notEqual(db.tables.life_events[0].dedupe_key,undefined)
+})
+await check('a replacement slot cannot create another objective after earlier unknown result',async()=>{
+  const db=reservationDb()
+  const first=await prepareToitRoute(db,false)
+  assert.equal(first.result.status,'waiting_approval')
+  const run=db.tables.agent_runs.find(r=>r.metadata_json?.plan_type==='restaurant_reservation_release')!
+  run.status='outcome_unknown';run.error='restaurant_reservation_confirmation_unknown'
+  db.tables.life_event_actions[0].status='blocked'
+  const h=loadReservation({db,search:()=>[RESERVEGO],browser:widgetPage(['7:01 PM'])})
+  const out=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.match(out.text,/reconcil/i)
+  assert.doesNotMatch(out.text,/Which one should I book/i)
+  assert.equal(db.tables.agent_approvals.length,1)
+  assert.equal(db.tables.life_events.length,1)
 })
 await check('new booking objective key is provider-independent, while approval remains provider-bound',async()=>{
   const a=reservationDb(),b=reservationDb()
