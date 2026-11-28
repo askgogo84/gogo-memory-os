@@ -1,6 +1,7 @@
 // Scoped, read-only discovery over actual registered definitions; descriptions
 // are not execution grants, provider status or new permissions.
 import { BUILTIN_SKILLS } from './skills-builtin'
+import { recoverySkillDefinitions } from './governed-learning-candidates'
 import { previewSkills, searchSkillIndex } from './skill-discovery'
 import type { SkillDefinition } from './skill-registry'
 import type { AgentCapability, AgentPermissionLevel } from './policy'
@@ -10,7 +11,7 @@ export function skillQuery(text:string):string|null {
   const m=/^(?:show|list|find|search)\s+(?:(?:my|available|workspace)\s+)?skills?(?:\s+(?:for\s+)?(.{1,160}))?[.!?]?$/i.exec(text.trim())
   return m?(m[1]||'').trim():null
 }
-const personal=BUILTIN_SKILLS.map(x=>x.def).filter(d=>d.id==='people.brief'||d.id==='thread.reply')
+const personal=[...BUILTIN_SKILLS.map(x=>x.def).filter(d=>d.id==='people.brief'||d.id==='thread.reply'),...recoverySkillDefinitions()]
 const workspace:SkillDefinition[]=[
   {id:'workspace.orders.summary',sopVersion:'1.0.0',title:'Recorded orders and cancellations',purpose:'All-history recorded order totals and cancellations in the read-only hospitality workspace pilot.',input:{},output:{},limits:{maxSteps:1,maxMinutes:1,maxCostPaise:0},requiredCapabilities:['merchant'],exactActionApproval:false,evidence:['ledger_row'],risk:'low',irreversible:false},
   {id:'workspace.stock.summary',sopVersion:'1.0.0',title:'Recorded stock availability',purpose:'Recorded menu item availability across the member’s pilot outlets; not live POS status.',input:{},output:{},limits:{maxSteps:1,maxMinutes:1,maxCostPaise:0},requiredCapabilities:['merchant'],exactActionApproval:false,evidence:['ledger_row'],risk:'low',irreversible:false}

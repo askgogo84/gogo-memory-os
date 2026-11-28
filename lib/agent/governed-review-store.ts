@@ -113,9 +113,18 @@ export async function listSkillReview(actor:string,scope:Scope){
     const active=await currentDefinition(scope,base,p,sha)
     items.push({skillId:base.id,generation:generation(p),activeDigest:p?.active_digest||skillRevisionDigest(base),activeVersion:active?.sopVersion||null,activeRevisionId:p?.revision_id||null,canRestore:!!p&&(!!p.revision_id||p.active_digest!==skillRevisionDigest(base)||p.build_sha!==sha),proposals})
   }
+  // Automatic candidates are separate from the approved revision store and never executable.
+  let learningCandidates:unknown[]=[]
+  if(scope.kind==='personal'){
+    const consent=await supabaseAdmin.from('user_consent_settings').select('memory_enabled').eq('telegram_id',actor).maybeSingle()
+    if(!consent.error&&consent.data?.memory_enabled===true){
+      const result=await supabaseAdmin.from('gogo_skill_learning_candidates').select('skill_id,positive_count,negative_count,reason_code,created_at,expires_at').eq('scope_kind','personal').eq('scope_id',scope.id).eq('build_sha',sha).gt('expires_at',new Date().toISOString()).limit(12)
+      if(!result.error&&Array.isArray(result.data))learningCandidates=result.data
+    }
+  }
   const budget=await supabaseAdmin.rpc('gogo_read_scope_budget',{p_scope_kind:scope.kind,p_scope_id:scope.id,p_actor_id:actor})
   await access(actor,scope,true)
-  return {items,buildVerified:BUILD.test(sha),budget:budget.error?null:budget.data}
+  return {items,buildVerified:BUILD.test(sha),budget:budget.error?null:budget.data,learningCandidates}
 }
 export type ReviewChange={action:'publish'|'rollback';skillId:string;revisionId?:string;expectedGeneration:number;expectedDigest:string}
 export async function changeSkillReview(actor:string,scope:Scope,x:ReviewChange){

@@ -439,4 +439,100 @@ begin
 end $$;
 revoke all on function public.gogo_prune_memory_block_events() from public,anon,authenticated,service_role;
 grant execute on function public.gogo_prune_memory_block_events() to service_role;
+-- Automatic proposal generation reads only the internal evidence ledger, never
+-- copies prompts, corrections, provider IDs or message content into a new store.
+-- Proposal rows cannot publish themselves or manufacture independent receipts.
+create table public.gogo_skill_learning_candidates (
+  id uuid primary key default gen_random_uuid(),
+  scope_kind text not null check(scope_kind='personal'),
+  scope_id text not null,
+  skill_id text not null check(skill_id in ('calendar.exact.read','email.exact.verify','reminder.exact.read','watcher.exact.status')),
+  build_sha text not null check(build_sha ~ '^[0-9a-f]{40}$'),
+  positive_count integer not null check(positive_count>=2),
+  negative_count integer not null check(negative_count>=2),
+  evidence_ids text[] not null check(cardinality(evidence_ids) between 4 and 20),
+  reason_code text not null default 'verified_recovery_pattern' check(reason_code='verified_recovery_pattern'),
+  created_at timestamptz not null default clock_timestamp(),
+  expires_at timestamptz not null default(clock_timestamp()+interval '30 days'),
+  unique(scope_kind,scope_id,skill_id,build_sha),
+  foreign key(scope_kind,scope_id) references public.gogo_governed_policies(scope_kind,scope_id) on delete restrict
+);
+alter table public.gogo_skill_learning_candidates enable row level security;
+revoke all on public.gogo_skill_learning_candidates from public,anon,authenticated,service_role;
+grant select,insert,delete on public.gogo_skill_learning_candidates to service_role;
+create index gogo_skill_learning_expiry_idx on public.gogo_skill_learning_candidates(expires_at);
+
+create function public.gogo_propose_skill_learning(p_owner text,p_skill_id text,p_build_sha text)
+returns text language plpgsql security invoker set search_path='' as $$
+declare
+  handler text;
+  source_kind text;
+  positives integer;
+  negatives integer;
+  refs text[];
+begin
+  if p_owner is null or p_owner !~ '^-?[1-9][0-9]{0,18}$' or p_build_sha is null or p_build_sha !~ '^[0-9a-f]{40}$' then return 'unavailable'; end if;
+  case p_skill_id
+    when 'calendar.exact.read' then handler:='calendar-named-read'; source_kind:='google_calendar';
+    when 'email.exact.verify' then handler:='gmail-verification'; source_kind:='gmail';
+    when 'reminder.exact.read' then handler:='reminder-query'; source_kind:='canonical_reminders';
+    when 'watcher.exact.status' then handler:='watcher-status'; source_kind:='canonical_watchers';
+    else return 'unavailable';
+  end case;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('skill-learning:'||p_owner||':'||p_skill_id,0));
+  perform 1 from public.gogo_governed_policies where scope_kind='personal' and scope_id=p_owner and enabled and valid_until>clock_timestamp() for share;
+  if not found then return 'unavailable'; end if;
+  perform 1 from public.users where telegram_id::text=p_owner and access_status='active' for share;
+  if not found then return 'unavailable'; end if;
+  perform 1 from public.user_consent_settings where telegram_id::text=p_owner and memory_enabled=true for share;
+  if not found then return 'unavailable'; end if;
+  delete from public.gogo_skill_learning_candidates where scope_kind='personal' and scope_id=p_owner and expires_at<=clock_timestamp();
+  if exists(select 1 from public.gogo_skill_learning_candidates where scope_kind='personal' and scope_id=p_owner and skill_id=p_skill_id and build_sha=p_build_sha) then return 'existing'; end if;
+  -- Latest substantive result for each distinct decision. A generic success,
+  -- missing decision identity or unverified boolean is not positive evidence.
+  with recent as (
+    select id::text as ref,created_at,metadata_json->>'decision_id' as decision,
+      metadata_json->>'outcome' as outcome,metadata_json->>'verification_source' as proof,
+      metadata_json->>'verified' as verified,metadata_json->>'object_ref' as object_ref
+    from public.agent_activity
+    where telegram_id::text=p_owner and event_type='decision_learning' and created_at>clock_timestamp()-interval '30 days'
+      and metadata_json->>'schema'='same-brain-v2' and metadata_json->>'handler'=handler
+      and coalesce(metadata_json->>'decision_id','')~'^[A-Za-z0-9_:.@/-]{1,180}$'
+      and metadata_json->>'outcome' in ('verified_success','corrected','failed','unknown','blocked','clarified')
+    order by created_at desc,id desc limit 200
+  ), distinct_decisions as (
+    select distinct on(decision) * from recent order by decision,created_at desc,ref desc
+  ), classified as (
+    select ref,created_at,case when outcome='verified_success' and verified='true' and proof=source_kind and coalesce(object_ref,'')<>'' then 'positive'
+      when outcome in ('corrected','failed','unknown','clarified') then 'negative' else null end as category
+    from distinct_decisions
+  ), capped as (
+    select *,row_number() over(partition by category order by created_at desc,ref desc) as n from classified where category is not null
+  )
+  select count(*) filter(where category='positive')::integer,count(*) filter(where category='negative')::integer,
+    array_agg(ref order by category,n) into positives,negatives,refs from capped where n<=10;
+  if positives<2 or negatives<2 then return 'insufficient'; end if;
+  insert into public.gogo_skill_learning_candidates(scope_kind,scope_id,skill_id,build_sha,positive_count,negative_count,evidence_ids)
+    values('personal',p_owner,p_skill_id,p_build_sha,positives,negatives,refs)
+    on conflict(scope_kind,scope_id,skill_id,build_sha) do nothing;
+  if not found then return 'existing'; end if;
+  return 'created';
+end $$;
+revoke all on function public.gogo_propose_skill_learning(text,text,text) from public,anon,authenticated,service_role;
+grant execute on function public.gogo_propose_skill_learning(text,text,text) to service_role;
+
+create function public.gogo_prune_skill_learning_candidates()
+returns integer language plpgsql security invoker set search_path='' as $$
+declare removed integer;
+begin
+  delete from public.gogo_skill_learning_candidates where id in (
+    select c.id from public.gogo_skill_learning_candidates c where c.expires_at<=clock_timestamp()
+      or not exists(select 1 from public.user_consent_settings u where u.telegram_id::text=c.scope_id and u.memory_enabled=true)
+    order by c.expires_at,c.id limit 5000
+  );
+  get diagnostics removed=row_count;
+  return removed;
+end $$;
+revoke all on function public.gogo_prune_skill_learning_candidates() from public,anon,authenticated,service_role;
+grant execute on function public.gogo_prune_skill_learning_candidates() to service_role;
 commit;

@@ -5,7 +5,7 @@ import {useEffect,useRef,useState} from 'react'
 type Proposal={id:string;version:string;title:string;purpose:string;summary:string;digest:string;baseDigest:string;reviewed:boolean;selfAuthored:boolean}
 type Skill={skillId:string;generation:number;activeDigest:string;activeVersion:string|null;activeRevisionId:string|null;canRestore:boolean;proposals:Proposal[]}
 type Budget={periodStart:string;costMicros:string;costLimitMicros:string;tokens:string;tokenLimit:string;modelCalls:string;modelCallLimit:string;toolCalls:string;toolCallLimit:string;unresolved:string;unresolvedCostMicros:string;recentMemoryBlocks:string;enabled:boolean;overrun:boolean}
-type ReviewSnapshot={items:Skill[];buildVerified:boolean;budget:Budget|null}
+type ReviewSnapshot={items:Skill[];buildVerified:boolean;budget:Budget|null;learningCandidates?:{skill_id:string;positive_count:number;negative_count:number;reason_code:string}[]}
 function rupees(v:string):string{
   if(!/^[0-9]{1,30}$/.test(v))return 'unverified'
   const whole=BigInt(v)/BigInt(1000000),fraction=String(BigInt(v)%BigInt(1000000)).padStart(6,'0')
@@ -81,6 +81,11 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
         </div>
         {(!snapshot.budget.enabled||snapshot.budget.overrun||snapshot.budget.unresolved!=='0')&&<p role="status" className="text-xs text-[#e6be7e]">Budget execution is disabled, breached, or awaiting reconciliation. Check the operator ledger before another attempt.</p>}
       </>:<p className="text-xs text-[#a8a8a4]">Usage totals could not be verified.</p>}
+    </div>}
+    {!!snapshot?.learningCandidates?.length&&<div className="space-y-2 rounded-xl border border-[#303c39] p-3">
+      <h3 className="text-sm font-semibold text-[#f2efea]">Evidence-driven improvement candidates</h3>
+      <p className="text-xs text-[#a8a8a4]">Distinct verified and failed/corrected decisions identified a recurring recovery pattern. These are engineering suggestions; no skill changed or received approval.</p>
+      {snapshot.learningCandidates.map(c=><div key={c.skill_id} className="text-sm text-[#b8b8b5]">{c.skill_id} · {c.positive_count} verified outcomes · {c.negative_count} failed, corrected or uncertain outcomes</div>)}
     </div>}
     {snapshot?.items.length===0&&<p className="text-sm text-[#a8a8a4]">No skill descriptions are registered in this scope.</p>}
     {snapshot?.items.map(skill=><article key={skill.skillId} className="space-y-3 rounded-xl border border-[#303c39] p-3">

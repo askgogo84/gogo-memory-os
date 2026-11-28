@@ -23,8 +23,16 @@ export async function GET(request: Request) {
       try{
         const {supabaseAdmin}=await import('@/lib/supabase-admin')
         const r=await supabaseAdmin.rpc('gogo_prune_memory_block_events').abortSignal(AbortSignal.timeout(2000))
-        hachiRetention=r.error?{error:'retention_unverified'}:{removed:r.data}
+        const candidates=await supabaseAdmin.rpc('gogo_prune_skill_learning_candidates').abortSignal(AbortSignal.timeout(1500))
+        hachiRetention=r.error||candidates.error?{error:'retention_unverified'}:{removed:r.data,candidatesRemoved:candidates.data}
       }catch{hachiRetention={error:'retention_unverified'}}
+    }
+    let hachiLearning:unknown=null
+    if(process.env.GOGO_HACHI_LEARNING_ENABLED==='1'&&Date.now()-started<5000){
+      try{
+        const {generateGovernedLearningCandidates}=await import('@/lib/agent/governed-learning-candidates')
+        hachiLearning=await generateGovernedLearningCandidates(process.env,started+7000)
+      }catch{hachiLearning={error:'candidate_generation_unavailable'}}
     }
     const result = await processLearningPass({ budgetMs: Math.max(1000,40_000-(Date.now()-started)) })
     if (result.deferred > 0) console.log('AGENT_LEARNING_DEFERRED:', JSON.stringify({ deferred: result.deferred, processed: result.processed, ms: result.ms }))
@@ -43,7 +51,7 @@ export async function GET(request: Request) {
         if ((semantic as any)?.timedOut || (semantic as any)?.deferred) console.log('SEMANTIC_SYNC_DEFERRED:', JSON.stringify(semantic))
       } catch (e: any) { console.error('SEMANTIC_SYNC_CRON_FAILED', e?.message || e); semantic = { error: 'semantic_sync_failed' } }
     }
-    return NextResponse.json({ ok: true, ...result, semantic, ...(hachiRetention?{hachiRetention}:{}) })
+    return NextResponse.json({ ok: true, ...result, semantic, ...(hachiRetention?{hachiRetention}:{}),...(hachiLearning?{hachiLearning}:{}) })
   } catch (err: any) {
     console.error('AGENT_LEARNING_CRON_FAILED:', err?.message || err)
     return NextResponse.json({ ok: false, error: 'learning_worker_failed' }, { status: 500 })
