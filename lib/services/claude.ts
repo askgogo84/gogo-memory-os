@@ -41,7 +41,7 @@ async function askOpenAiFallback(params:{system?:string;messages:Message[];maxTo
     ],
   }
   const response=hachiModelGate()
-    ?await import('@/lib/agent/governed-model-call').then(g=>g.governedModelCall(OPENAI_FALLBACK_MODEL,guarded=>guarded?openai!.chat.completions.create(request,{maxRetries:0,timeout:25_000}):openai!.chat.completions.create(request),g.openAICompatibleReceipt))
+    ?await import('@/lib/agent/governed-model-call').then(g=>g.governedModelCall<OpenAI.Chat.Completions.ChatCompletion>(OPENAI_FALLBACK_MODEL,guarded=>guarded?openai!.chat.completions.create(request,{maxRetries:0,timeout:25_000}):openai!.chat.completions.create(request),value=>g.openAICompatibleReceipt(value)))
     :await openai.chat.completions.create(request)
   return response.choices?.[0]?.message?.content?.trim()||''
 }

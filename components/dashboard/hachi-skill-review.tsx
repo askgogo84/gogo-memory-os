@@ -8,7 +8,7 @@ type Budget={periodStart:string;costMicros:string;costLimitMicros:string;tokens:
 type ReviewSnapshot={items:Skill[];buildVerified:boolean;budget:Budget|null}
 function rupees(v:string):string{
   if(!/^[0-9]{1,30}$/.test(v))return 'unverified'
-  const whole=BigInt(v)/1000000n,fraction=String(BigInt(v)%1000000n).padStart(6,'0')
+  const whole=BigInt(v)/BigInt(1000000),fraction=String(BigInt(v)%BigInt(1000000)).padStart(6,'0')
   return '₹'+whole.toLocaleString('en-IN')+'.'+fraction.replace(/0+$/,'').padEnd(2,'0')
 }
 type Change={action:'publish'|'rollback';skillId:string;revisionId?:string;expectedGeneration:number;expectedDigest:string}
