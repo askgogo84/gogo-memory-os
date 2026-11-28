@@ -16,6 +16,7 @@ type DriveFile = {
   id:string
   name:string
   mimeType:string
+  matchesExactName?:boolean
   modifiedTime?:string
   webViewLink?:string
   size?:number|null
@@ -48,10 +49,13 @@ function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|nul
   if(!match)return null
   const tail=text.slice(match.index+match[0].length).trim()
   const quoted=tail.match(/^(?:"([^"\r\n]+)"|“([^”\r\n]+)”)/)
-  const name=(quoted ? quoted[1]||quoted[2] : tail.split(/[.!?](?:\s|$)|[;\r\n]|\s+and\s+(?:tell|show|read|summari[sz]e)\b/i,1)[0]).trim()
+  const name=quoted ? quoted[1]||quoted[2] : tail.split(/[.!?](?:\s|$)|[;\r\n]|\s+and\s+(?:tell|show|read|summari[sz]e)\b/i,1)[0].trim()
   const before=calendarAffirmativeText(outsideQuotes.slice(0,match.index))
-  const metadataOnly=!/\b(?:read|summari[sz]e|extract|review|open)\b/i.test(before)
-  return {name:name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly}
+  const request=outsideQuotes.replace(/’/g,"'")
+  const wantsExistence=/\b(?:existence[- ]only|metadata[- ]only|only\s+(?:whether|if)|(?:whether|if)\b[^.;!?\n]*\b(?:exists?|exact\s+match))\b/i.test(request)
+  const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|show(?:ing)?\s+(?:the\s+)?(?:file\s+)?contents?)\b/i.test(request)
+  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|review|open)\b/i.test(before)
+  return {name:name.trim()&&name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly:wantsExistence||prohibitsReading||!explicitlyReads}
 }
 
 export function selectWorkspaceDriveFile(files:DriveFile[],text:string):{status:'selected';file:DriveFile}|{status:'not_found'|'ambiguous';files:DriveFile[]}{
@@ -176,7 +180,7 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
     }
 
     const files:DriveFile[]=search?.files||[]
-    const exactMatches=exact?files.filter(file=>file.id&&file.name===exact.name):[]
+    const exactMatches=exact?files.filter(file=>file.id&&file.matchesExactName):[]
     if(exact&&(exact.metadataOnly||search?.hasMore||exactMatches.length!==1)){
       const summary=search?.hasMore
         ? 'Google Drive answered, but the search was incomplete. I could not verify the exact filename.'
