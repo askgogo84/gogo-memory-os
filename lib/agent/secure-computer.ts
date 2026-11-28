@@ -1042,8 +1042,9 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext,goog
     if(dining===true&&/^https:\/\/(?:www\.)?google\.com\/maps(?:\/(?:place|search)(?:[/?]|$)|\/?$)/i.test(location.href)
       &&/^Reserve a table$/i.test(passengerLabel)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'
       &&!el.form&&!el.closest?.('form')&&el.getAttribute('formaction')===null&&el.getAttribute('formmethod')===null
-      &&(el.tagName==='BUTTON'||el.getAttribute('role')==='button'||(el.tagName==='A'&&/^https:\/\/(?:www\.)?google\.com\/maps\/reserve(?:[/?]|$)/i.test(el.href||'')))
-      &&el.getAttribute('type')!=='submit')return false;
+      &&(el.tagName==='BUTTON'||(el.tagName!=='A'&&el.getAttribute('role')==='button')||(el.tagName==='A'&&/^https:\/\/(?:www\.)?google\.com\/maps\/reserve(?:[/?]|$)/i.test(el.href||'')))
+      &&(!el.href||/^https:\/\/(?:www\.)?google\.com\/maps\/reserve(?:[/?]|$)/i.test(el.href))
+      &&String(el.getAttribute('type')||'').toLowerCase()!=='submit')return false;
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
     if(/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text))return true;
@@ -3324,7 +3325,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         links:page.links?.length||0,actions:actionLog.map(a=>({kind:a.kind,status:a.status,...(a.failure?{failure:a.failure}:{})})),
         controls:page.controls?.length||0,
         // Where the run ended (path only, no query) and whether the page still offered a sign-in.
-        at:(()=>{try{const u=new URL(String(page.url||''));return u.hostname+u.pathname.slice(0,80)}catch{return null}})(),title:safeText(page.title,80),
+        at:params.googleDiningDiscovery?'google_maps_dining':(()=>{try{const u=new URL(String(page.url||''));return u.hostname+u.pathname.slice(0,80)}catch{return null}})(),title:params.googleDiningDiscovery?'':safeText(page.title,80),
         signInEntry:hasSignInEntry(page),loginForm:pageLooksLikeLogin(page),
         // Shape of what was on screen (no page text): how much text, and which account words appeared.
         textLen:String(page.text||'').length,cues:['order','delivered','address','payment','logout','account'].filter(w=>new RegExp('\\b'+w,'i').test(String(page.text||''))),
@@ -3366,7 +3367,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     }
   } catch (error:any) {
     if(!params.keepAlive){await releaseManagedOnce();await activeSandbox?.stop().catch(()=>{})}
-    const safeError=safeText(error?.message||error,1000)
+    const safeError=params.googleDiningDiscovery?'google_dining_read_failed':safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
     const browserSubmitted=runActionLog.some(a=>a?.kind==='submit'&&a?.status==='done')
     // Why an account creation stopped, without values or selectors: kinds, statuses, last page.
