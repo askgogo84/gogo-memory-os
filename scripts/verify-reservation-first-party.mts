@@ -216,6 +216,27 @@ await check('no public route offers phone escalation without asking for a bookin
   assert.equal(h.browserCalls.length,0)
 })
 
+await check('read-only provider failure cannot recommend a second route when prior objective exists at another time',async()=>{
+  const seed={users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}],life_events:[{id:'prior-objective',telegram_id:String(actor.legacyTelegramId),subtype:'restaurant_booking_release',dedupe_key:'old-objective',lifecycle_state:'planned',metadata_json:{restaurant:'Toit Indiranagar',reservationUrl:WIDGET},preferences_json:{partySize:2,requestedDate:'2026-10-20',preferredStart:'19:01',preferredEnd:'19:01'}}]}
+  for(const providerFound of [false,true]){
+    const db=makeDb(seed)
+    const h=loadReservation({db,search:()=>providerFound?[RESERVEGO]:[],browser:async()=>{throw Error('browser_objective_unverified')}})
+    const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+    assert.equal(result.status,'paused')
+    assert.match(result.text,/reconcil/i)
+    assert.doesNotMatch(result.text,/phone call for your approval|book directly here/i)
+    assert.equal(db.tables.life_events.length,1)
+    assert.equal(db.tables.agent_approvals?.length||0,0)
+  }
+  const unavailable=loadReservation({db:makeDb({users:seed.users},{inventoryError:true}),search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  const refused=await unavailable.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.match(refused.text,/couldn't verify the earlier reservation inventory/i)
+  assert.doesNotMatch(refused.text,/phone call for your approval/i)
+  const other=loadReservation({db:makeDb({...seed,life_events:seed.life_events.map(row=>({...row,telegram_id:'456'}))}),search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  const allowed=await other.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.match(allowed.text,/phone call for your approval/i)
+})
+
 await check('ranking: widget.reservego.com outranks EazyDiner; aggregators only as fallback',async()=>{
   const {mod}=loadReservation({search:searchBoth,browser:async()=>{throw Error('unused')}})
   const ranked=mod.rankReservationCandidates([EAZY,RESERVEGO,{title:'Toit - Reserve',url:'https://toit.in/reservations',snippet:'Toit Indiranagar Bengaluru reservations'}],'Toit Indiranagar')
