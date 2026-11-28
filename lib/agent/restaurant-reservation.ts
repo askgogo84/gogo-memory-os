@@ -46,7 +46,7 @@ const GENERIC_NAME=/^(?:a\s+|an\s+|the\s+)?(?:table|reservation|booking|seat|sea
 // A time/date is not a venue, even when it follows "table for N at".
 function temporalVenue(value:string){
   const candidate=value.trim().replace(/^(?:a|an|the)\s+/i,'')
-  return /^(?:a|an|the)$/i.test(candidate)||/^(?:\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|(?:noon|midnight|today|tomorrow|tonight|around|about|between|only)\b|(?:next|first|earliest|any)\s+(?:available|open)\b|(?:available|open)\s+(?:slot|time|table)\b)/i.test(candidate)
+  return /^(?:a|an|the|\d{1,2})$/i.test(candidate)||/^(?:\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|(?:noon|midnight|today|tomorrow|tonight|around|about|between|only)\b|(?:next|first|earliest|any)\s+(?:available|open)\b|(?:available|open)\s+(?:slot|time|table)\b)/i.test(candidate)
 }
 
 function restaurantName(text:string){
@@ -58,7 +58,7 @@ function restaurantName(text:string){
   // the date and time sat between "table for 2" and "at <venue>". A reservation ask whose venue follows a
   // later "at <Name>" (not "at 8pm") keeps the name, without the "near …" landmark.
   if(/\b(?:table|reservation|reserve|book)\b/i.test(raw)){
-    const laterMatches=raw.matchAll(new RegExp('(?=\\bat\\s+(?:the\\s+)?(?!\\d)(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP+')','gi'))
+    const laterMatches=raw.matchAll(new RegExp('(?=\\bat\\s+(?:the\\s+)?(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP+')','gi'))
     for(const match of laterMatches){
       const later=match[1]
       if(later&&!GENERIC_NAME.test(later.trim())&&!temporalVenue(later))return safe(later,160)
@@ -619,6 +619,12 @@ function reservationObjectiveName(value:unknown){
   return String(value||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim()
 }
 function dedupeKey(actor:AgentActor,intent:RestaurantReservationIntent){
+  // One dated dining objective across times and providers. A newly offered
+  // slot is not authority to repeat a booking whose outcome is unresolved.
+  const stable=JSON.stringify(['restaurant_objective_v2',String(actor.legacyTelegramId),reservationObjectiveName(intent.restaurant),intent.partySize,intent.requestedDate||'',...(intent.requestedDate?[]:[intent.preferredStart,intent.preferredEnd])])
+  return createHash('sha256').update(stable).digest('hex').slice(0,40)
+}
+function previousObjectiveKey(actor:AgentActor,intent:RestaurantReservationIntent){
   const stable=JSON.stringify(['restaurant_objective_v1',String(actor.legacyTelegramId),reservationObjectiveName(intent.restaurant),intent.partySize,intent.preferredStart,intent.preferredEnd,intent.requestedDate||''])
   return createHash('sha256').update(stable).digest('hex').slice(0,40)
 }
@@ -646,6 +652,19 @@ async function matchingReservationEvents(actor:AgentActor,intent:RestaurantReser
       &&(anyTime||(String(prefs.preferredStart||'')===intent.preferredStart
       &&String(prefs.preferredEnd||'')===intent.preferredEnd))
   })
+}
+async function replacementSlotBlocked(actor:AgentActor,intent:RestaurantReservationIntent,provider:ReservationProvider,slotTime:string|null){
+  if(!intent.requestedDate)return false
+  try{
+    const matches=await matchingReservationEvents(actor,intent,true)
+    if(!matches.length)return false
+    // Only an already paused, exact same-route context refresh can proceed.
+    if(matches.length!==1||!slotTime)return true
+    const row=matches[0],prefs=row.preferences_json||{}
+    if(row.metadata_json?.reservationConfirmed===true||row.metadata_json?.reservationUrl!==provider.url||prefs.preferredStart!==slotTime||prefs.preferredEnd!==slotTime||!row.dedupe_key)return true
+    const existing=await existingMission(actor.legacyTelegramId,row.dedupe_key)
+    return !(existing?.run?.status==='paused'&&existing.run.error==='restaurant_context_review_required'&&existing.run.metadata_json?.providerConfirmationVerified!==true)
+  }catch{return true}
 }
 function reservationReconciliationReply(runId=''){
   return{runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'An earlier reservation mission already exists for this restaurant, date, time and party. Its outcome must be reconciled on the same task before trying another booking route. No new approval or booking attempt was created.'}
@@ -995,6 +1014,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
         const widgetProvider={...provider,url:widget.widgetUrl,firstParty:true}
         const evidence=`ReserveGo times for ${intent.requestedDate}: ${feed.slots.join(', ')||'none'}${feed.feeSlots.length?`; fee shown at ${feed.feeSlots.join(', ')}`:''}`
         const decision=reservationSlotDecision(feed.slots,intent.preferredStart,intent.preferredEnd)
+        if(decision.kind!=='none'&&await replacementSlotBlocked(params.actor,intent,widgetProvider,decision.kind==='available'?decision.time:null))return reservationReconciliationReply()
         if(decision.kind==='available'){
           const reply=reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)})
           await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots:feed.slots,evidence,askedText:reply})
@@ -1091,6 +1111,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       : true
     const slots=reserveXEvidence&&reservationSlotDateEvidence(evidence,intent.requestedDate)?extractReservationSlots(evidence):[]
     const decision=reservationSlotDecision(slots,intent.preferredStart,intent.preferredEnd)
+    if(decision.kind!=='none'&&await replacementSlotBlocked(params.actor,intent,provider,decision.kind==='available'?decision.time:null))return reservationReconciliationReply()
     if(decision.kind==='available'){
       const reply=reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)})
       await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots,evidence,askedText:reply})
@@ -1210,8 +1231,10 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
   let key=dedupeKey(params.actor,intent)
   let existing:Awaited<ReturnType<typeof existingMission>>
   try{
-    const matches=await matchingReservationEvents(params.actor,intent)
-    if(matches.length>1||matches.some(row=>row.metadata_json?.reservationUrl!==provider.url))return reservationReconciliationReply()
+    const matches=await matchingReservationEvents(params.actor,intent,Boolean(intent.requestedDate))
+    if(matches.length>1||matches.some(row=>row.metadata_json?.reservationUrl!==provider.url
+      ||String(row.preferences_json?.preferredStart||'')!==intent.preferredStart
+      ||String(row.preferences_json?.preferredEnd||'')!==intent.preferredEnd))return reservationReconciliationReply()
     if(matches.length===1){
       if(typeof matches[0].dedupe_key!=='string'||!matches[0].dedupe_key)return reservationReconciliationReply()
       key=matches[0].dedupe_key
@@ -1219,9 +1242,10 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
     existing=await existingMission(params.actor.legacyTelegramId,key)
     if(!existing&&matches.length)return reservationReconciliationReply()
     if(!existing&&matches.length===0){
-      const oldKey=legacyDedupeKey(params.actor,intent,provider.url)
-      existing=await existingMission(params.actor.legacyTelegramId,oldKey)
-      if(existing)key=oldKey
+      for(const oldKey of [previousObjectiveKey(params.actor,intent),legacyDedupeKey(params.actor,intent,provider.url)]){
+        existing=await existingMission(params.actor.legacyTelegramId,oldKey)
+        if(existing){key=oldKey;break}
+      }
     }
   }catch{return reservationReconciliationReply()}
   if(existing&&(existing.event.metadata_json?.reservationUrl&&existing.event.metadata_json.reservationUrl!==provider.url))return reservationReconciliationReply(String(existing.run?.id||''))
@@ -1414,6 +1438,7 @@ export async function continueRestaurantReservationGuestReply(params:{actor:Agen
       }
     }
     if(!said||!alternatives.includes(said))return null
+    if(await replacementSlotBlocked(params.actor,base,provider,said))return reservationReconciliationReply()
     const{data:moved}=await supabaseAdmin.from('agent_runs').update({error:'awaiting_guest_name',updated_at:new Date().toISOString(),metadata_json:{...meta,stage:'guest_name',slot_time:said}})
       .eq('id',pending.id).eq('telegram_id',tg).eq('status','paused').eq('error','awaiting_slot_choice').select('id').maybeSingle()
     if(!moved)return null
@@ -1425,6 +1450,7 @@ export async function continueRestaurantReservationGuestReply(params:{actor:Agen
   if(meta.stage!=='guest_name'||pending.error!=='awaiting_guest_name'||!/^\d{2}:\d{2}$/.test(String(meta.slot_time||'')))return null
   const guestName=guestNameFromReply(params.text)
   if(!guestName)return null
+  if(await replacementSlotBlocked(params.actor,base,provider,String(meta.slot_time)))return reservationReconciliationReply()
   // Claim the step so a duplicate delivery cannot create a second approval.
   const claimToken=`restaurant_slot_claim:${createHash('sha256').update(`${pending.id}|${Date.now()}|${Math.random()}`).digest('hex').slice(0,24)}`
   const{data:claimed}=await supabaseAdmin.from('agent_runs').update({status:'running',error:claimToken,updated_at:new Date().toISOString()})
