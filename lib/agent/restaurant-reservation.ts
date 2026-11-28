@@ -45,7 +45,8 @@ const GENERIC_NAME=/^(?:a\s+|an\s+|the\s+)?(?:table|reservation|booking|seat|sea
 
 // A time/date is not a venue, even when it follows "table for N at".
 function temporalVenue(value:string){
-  return /^(?:\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|(?:noon|midnight|today|tomorrow|tonight|around|about|between|only)\b)/i.test(value.trim())
+  const candidate=value.trim().replace(/^(?:a|an|the)\s+/i,'')
+  return /^(?:a|an|the)$/i.test(candidate)||/^(?:\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|(?:noon|midnight|today|tomorrow|tonight|around|about|between|only)\b|(?:next|first|earliest|any)\s+(?:available|open)\b|(?:available|open)\s+(?:slot|time|table)\b)/i.test(candidate)
 }
 
 function restaurantName(text:string){
