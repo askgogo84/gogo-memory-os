@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUrl } from '@/lib/google-calendar'
 import { calendarOwnerForLegacyEntry } from '@/lib/services/calendar-legacy-entry'
+import { setOauthBindingCookie } from '@/lib/security/oauth-browser-binding'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,7 +17,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    return NextResponse.redirect(getAuthUrl(telegramId), 302)
+    // Same browser binding as /api/calendar/connect: the legacy entry is a bound start route too, never a raw mint.
+    const authUrl = getAuthUrl(telegramId)
+    const res = NextResponse.redirect(authUrl, 302)
+    if (!setOauthBindingCookie(res, 'calendar', authUrl)) throw new Error('calendar_oauth_binding_unavailable')
+    return res
   } catch (error) {
     console.error('CALENDAR_LEGACY_CONNECT_FAILED:', error instanceof Error ? error.message : 'unknown')
     return NextResponse.json({ ok: false, error: 'Calendar connection is temporarily unavailable' }, { status: 503 })

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getGmailAuthUrl, verifyGmailConnectToken } from '@/lib/google-gmail'
+import { setOauthBindingCookie } from '@/lib/security/oauth-browser-binding'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,5 +25,14 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  return NextResponse.redirect(authUrl)
+  // Bind the OAuth state to the browser that opened this link (OAuth CSRF fix).
+  const res = NextResponse.redirect(authUrl)
+  if (!setOauthBindingCookie(res, 'gmail', authUrl)) {
+    console.error('GMAIL_OAUTH_BINDING_UNAVAILABLE')
+    return NextResponse.json(
+      { ok: false, error: 'Google connection is temporarily unavailable' },
+      { status: 503 }
+    )
+  }
+  return res
 }
