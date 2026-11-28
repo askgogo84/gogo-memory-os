@@ -195,6 +195,9 @@ export type RestaurantReservationIntent={
 export function isRestaurantReservationRequest(raw:string){
   const text=String(raw||'').trim().toLowerCase()
   if(!text)return false
+  // Even without a trailing 'do not book', a structured availability lookup
+  // must never be classified as an affirmative booking command.
+  if(isRestaurantAvailabilityRequest(raw))return false
   // Planning/recall must not create a reservation mission merely because its
   // safety instructions mention booking. An explicit read-only request wins.
   if(/\bread[\s-]?only\b/.test(text))return false
@@ -1033,7 +1036,7 @@ async function readRestaurantAvailability(actor:AgentActor,intent:RestaurantRese
   const maps=(!intent.sourceUrl||publicMapsEntry(intent.sourceUrl))?await discoverGoogleDining(actor,intent,deadline):null
   const direct=await discoverProviders(intent)
   const providers=[...(maps?.providers||[]),...direct.filter(p=>!maps?.providers.some(m=>m.url===p.url))]
-  const provider=providers.find(p=>{try{const u=new URL(p.url);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&!googleDiningHost(p.url)&&(!isReserveXHost(p.url)||publicReserveXVenue(p.url))}catch{return false}})
+  const provider=providers.find(p=>{try{const u=new URL(p.url);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&!googleDiningHost(p.url)&&reservationLinkKind(p.url,intent.restaurant)!=='other'&&(!isReserveXHost(p.url)||publicReserveXVenue(p.url))&&!/(?:^|\/)(?:manage|account|login|signin|checkout|confirmation|payment|cancel|my-bookings)(?:\/|$)/i.test(u.pathname)}catch{return false}})
   const options=maps?.partners.length?' Google Maps lists '+maps.partners.join(', ')+'.':''
   if(!provider||deadline-Date.now()<20_000)return reply('I could not verify live table availability for '+intent.restaurant+'.'+options)
   try{
