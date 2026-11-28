@@ -41,16 +41,17 @@ const db={from(table:string){let patch:any,insert:any,single=false;const filters
 const prep=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
 const bound=buildApprovalBinding(prep.restaurantReservationApprovalInput({runId:'run',lifeEventId:'event',actionId:'action',...payload,providerUrl:payload.reservationUrl}))
 const result={status:'completed',url:'https://provider.example/confirmation',title:'Reservation confirmed',pageText:'Reservation confirmed for Synthetic Restaurant on 24 Oct 2026 at 8:30 pm',actions:[{kind:'submit',status:'done'}]}
+let providerResult:any=structuredClone(result)
 const worker=load('lib/agent/restaurant-reservation-worker.ts',{
  '@/lib/supabase-admin':{supabaseAdmin:db},'./restaurant-reservation':prep,'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining,
  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,123);return{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}}},
  './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},'./sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{handoffReleases++}},
- './secure-computer':{runSecureBrowser:async(input:any)=>{providerCalls++;providerObjective=input.objective;return structuredClone(result)}},
+ './secure-computer':{runSecureBrowser:async(input:any)=>{providerCalls++;providerObjective=input.objective;return structuredClone(providerResult)}},
  './booking-calendar-execution':{prepareBookingCalendarApproval:async()=>{calendarCalls++;return{runId:'calendar-draft'}}},
  '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_recipient:string,text:string)=>{notifications.push(text)}},
 })
-function reset(){faultTable='';faultMode='error';receiptFault=false;recoveryFault=false;slowActionCompletion=false;handoffReleases=0;providerCalls=0;providerObjective='';calendarCalls=0;notifications=[];activityTypes=[];writes=[];rows={
+function reset(){providerResult=structuredClone(result);faultTable='';faultMode='error';receiptFault=false;recoveryFault=false;slowActionCompletion=false;handoffReleases=0;providerCalls=0;providerObjective='';calendarCalls=0;notifications=[];activityTypes=[];writes=[];rows={
  agent_runs:{id:'run',telegram_id:'123',status:'queued',error:null,updated_at:'2026-10-18T10:00:00Z',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'event',life_event_action_id:'action'}},
  life_event_actions:{id:'action',telegram_id:'123',life_event_id:'event',action_key:'restaurant-reservation-release',status:'ready',payload_json:structuredClone(payload),due_at:payload.releaseAt},
  life_events:{id:'event',telegram_id:'123',dedupe_key:'fixture-key',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',lifecycle_state:'planned',metadata_json:{}},
@@ -129,6 +130,70 @@ await check('initial approval and idempotent armed read remain safe before execu
  assert.equal(providerCalls,0)
 })
 function rebindCurrent(){const p=rows.life_event_actions.payload_json;Object.assign(rows.agent_approvals,buildApprovalBinding(prep.restaurantReservationApprovalInput({runId:'run',lifeEventId:'event',actionId:'action',...p,providerUrl:p.reservationUrl})))}
+// Sanitized synthetic provider URLs and receipt text. No live customer data.
+const reserveXPublic='https://reservex.explorex.co.in/r/00000000-0000-0000-0000-000000000001'
+const reserveXPrivate='https://reservex.explorex.co.in/manage/00000000-0000-0000-0000-000000000002'
+const receiptPage='Reservation confirmed. Synthetic Bar & Kitchen. Guests: 3 Date: 2026-10-24 Time: 8:01 PM Session: Dinner Booking type: Personal.'
+function reserveXFixture(){
+ reset()
+ const p=rows.life_event_actions.payload_json
+ const context=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'2026-10-24',releaseAt:p.releaseAt,now:new Date('2026-10-18T10:00:00Z'),pack:{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}})
+ assert.equal(context.incomplete,false)
+ Object.assign(p,{restaurant:'Synthetic Bar and coffee Home city',reservationUrl:reserveXPublic,partySize:3,requestedDate:'2026-10-24',preferredStart:'20:01',preferredEnd:'20:01',timeConstraint:{version:1,kind:'exact',start:'20:01',end:'20:01'},diningContext:context})
+ providerResult={...result,url:reserveXPrivate,title:'Reservation confirmed',pageText:receiptPage}
+ rebindCurrent()
+}
+await check('ReserveX exact approved receipt completes once and only public URL and structured fields are stored',async()=>{
+ reserveXFixture()
+ const original=structuredClone(rows.life_event_actions)
+ const response=await worker.processOne(original)
+ assert.equal(response.status,'completed')
+ assert.equal(providerCalls,1)
+ const receipt=rows.life_event_actions.payload_json.providerReceipt
+ assert.deepEqual(receipt,{provider:'ReserveX',date:'2026-10-24',time:'20:01',partySize:3,sourceUrl:reserveXPublic})
+ assert.equal(rows.life_events.start_at,'2026-10-24T14:31:00.000Z')
+ assert.equal(rows.life_events.metadata_json.confirmationUrl,null)
+ assert.ok(!JSON.stringify({rows,writes,notifications}).includes(reserveXPrivate))
+ assert.match(notifications[0],/2026-10-24.*20:01 IST.*Guests: 3.*ReserveX/)
+ assert.equal(rows.agent_approvals.status,'executed')
+ try{await worker.processOne(original)}catch{}
+ assert.equal(providerCalls,1)
+})
+for(const [label,change] of [
+ ['wrong party',(r:any)=>{r.pageText=receiptPage.replace('Guests: 3','Guests: 2')}],
+ ['wrong day',(r:any)=>{r.pageText=receiptPage.replace('2026-10-24','2026-10-25')}],
+ ['wrong clock',(r:any)=>{r.pageText=receiptPage.replace('8:01 PM','8:00 PM')}],
+ ['wrong venue',(r:any)=>{r.pageText=receiptPage.replace('Synthetic Bar & Kitchen','Unrelated Cafe')}],
+ ['unconfirmed',(r:any)=>{r.pageText=receiptPage.replace('Reservation confirmed','Reservation not confirmed')}],
+ ['missing fields',(r:any)=>{r.pageText='Reservation confirmed'}],
+ ['conflicting fields',(r:any)=>{r.pageText=receiptPage+' Guests: 4'}],
+ ['wrong origin',(r:any)=>{r.url='https://other.example/confirmation'}],
+ ['wrong public venue',(r:any)=>{r.url=reserveXPublic.replace(/0001$/,'0003')}],
+ ['uncertain submit',(r:any)=>{r.status='blocked';r.actions=[{kind:'submit',status:'failed'}]}],
+ ['blocked after submit',(r:any)=>{r.status='blocked';r.actions=[{kind:'submit',status:'done'}]}],
+] as Array<[string,(r:any)=>void]>)await check('ReserveX '+label+' never claims a booking or submits twice',async()=>{
+ reserveXFixture();change(providerResult)
+ const original=structuredClone(rows.life_event_actions)
+ const response=await worker.processOne(original)
+ assert.equal(response.status,'outcome_unknown')
+ assert.equal(rows.life_event_actions.status,'blocked')
+ assert.notEqual(rows.life_event_actions.payload_json.providerConfirmationVerified,true)
+ assert.equal(providerCalls,1)
+ assert.equal(calendarCalls,0)
+ assert.ok(!notifications.some(t=>t.startsWith('✅')))
+ assert.ok(!JSON.stringify({rows,writes,notifications}).includes(reserveXPrivate))
+ try{await worker.processOne(original)}catch{}
+ assert.equal(providerCalls,1)
+})
+await check('ReserveX 8:01 receipt does not inherit an exact 8:00 approval',async()=>{
+ reserveXFixture()
+ Object.assign(rows.life_event_actions.payload_json,{preferredStart:'20:00',preferredEnd:'20:00',timeConstraint:{version:1,kind:'exact',start:'20:00',end:'20:00'}})
+ rebindCurrent()
+ const response=await worker.processOne(structuredClone(rows.life_event_actions))
+ assert.equal(response.status,'outcome_unknown')
+ assert.equal(calendarCalls,0)
+ assert.ok(!notifications.some(t=>t.startsWith('✅')))
+})
 await check('legacy missing dining-time authority pauses before a new provider execution',async()=>{
  reset();delete rows.life_event_actions.payload_json.timeConstraint;rebindCurrent()
  const r=await worker.processOne(structuredClone(rows.life_event_actions));assert.equal(r.status,'paused');assert.equal(providerCalls,0);assert.equal(calendarCalls,0);assert.equal(rows.agent_approvals.status,'expired')
