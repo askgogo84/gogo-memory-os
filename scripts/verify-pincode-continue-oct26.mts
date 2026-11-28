@@ -7,7 +7,10 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 
 const src = readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
-const guard = src.match(/async function isConsequentialControl\(page,selector,onUnavailable,onContext\)\{[\s\S]*?\n\}\n(?=\/\/ 11 Oct live Playo)/)![0]
+const guardStart=src.indexOf('async function isConsequentialControl(')
+const guardEnd=src.indexOf('// 11 Oct live Playo runs:',guardStart)
+assert.ok(guardStart>=0&&guardEnd>guardStart)
+const guard=src.slice(guardStart,guardEnd)
 
 function box(text: string, inputs: Array<{ value: string; type?: string }>) {
   return {

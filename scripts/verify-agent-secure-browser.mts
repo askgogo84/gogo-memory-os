@@ -136,7 +136,7 @@ assert.match(computer,/const normalized=String\(value\?\?''\)[\s\S]*redactBrowse
 assert.match(computer,/links:\(page\.links\|\|\[\]\)[\s\S]*href:safeText/s)
 assert.match(computer,/forms:\(page\.forms\|\|\[\]\)[\s\S]*action:safeText/s)
 assert.match(computer,/SECURE_BROWSER_PLAN_FAILED:',safeText/)
-assert.match(computer,/const safeError=safeText\(error\?\.message\|\|error,1000\)/)
+assert.match(computer,/const safeError=params\.googleDiningDiscovery\?'google_dining_read_failed':safeText\(error\?\.message\|\|error,1000\)/)
 assert.match(computer,/SECURE_BROWSER_FAILED:',safeError/)
 assert.doesNotMatch(computer,/SECURE_BROWSER_FAILED:', error\?\.stack/)
 assert.match(computer,/url:safeText\(page\.url\|\|target,1200\)/)

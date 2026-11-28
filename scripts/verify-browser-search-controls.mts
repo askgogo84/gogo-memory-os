@@ -275,7 +275,10 @@ for(const [url,label,expectedWaits,expectedClicks] of [
 await exports.planActions('Find vegetarian burgers',observedLinkPage,'read','USER_INSTRUCTION')
 // Live two-adult research stopped after a form action was rejected as
 // consequential. Observed passenger controls reproduce the rejection below.
-const passengerGuard=exports.BROWSER_SCRIPT.match(/async function isConsequentialControl\(page,selector,onUnavailable,onContext\)\{[\s\S]*?\n\}\n(?=\(async)/)![0]
+const passengerGuardStart=exports.BROWSER_SCRIPT.indexOf('async function isConsequentialControl(')
+const passengerGuardEnd=exports.BROWSER_SCRIPT.indexOf('// 11 Oct live Playo runs:',passengerGuardStart)
+assert.ok(passengerGuardStart>=0&&passengerGuardEnd>passengerGuardStart)
+const passengerGuard=exports.BROWSER_SCRIPT.slice(passengerGuardStart,passengerGuardEnd)
 for(const [url,label,dialogLabel,searchRegion,form,expected] of [
  ['https://www.google.com/travel/flights','1 passenger, change number of passengers.','',true,false,false],
  ['https://www.google.com/travel/flights','1 passenger','',true,false,false],

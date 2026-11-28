@@ -107,6 +107,7 @@ type BrowserAction =
   | { kind:'list_options'; field:string }
 
 export type SecureBrowserResult = {
+  googleDining?:{partners:string[];links:Array<{url:string;label:string}>;nativeReview:boolean}
   flightEvidence?:{searchControls:string[];resultLabels:string[];fareBasisLabel?:string}
   productEvidence?:{name:string;price:string}
   status:'completed'|'prepared'|'blocked'|'failed'
@@ -999,8 +1000,8 @@ async function isPublicSearchInput(page,selector){
       input.getAttribute('formaction')!==null||input.getAttribute('formmethod')!==null);
   });}catch{return false;}
 }
-async function isConsequentialControl(page,selector,onUnavailable,onContext){
-  try{const decision=await page.locator(selector).first().evaluate(el=>{
+async function isConsequentialControl(page,selector,onUnavailable,onContext,googleDiningDiscovery=false){
+  try{const decision=await page.locator(selector).first().evaluate((el,dining)=>{
     // The observed Google passenger dialog adjusts a public search filter.
     // Its launcher, Add/Remove adult and Done buttons have no type attribute. Scope the
     // exception to this exact HTTPS provider, search region and modal; generic
@@ -1036,6 +1037,14 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
       |(/^(?:Add adult|Remove adult|Done|Cancel)$/.test(passengerLabel)?4096:0):undefined;
     const consequential=(()=>{
     if((guardContext&127)===127&&((guardContext&384)===384||(guardContext&7680)===7680))return false;
+    // A literal Reserve a table launcher on Google's public place/search UI
+    // opens the chooser. Never exempt Book/Confirm or anything inside a form.
+    if(dining===true&&/^https:\/\/(?:www\.)?google\.com\/maps(?:\/(?:place|search)(?:[/?]|$)|\/?$)/i.test(location.href)
+      &&/^Reserve a table$/i.test(passengerLabel)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'
+      &&!el.form&&!el.closest?.('form')&&el.getAttribute('formaction')===null&&el.getAttribute('formmethod')===null
+      &&(el.tagName==='BUTTON'||(el.tagName!=='A'&&el.getAttribute('role')==='button')||(el.tagName==='A'&&/^https:\/\/(?:www\.)?google\.com\/maps\/reserve(?:[/?]|$)/i.test(el.href||'')))
+      &&(!el.href||/^https:\/\/(?:www\.)?google\.com\/maps\/reserve(?:[/?]|$)/i.test(el.href))
+      &&String(el.getAttribute('type')||'').toLowerCase()!=='submit')return false;
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
     if(/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text))return true;
@@ -1089,7 +1098,7 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
     return false;
     })();return {consequential,guardContext,guardNameShape};
-  },undefined,/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(page.url?.()||'')?{timeout:2000}:undefined);if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext,decision.guardNameShape);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
+  },googleDiningDiscovery,/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(page.url?.()||'')?{timeout:2000}:undefined);if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext,decision.guardNameShape);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
 }
 // 11 Oct live Playo runs: a popup covered the next control and the click failed as "obscured".
 // Close it with Escape and click again; if it still covers the control, click the control itself.
@@ -1549,7 +1558,7 @@ async function instagramPublicRead(page,url,navTimeout){
         else if(a.kind==='click'){
           let unavailable=false;
           let guardContext,guardNameShape;
-          consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true},(value,shape)=>{guardContext=value;guardNameShape=shape});
+          consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true},(value,shape)=>{guardContext=value;guardNameShape=shape},payload.mode==='read'&&payload.googleDiningDiscovery===true);
           if(payload.bookingFlow){
             // A provider booking stops before payment: Gogo never presses Pay or Place order.
             const controlText=await page.locator(a.selector).first().evaluate(el=>[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ')).catch(()=>'');
@@ -2212,6 +2221,50 @@ function browserSourceUrl(raw:unknown):string|null{
     return source.length<=1200&&safeText(source,1200)===source&&!/redacted|withheld/i.test(source)?source:null
   }catch{return null}
 }
+// Read-only Maps restaurant route. Google is a discovery surface, not authority
+// to spend, choose a different venue or submit a reservation.
+function googleDiningPage(raw:unknown){
+  try{const u=new URL(String(raw||''));return u.protocol==='https:'&&['google.com','www.google.com'].includes(u.hostname)&&!u.username&&!u.password&&!u.port&&/^\/maps(?:\/|$)/.test(u.pathname)}catch{return false}
+}
+function googleDiningEntry(raw:unknown){
+  try{const u=new URL(String(raw||''));return googleDiningPage(raw)&&/^\/maps\/search\/?$/.test(u.pathname)&&u.searchParams.get('api')==='1'&&Boolean(u.searchParams.get('query'))&&[...u.searchParams.keys()].every(k=>k==='api'||k==='query')&&!u.hash}catch{return false}
+}
+export function googleDiningObservation(page:any,restaurant:string):SecureBrowserResult['googleDining']|null{
+  if(!googleDiningPage(page?.url))return null
+  const norm=(v:unknown)=>String(v||'').normalize('NFKC').toLowerCase().replace(/\bmalleshwaram\b/g,'malleshwara').replace(/[^a-z0-9]+/g,' ').trim()
+  const words=norm(restaurant).split(' ').filter(w=>w.length>=2&&!['the','and','restaurant','bengaluru','bangalore','india','at'].includes(w))
+  const body=String(page?.text||'')
+  const title=norm(page?.title)
+  const heading=norm(body.slice(0,900))
+  const contains=(t:string)=>words.every(w=>(' '+t+' ').includes(' '+w+' '))
+  // A generic Maps results list cannot establish that a restaurant is selected.
+  const path=new URL(String(page.url)).pathname
+  if(!words.length||(!contains(title)&&!(/^\/maps\/reserve(?:\/|$)/.test(path)&&contains(heading))))return null
+  const chooser=/\bcontinue with\b/i.test(body)
+  const nativeReview=/\byour reservation\b/i.test(body)&&/\bin partnership with\b/i.test(body)
+  const launcher=/\breserve a table\b/i.test(body)
+  if(!chooser&&!nativeReview&&!launcher)return null
+  const partners=['EazyDiner','District Dining','Swiggy','ReserveX','ReserveGo'].filter(name=>new RegExp('\\b'+name+'\\b','i').test(body))
+  const links:Array<{url:string;label:string}>=[]
+  for(const row of [...(Array.isArray(page.links)?page.links:[]),...(Array.isArray(page.controls)?page.controls:[])]){
+    try{
+      const u=new URL(String(row?.href||''))
+      if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||u.search)continue
+      const h=u.hostname.replace(/^www\./,'')
+      if(/(?:^|\/)(?:manage|account|login|signin|checkout|confirmation|payment|cancel|my-bookings)(?:\/|$)/i.test(u.pathname))continue
+      const publicWidget=h==='reservex.explorex.co.in'&&/^\/r\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/?$/i.test(u.pathname)
+      const publicListing=['eazydiner.com','district.in','swiggy.com','zomato.com','dineout.co.in','magicpin.in'].includes(h)
+        &&u.pathname.split('/').filter(Boolean).length>=2&&contains(norm(decodeURIComponent(u.pathname)))
+      if(!publicWidget&&!publicListing)continue
+      const label=String(row?.text||row?.label||'').slice(0,120)
+      if(!label||!(/\b(?:reserve|book|eazydiner|district|swiggy|zomato|dineout|reservex|magicpin)\b/i.test(label)))continue
+      if(!links.some(x=>x.url===u.href))links.push({url:u.href,label:h})
+    }catch{}
+  }
+  if(!links.length&&!chooser&&!nativeReview)return null
+  // No account details, private Maps checkout URL, or raw page copy in result.
+  return {partners:partners.slice(0,5),links:links.slice(0,8),nativeReview}
+}
 function productLinkNeedsDetail(objective:string,raw:unknown):boolean{
   if(!/\b(?:product|item)\s+(?:page\s+)?(?:link|url)\b/i.test(objective))return false
   try{
@@ -2436,7 +2489,11 @@ export async function tryObscuraBrowserRead(
   }
 }
 
-export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number;publicOnly?:boolean}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number;publicOnly?:boolean;googleDiningDiscovery?:{restaurant:string}}):Promise<SecureBrowserResult>{
+  if(params.googleDiningDiscovery){
+    if(params.mode!=='read'||!googleDiningEntry(params.url)||!params.googleDiningDiscovery.restaurant.trim()||params.googleDiningDiscovery.restaurant.length>160)throw new Error('google_dining_read_scope_invalid')
+    params={...params,publicOnly:true,vaultCredentialId:null,phoneLogin:null}
+  }
   if(params.loginCode!=null||params.bookingOtp!=null)throw new Error('human_auth_takeover_required')
   // Launch kill switches, last line of defence for every caller (bookings, sign-ups, saved Vault logins). Thrown
   // before any sandbox, browser or provider request, so nothing was done. A read under GOGO_LOGGED_IN_BROWSER=off
@@ -2454,7 +2511,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
   const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
   // The optional public read shares the original read budget and has no
   // authority to intercept a saved login, handoff, booking or execution.
-  const obscuraResult=readDeadline!==undefined
+  const obscuraResult=readDeadline!==undefined&&!params.googleDiningDiscovery
     ? await tryObscuraBrowserRead(params,readDeadline):null
   if(obscuraResult)return obscuraResult
   const readDiagnostics:BrowserReadDiagnostic[]=[]
@@ -2508,6 +2565,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let credentialSelectionRequired=false
     let readAnswer:string|null=null
     let assessedReadPage:any=null
+    let diningObservation:SecureBrowserResult['googleDining']|null=null
     let unchangedReadWaves=0
     let flightSearchRecoveryUsed=false,bookingStartReloaded=false
     // 27 Oct live booking 27507272: Google Flights handed off to Air India, whose edge (Akamai) answered
@@ -2852,7 +2910,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // model assessment call on an empty form at each step; final verification
       // remains mandatory, and result signals never establish completion alone.
       const flightProgress=params.mode==='read'?googleFlightReadProgress(page):null
-      if(params.mode==='read'&&wave>0&&(!flightProgress||flightProgress.rowSignals)){
+      if(params.googleDiningDiscovery){
+        diningObservation=googleDiningObservation(page,params.googleDiningDiscovery.restaurant)
+        if(diningObservation){readAnswer='Observed restaurant booking options on Google Maps. Availability and booking are not confirmed.';assessedReadPage=page;break}
+      }
+      if(params.mode==='read'&&!params.googleDiningDiscovery&&wave>0&&(!flightProgress||flightProgress.rowSignals)){
         readAnswer=await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page,diagnose))
         assessedReadPage=page
         if(readAnswer)break
@@ -2935,6 +2997,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // approved search link once instead; it is the same URL the approval was bound to.
       // The way back is the Google booking page this run already opened, not a link the blocked page offers.
       if(edgeBack)actions.splice(0,actions.length,...edgeBack)
+      if(params.googleDiningDiscovery){
+        for(let i=actions.length-1;i>=0;i--){const a=actions[i];if(a.kind==='goto'&&!googleDiningPage(a.url))actions.splice(i,1)}
+      }
       // 27 Oct 15:50 live search 6a0aaef4: the same blank form appeared on a fare read, and 20+ waves re-typed the search
       // until the read deadline. A flight read reloads its search link once too.
       if((providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded&&wave<3){
@@ -3083,7 +3148,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       const currentUrl=String(page.url||target.toString())
       const {allow}=first.managed||allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
       const plannedAdvance=providerBooking?actions.map(a=>advanceKey(a)):[]
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,bookingFlow:providerBooking,bookingTarget:providerBooking?bookingTarget:null,screenshot:providerBooking&&visionEnabled,loginFirst:Boolean(loginFirst),advancePressed:providerBooking?[...bookingAdvancePressed]:[],rehearsal:providerBooking&&params.rehearsal===true,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,googleDiningDiscovery:Boolean(params.googleDiningDiscovery),bookingFlow:providerBooking,bookingTarget:providerBooking?bookingTarget:null,screenshot:providerBooking&&visionEnabled,loginFirst:Boolean(loginFirst),advancePressed:providerBooking?[...bookingAdvancePressed]:[],rehearsal:providerBooking&&params.rehearsal===true,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
       if(readDeadline!==undefined&&Date.now()>=readDeadline)throw new Error('browser_read_deadline')
       // A sign-up's new-password field: write the generated password as a pending Vault record
       // BEFORE anything is submitted. If that record cannot be written, nothing is submitted.
@@ -3247,7 +3312,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         title:safeText(page.title,300),summary:'Choose your delivery location in the provider browser, then resume this same task. Prices and availability depend on that location.',
         pageText:'Delivery location is required.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'delivery_location_required'}
     }
-    if(params.mode==='read'&&assessedReadPage!==page)readAnswer=await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page,diagnose))
+    if(params.googleDiningDiscovery){
+      diningObservation=googleDiningObservation(page,params.googleDiningDiscovery.restaurant)
+      readAnswer=diningObservation?'Observed restaurant booking options on Google Maps. Availability and booking are not confirmed.':null
+    }else if(params.mode==='read'&&assessedReadPage!==page)readAnswer=await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page,diagnose))
     if(params.mode==='read'&&!readAnswer){
       // Diagnose the observed 2 Oct lookup failure without logging page content,
       // account details, selectors, input values, cookies or connection URLs.
@@ -3257,7 +3325,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         links:page.links?.length||0,actions:actionLog.map(a=>({kind:a.kind,status:a.status,...(a.failure?{failure:a.failure}:{})})),
         controls:page.controls?.length||0,
         // Where the run ended (path only, no query) and whether the page still offered a sign-in.
-        at:(()=>{try{const u=new URL(String(page.url||''));return u.hostname+u.pathname.slice(0,80)}catch{return null}})(),title:safeText(page.title,80),
+        at:params.googleDiningDiscovery?'google_maps_dining':(()=>{try{const u=new URL(String(page.url||''));return u.hostname+u.pathname.slice(0,80)}catch{return null}})(),title:params.googleDiningDiscovery?'':safeText(page.title,80),
         signInEntry:hasSignInEntry(page),loginForm:pageLooksLikeLogin(page),
         // Shape of what was on screen (no page text): how much text, and which account words appeared.
         textLen:String(page.text||'').length,cues:['order','delivered','address','payment','logout','account'].filter(w=>new RegExp('\\b'+w,'i').test(String(page.text||''))),
@@ -3285,6 +3353,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     const executionSummary=(accountExists?executionEvidence!.slice(ACCOUNT_EXISTS_PREFIX.length):executionEvidence!)+signupNote
     if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||draftObjectiveCovered(params.objective,page,draftActions)===false))throw new Error('browser_objective_unverified')
     if(!params.keepAlive){await releaseManagedOnce();await first.sandbox.stop().catch(()=>{})}
+    if(params.googleDiningDiscovery&&diningObservation)return {status:'completed',url:params.url,sourceUrl:params.url,title:'Google Maps dining options',summary:readAnswer||'',pageText:'',forms:[],actions:normalizeActionLog(actionLog).map(a=>({...a,detail:''})),sandboxName:first.name,googleDining:diningObservation}
     const prepared=params.mode==='draft'
     const fareBasisLabel=googleFlightReadProgress(page)
       ?String(page.text||'').match(/Prices include required taxes\s*\+\s*fees for (?:one|[1-9]) adults?\b\.?/i)?.[0]:undefined
@@ -3298,7 +3367,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     }
   } catch (error:any) {
     if(!params.keepAlive){await releaseManagedOnce();await activeSandbox?.stop().catch(()=>{})}
-    const safeError=safeText(error?.message||error,1000)
+    const safeError=params.googleDiningDiscovery?'google_dining_read_failed':safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
     const browserSubmitted=runActionLog.some(a=>a?.kind==='submit'&&a?.status==='done')
     // Why an account creation stopped, without values or selectors: kinds, statuses, last page.

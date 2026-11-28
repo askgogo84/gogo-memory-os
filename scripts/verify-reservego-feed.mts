@@ -46,7 +46,8 @@ await assert.rejects(rg.fetchReservegoSlots(OUTLET, '2026-10-20', (async () => n
 await assert.rejects(rg.fetchReservegoSlots('nothex', '2026-10-20', fetcher), /reservego_bad_input/)
 
 const src = readFileSync('lib/agent/restaurant-reservation.ts', 'utf8')
-const fast = src.indexOf('fetchReservegoSlots(widget.outletId'), browser = src.indexOf('inspected=await runSecureBrowser({')
+const fast = src.indexOf('fetchReservegoSlots(widget.outletId'), browser = src.indexOf('const inspectProvider=(candidate:ReservationProvider,publicOnly=false)=>runSecureBrowser({')
+assert.ok(src.indexOf('inspected=await inspectProvider(provider)') > browser && browser > 0, 'the first provider read invokes the read-only browser helper')
 assert.ok(fast > 0 && fast < browser, 'feed read runs before the browser read')
 assert.match(src, /RESERVEGO_FEED_FAILED/, 'feed failure falls back to the browser read')
 assert.match(src, /reservego\\\.co\(\?:m\)\?\$/, 'widget.reservego.co counts as first party')

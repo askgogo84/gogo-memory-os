@@ -26,15 +26,28 @@ const EAZY={title:'Toit Indiranagar, Bengaluru - Book a Table | EazyDiner',url:'
 const RESERVEGO={title:'Toit Indiranagar - Reserve a table | ReserveGo',url:WIDGET,snippet:'Reserve a table at Toit Brewpub, 100 Feet Road, Indiranagar, Bengaluru.'}
 const transpile=(file:string)=>ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 
-function makeDb(seed:Record<string,any[]>={}){
+function makeDb(seed:Record<string,any[]>={},faults:{competingClaim?:boolean;inventoryError?:boolean}={}){
   const tables:Record<string,any[]>=JSON.parse(JSON.stringify(seed));let ids=0
   const writes:Array<{table:string;op:string;value:any}>=[]
   const get=(r:any,k:string)=>{if(k.includes('->>')){const[a,b]=k.split('->>');const v=r[a]?.[b];return v==null?undefined:String(v)}return r[k]}
   function from(table:string){
     const rows=()=>tables[table]||(tables[table]=[])
-    let op='select',payload:any=null,limitN=Infinity,orderKey='',asc=true
+    let op='select',payload:any=null,limitN=Infinity,orderKey='',asc=true,ignoreDuplicates=false
     const filters:Array<(r:any)=>boolean>=[]
     const exec=(single:boolean)=>{
+      if(table==='life_events'&&op==='select'&&!single&&faults.inventoryError)return{data:null,error:{message:'inert inventory unavailable'}}
+      if(op==='upsert'&&table==='life_events'){
+        // A competing writer claims the exact unique key between lookup and insert.
+        if(faults.competingClaim){
+          faults.competingClaim=false
+          rows().push({id:'competing-event',...JSON.parse(JSON.stringify(payload)),metadata_json:{...payload.metadata_json,reservationUrl:'https://toit.in/reservations',winner:true}})
+        }
+        const existing=rows().find(r=>String(r.telegram_id)===String(payload.telegram_id)&&r.dedupe_key===payload.dedupe_key)
+        if(existing){
+          if(ignoreDuplicates)return{data:single?null:[],error:single?{code:'PGRST116',message:'No rows returned'}:null}
+          Object.assign(existing,payload);return{data:single?existing:[existing],error:null}
+        }
+      }
       if(op==='insert'||op==='upsert'){const row={id:`${table}-${++ids}`,...payload};rows().push(row);return{data:single?row:[row],error:null}}
       let matched=rows().filter(r=>filters.every(f=>f(r)))
       if(op==='update'){matched.forEach(r=>Object.assign(r,payload));return{data:single?(matched[0]||null):matched,error:null}}
@@ -51,7 +64,7 @@ function makeDb(seed:Record<string,any[]>={}){
       order:(k:string,o?:any)=>{orderKey=k;asc=o?.ascending!==false;return q},limit:(n:number)=>{limitN=n;return q},
       update:(v:any)=>{op='update';payload=v;writes.push({table,op,value:v});return q},
       insert:(v:any)=>{op='insert';payload=v;writes.push({table,op,value:v});return q},
-      upsert:(v:any)=>{op='upsert';payload=v;writes.push({table,op,value:v});return q},
+      upsert:(v:any,options?:{ignoreDuplicates?:boolean})=>{op='upsert';payload=v;ignoreDuplicates=options?.ignoreDuplicates===true;writes.push({table,op,value:v});return q},
       maybeSingle:async()=>exec(true),single:async()=>exec(true),
       then:(res:any,rej:any)=>Promise.resolve().then(()=>exec(false)).then(res,rej),
     }
@@ -103,6 +116,245 @@ await check('impossible explicit dining dates pause both entry points before que
     assert.equal(parsed.requestedDate,expected)
     assert.notEqual(parsed.dateClarificationNeeded,true)
   }
+})
+
+// 28 Nov: real failed WhatsApp request. Public venue fixture only, no private management link.
+const CHINS_REQUEST='Book a table for 3 at 8pm today at Chins bar and coffee Lavelle road'
+const RESERVEX='https://reservex.explorex.co.in/r/0186b7ac-6775-4e1c-9193-eed9f1137077'
+const CHINS_PUBLIC={title:'Chins Bar & Kitchen, Plot Number 25 — Book a Table | ReserveX',url:RESERVEX,snippet:'Chins Bar & Kitchen, Lavelle Road, Bengaluru. Reserve a table.'}
+const CHINS_COFFEE={title:'Chins Coffee | Book a Table',url:'https://www.swiggy.com/restaurants/bangalore/lavelle-road/chins-coffee-fixture/dineout',snippet:'Chins Coffee Lavelle Road Bangalore'}
+await check('time-first exact incident and lowercase venue retain party, date and time',async()=>{
+  const h=loadReservation({search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  for(const request of [CHINS_REQUEST,CHINS_REQUEST.replace('Chins','chins'),CHINS_REQUEST.replace('8pm','8:00 PM')]){
+    const parsed=h.mod.parseRestaurantReservationIntent(request)
+    assert.match(parsed.restaurant,/^chins bar and coffee lavelle road$/i)
+    assert.equal(parsed.partySize,3)
+    assert.equal(parsed.preferredStart,'20:00')
+    assert.equal(parsed.preferredEnd,'20:00')
+    assert.equal(parsed.requestedDate,'2026-10-19')
+    assert.equal(parsed.timeClarificationNeeded,false)
+  }
+  assert.equal(h.mod.parseRestaurantReservationIntent('Book a table for 3 at 8pm today').restaurant,'')
+  // The lowercase later-at parser must not replace an explicitly named venue with a time preference.
+  for(const preference of ['the next available slot','the first available slot','the earliest open slot','any available time']){
+    const parsed=h.mod.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 at '+preference+' between 7 PM and 9 PM.')
+    assert.equal(parsed.restaurant,'Naru Noodle Bar',preference)
+    assert.equal(parsed.partySize,2)
+    assert.equal(parsed.preferredStart,'19:00')
+    assert.equal(parsed.preferredEnd,'21:00')
+  }
+  assert.equal(h.mod.parseRestaurantReservationIntent('Book a table for 3 at the next available slot between 7 PM and 9 PM.').restaurant,'')
+  for(const phrase of ['the next available slot','the first available slot','the earliest open slot','any available time']){
+    const parsed=h.mod.parseRestaurantReservationIntent('Book a table for 2 at '+phrase+' at Toit Indiranagar')
+    assert.equal(parsed.restaurant,'Toit Indiranagar',phrase)
+    assert.equal(parsed.partySize,2)
+  }
+})
+await check('provider-neutral search recovers public ReserveX, rejects adjacent cafe and private management URLs',async()=>{
+  const privateFixture='https://reservex.explorex.co.in/manage/00000000-0000-0000-0000-000000000000'
+  const h=loadReservation({
+    search:q=>/official restaurant reserve a table/.test(q)?[CHINS_COFFEE,{...CHINS_PUBLIC,url:privateFixture},CHINS_PUBLIC]:[],
+    browser:async p=>({status:'completed',url:p.url,title:'Chins Bar & Kitchen',summary:'Selected date: 2026-10-19. 3 guests. Available slots: 8:00 PM',pageText:'Selected date: 2026-10-19. 3 guests. Available slots: 8:00 PM'})
+  })
+  const ranked=h.mod.rankReservationCandidates([CHINS_COFFEE,{...CHINS_PUBLIC,url:privateFixture},CHINS_PUBLIC],'Chins bar and coffee Lavelle road')
+  assert.equal(ranked[0].url,RESERVEX)
+  assert.equal(ranked[0].kind,'widget')
+  assert.equal(ranked.some((v:any)=>v.url===privateFixture),false)
+  assert.ok(ranked.find((v:any)=>v.url===CHINS_COFFEE.url).score<=0)
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST})
+  assert.equal(h.browserCalls.length,1)
+  assert.equal(h.browserCalls[0].url,RESERVEX)
+  assert.equal(h.browserCalls[0].mode,'read')
+  assert.match(h.browserCalls[0].objective,/3 guests/)
+  assert.match(result.text,/8pm tonight is available for 3/)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  // A private management capability supplied directly is not a new booking route either.
+  const blocked=loadReservation({search:()=>{throw Error('unexpected search')},browser:async()=>{throw Error('unexpected browser')}})
+  const refused=await blocked.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST+' '+privateFixture})
+  assert.equal(blocked.browserCalls.length,0)
+  assert.equal(blocked.searches.length,0)
+  assert.equal(blocked.db.tables.agent_approvals?.length||0,0)
+  assert.ok(!refused.text.includes(privateFixture))
+  // DNS-equivalent spellings must not bypass the private-capability exclusion.
+  for(const url of [privateFixture.replace('co.in/','co.in./'),privateFixture.replace('reservex.','www.reservex.'),privateFixture.replace('co.in/','co.in../')]){
+    const privateRanked=h.mod.rankReservationCandidates([{...CHINS_PUBLIC,url},CHINS_PUBLIC],'Chins bar and coffee Lavelle road')
+    assert.equal(privateRanked.some((v:any)=>v.url===url),false)
+    const isolated=loadReservation({search:()=>{throw Error('unexpected search')},browser:async()=>{throw Error('unexpected browser')}})
+    const denied=await isolated.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST+' '+url})
+    assert.equal(isolated.browserCalls.length,0)
+    assert.equal(isolated.searches.length,0)
+    assert.equal(isolated.db.tables.agent_approvals?.length||0,0)
+    assert.ok(!denied.text.includes(url))
+  }
+})
+await check('a ReserveX service range alone is not an available slot',async()=>{
+  const h=loadReservation({search:()=>[CHINS_PUBLIC],browser:async p=>({status:'completed',url:p.url,title:'Chins',summary:'Selected date: 2026-10-19',pageText:'3 guests. Dinner 7:01 PM - 10:30 PM'})})
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST})
+  assert.doesNotMatch(result.text,/is available/)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('one definite read failure can switch to a distinct public route, never resubmit',async()=>{
+  const other={title:'Toit Indiranagar - Reserve a table',url:'https://toit.in/reservations',snippet:'Toit Indiranagar Bengaluru reservations'}
+  const h=loadReservation({search:()=>[RESERVEGO,other],browser:async p=>{
+    if(p.url===WIDGET)throw Error('browser_objective_unverified')
+    return {...await widgetPage(['7:00 PM'])(),url:p.url}
+  }})
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.equal(h.browserCalls.length,2)
+  assert.equal(h.browserCalls[1].url,other.url)
+  assert.equal(h.browserCalls[1].publicOnly,true)
+  assert.ok(h.browserCalls.every(p=>p.mode==='read'))
+  assert.equal(h.browserCalls[0].readDeadline,h.browserCalls[1].readDeadline)
+  assert.match(result.text,/7pm tomorrow is available/)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('no public route tries Maps once, then offers phone escalation without booking or calling',async()=>{
+  const h=loadReservation({search:()=>[],browser:async p=>{assert.equal(p.mode,'read');assert.equal(p.publicOnly,true);assert.ok(p.googleDiningDiscovery);throw Error('browser_objective_unverified')}})
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST})
+  assert.match(result.text,/phone call for your approval/)
+  assert.doesNotMatch(result.text,/send me the booking link/i)
+  assert.equal(h.browserCalls.length,1)
+})
+
+await check('numeric venue with time-first request uses Google Maps observed public partner and stages exact approval',async()=>{
+  const venue='1522 The Pub Malleshwara'
+  const request='Book a table for 2 at 9pm tomorrow at '+venue
+  const partner='https://www.eazydiner.com/bengaluru/1522-the-pub-malleshwaram-123456'
+  const h=loadReservation({search:()=>[],browser:async p=>{
+    assert.equal(p.mode,'read')
+    if(p.googleDiningDiscovery){
+      assert.equal(p.publicOnly,true)
+      assert.equal(p.googleDiningDiscovery.restaurant,venue)
+      assert.equal(new URL(p.url).searchParams.get('query'),venue+', Bengaluru, India')
+      return {status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner','District Dining','Swiggy'],links:[{url:partner,label:'EazyDiner'}],nativeReview:false}}
+    }
+    assert.equal(p.url,partner)
+    return {status:'completed',url:partner,title:venue,pageText:'1522 The Pub Malleshwara. Selected date: 2026-10-20. Party of 2. Available slots: 9:00 PM.',summary:'Available slots: 9:00 PM',actions:[]}
+  }})
+  const parsed=h.mod.parseRestaurantReservationIntent(request)
+  assert.equal(parsed.restaurant,venue)
+  assert.equal(parsed.partySize,2)
+  assert.equal(parsed.preferredStart,'21:00')
+  const read=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:request})
+  assert.match(read.text,/9pm tomorrow is available for 2/)
+  assert.equal(h.browserCalls.length,2)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  const approval=await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Fixture Guest'})
+  assert.equal(approval.status,'waiting_approval')
+  const event=h.db.tables.life_events[0]
+  assert.equal(event.metadata_json.reservationUrl,partner)
+  assert.equal(event.metadata_json.providerDiscovery,'google_maps_browser')
+  assert.equal(event.preferences_json.preferredStart,'21:00')
+  assert.equal(h.db.tables.agent_approvals.length,1)
+  assert.ok(h.browserCalls.every(p=>p.mode==='read'))
+})
+// 28 Nov WhatsApp incident: no generic shopping results and no authority to book.
+const AVAILABILITY_REQUEST='Check availability for 2 people at 1522 The Pub Malleshwara tomorrow at 9 pm. Do not submit a booking.'
+await check('exact availability-only request goes through public Maps and queued provider research without booking authority',async()=>{
+  const venue='1522 The Pub Malleshwara'
+  const partner='https://www.eazydiner.com/bengaluru/1522-the-pub-malleshwaram-123456'
+  const h=loadReservation({search:()=>[],browser:async p=>{
+    assert.equal(p.mode,'read')
+    assert.equal(p.publicOnly,true)
+    if(p.googleDiningDiscovery)return {status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner','District Dining','Swiggy'],links:[{url:partner,label:'EazyDiner'}],nativeReview:false}}
+    assert.equal(p.url,partner)
+    return {status:'completed',url:partner,title:venue,pageText:venue+'. Selected date: 2026-10-20. Party of 2. Available slots: 9:00 PM.',summary:'',actions:[]}
+  }})
+  assert.equal(h.mod.isRestaurantReservationRequest(AVAILABILITY_REQUEST),false)
+  assert.equal(h.mod.isRestaurantAvailabilityRequest(AVAILABILITY_REQUEST),true)
+  const noDisclaimer='Check table availability for 2 people at Toit Indiranagar tomorrow at 9 pm.'
+  assert.equal(h.mod.isRestaurantAvailabilityRequest(noDisclaimer),true)
+  assert.equal(h.mod.isRestaurantReservationRequest(noDisclaimer),false)
+  assert.equal(h.mod.parseRestaurantReservationIntent(noDisclaimer),null)
+  const intent=h.mod.parseRestaurantAvailabilityIntent(AVAILABILITY_REQUEST)
+  assert.equal(intent.restaurant,venue)
+  assert.equal(intent.partySize,2)
+  assert.equal(intent.preferredStart,'21:00')
+  assert.equal(intent.requestedDate,'2026-10-20')
+  assert.equal(intent.availabilityOnly,true)
+  const queued=await h.mod.queueRestaurantReservationResearch({actor,text:AVAILABILITY_REQUEST})
+  assert.equal(queued.status,'queued')
+  assert.match(queued.text,/read-only check/)
+  assert.equal(h.browserCalls.length,0)
+  const run=h.db.tables.agent_runs[0]
+  assert.equal(run.metadata_json.availability_only,true)
+  assert.equal(run.metadata_json.request_text,AVAILABILITY_REQUEST)
+  run.status='running'
+  const out=await h.mod.runQueuedRestaurantReservationResearch({actor,runId:run.id})
+  assert.match(out.text,/9pm on 2026-10-20 for 2 guests as available/)
+  assert.match(out.text,/No reservation was prepared or submitted/)
+  assert.equal(h.browserCalls.length,2)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  assert.equal(h.db.tables.life_event_actions?.length||0,0)
+  assert.equal(h.db.tables.life_events?.length||0,0)
+  assert.equal(h.questions.length,0)
+  assert.equal(h.db.tables.agent_runs.filter(r=>r.type==='restaurant_reservation_slot').length,0)
+})
+await check('availability-only request never trusts a wrong date, party, branch or summary-only slot',async()=>{
+  const venue='1522 The Pub Malleshwara'
+  const partner='https://www.eazydiner.com/bengaluru/1522-the-pub-malleshwaram-123456'
+  for(const pageText of [
+    venue+'. Selected date: 2026-10-21. Party of 2. Available slots: 9:00 PM.',
+    venue+'. Selected date: 2026-10-20. Party of 3. Available slots: 9:00 PM.',
+    venue+'. Selected date: 2026-10-20. Party of 2. Dinner 7:00 PM - 10:00 PM.',
+    '1522 The Pub Koramangala. Selected date: 2026-10-20. Party of 2. Available slots: 9:00 PM.',
+  ]){
+    const h=loadReservation({search:()=>[],browser:async p=>p.googleDiningDiscovery
+      ?{status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner'],links:[{url:partner,label:'EazyDiner'}],nativeReview:false}}
+      :{status:'completed',url:partner,title:'Reservation page',pageText,summary:'9pm available for 2 at '+venue,actions:[]}})
+    const out=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:AVAILABILITY_REQUEST})
+    assert.doesNotMatch(out.text,/as available when checked/)
+    assert.match(out.text,/No reservation was prepared or submitted/)
+    assert.equal(h.db.writes.length,0)
+  }
+})
+await check('availability-only authority cannot be removed from queued research metadata',async()=>{
+  const h=loadReservation({search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  const queued=await h.mod.queueRestaurantReservationResearch({actor,text:AVAILABILITY_REQUEST})
+  const run=h.db.tables.agent_runs[0]
+  run.status='running';delete run.metadata_json.availability_only
+  const out=await h.mod.runQueuedRestaurantReservationResearch({actor,runId:queued.runId})
+  assert.match(out.text,/saved request needs review/)
+  assert.equal(h.browserCalls.length,0)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('read-only dining gets first refusal before retail discovery and generic answers',async()=>{
+  const route=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
+  const start=route.indexOf('if (!preserveFriendFlow && isRestaurantAvailabilityRequest(text))')
+  const product=route.indexOf('const productDiscovery = await tryProductDiscovery({ text })')
+  const general=route.indexOf('const understoodReply = understandSkip')
+  assert.ok(start>0&&product>start&&general>start)
+  assert.match(route.slice(start,product),/queueRestaurantReservationResearch/)
+  assert.match(route.slice(start,product),/return new NextResponse/)
+})
+await check('native Google chooser with no public partner handoff never claims availability or creates approval',async()=>{
+  const h=loadReservation({search:()=>[],browser:async p=>({status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner','District Dining','Swiggy'],links:[],nativeReview:false}})})
+  const out=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:'Book a table for 2 tomorrow at 9pm at 1522 The Pub Malleshwara'})
+  assert.equal(out.status,'paused')
+  assert.match(out.text,/Google Maps shows booking options/)
+  assert.match(out.text,/Availability is not confirmed/)
+  assert.equal(h.browserCalls.length,1)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('read-only provider failure cannot recommend a second route when prior objective exists at another time',async()=>{
+  const seed={users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}],life_events:[{id:'prior-objective',telegram_id:String(actor.legacyTelegramId),subtype:'restaurant_booking_release',dedupe_key:'old-objective',lifecycle_state:'planned',metadata_json:{restaurant:'Toit Indiranagar',reservationUrl:WIDGET},preferences_json:{partySize:2,requestedDate:'2026-10-20',preferredStart:'19:01',preferredEnd:'19:01'}}]}
+  for(const providerFound of [false,true]){
+    const db=makeDb(seed)
+    const h=loadReservation({db,search:()=>providerFound?[RESERVEGO]:[],browser:async()=>{throw Error('browser_objective_unverified')}})
+    const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+    assert.equal(result.status,'paused')
+    assert.match(result.text,/reconcil/i)
+    assert.doesNotMatch(result.text,/phone call for your approval|book directly here/i)
+    assert.equal(db.tables.life_events.length,1)
+    assert.equal(db.tables.agent_approvals?.length||0,0)
+  }
+  const unavailable=loadReservation({db:makeDb({users:seed.users},{inventoryError:true}),search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  const refused=await unavailable.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.match(refused.text,/couldn't verify the earlier reservation inventory/i)
+  assert.doesNotMatch(refused.text,/phone call for your approval/i)
+  const other=loadReservation({db:makeDb({...seed,life_events:seed.life_events.map(row=>({...row,telegram_id:'456'}))}),search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  const allowed=await other.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.match(allowed.text,/phone call for your approval/i)
 })
 
 await check('ranking: widget.reservego.com outranks EazyDiner; aggregators only as fallback',async()=>{
@@ -321,6 +573,111 @@ await check('one owner: tryRunRestaurantReservation never reads a bare name; the
   assert.ok(webhook.indexOf('await tryResolvePendingQuestion({')<webhook.indexOf('const unsupported=unsupportedCapability(text)'))
   assert.ok(agentRun.indexOf('await tryResolvePendingQuestion(')>0&&agentRun.indexOf('await tryResolvePendingQuestion(')<agentRun.indexOf('await tryRunRestaurantReservation('),'agent API resolves the question before reservation routing')
   assert.ok(dash.indexOf('await tryResolvePendingQuestion(')<dash.indexOf('await queueRestaurantReservationResearch('))
+})
+
+// The provider route may change after a lost response, but an earlier mutation
+// remains one objective. Use real preparation/resumption with inert transports.
+const alternateToit={title:'Toit Indiranagar - Reserve a table',url:'https://toit.in/reservations',snippet:'Toit Indiranagar Bengaluru reservations'}
+async function prepareToitRoute(db:ReturnType<typeof makeDb>,alternate:boolean,request=REQUEST){
+  const h=loadReservation({db,search:()=>alternate?[RESERVEGO,alternateToit]:[RESERVEGO],browser:async p=>{
+    assert.equal(p.mode,'read')
+    if(alternate&&p.url===WIDGET)throw Error('browser_objective_unverified')
+    return {...await widgetPage(['7:00 PM'])(),url:p.url}
+  }})
+  const read=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:request})
+  if(!/What name should I book under\?/i.test(read.text))return {h,result:read}
+  assert.match(read.text,/available/)
+  return {h,result:await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Fixture Guest'})}
+}
+const reservationDb=()=>makeDb({users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}]})
+await check('cross-provider retry after unknown outcome preserves original action and approval, including legacy key',async()=>{
+  for(const legacy of [false,true]){
+    const db=reservationDb()
+    const first=await prepareToitRoute(db,false)
+    assert.equal(first.result.status,'waiting_approval')
+    const event=db.tables.life_events[0],action=db.tables.life_event_actions[0]
+    const run=db.tables.agent_runs.find(r=>r.metadata_json?.plan_type==='restaurant_reservation_release')!
+    if(legacy)event.dedupe_key=createHash('sha256').update([actor.legacyTelegramId,'Toit Indiranagar',WIDGET,2,'19:00','19:00','2026-10-20'].join('|').toLowerCase()).digest('hex').slice(0,40)
+    run.status='outcome_unknown';run.error='restaurant_reservation_outcome_unknown'
+    action.status='blocked';action.payload_json.blockedReason=run.error
+    db.tables.agent_approvals[0].status='approved'
+    const before=JSON.stringify({event,action,run,approvals:db.tables.agent_approvals})
+    const retry=await prepareToitRoute(db,true,REQUEST.replace('Toit Indiranagar','toit indiranagar'))
+    assert.equal(retry.result.status,'paused')
+    assert.match(retry.result.text,/reconcil/i)
+    assert.equal(db.tables.life_events.length,1)
+    assert.equal(db.tables.life_event_actions.length,1)
+    assert.equal(db.tables.agent_approvals.length,1)
+    assert.equal(JSON.stringify({event,action,run,approvals:db.tables.agent_approvals}),before)
+    assert.deepEqual(retry.h.browserCalls.map(p=>[p.mode,p.url]),[['read',WIDGET],['read',alternateToit.url]])
+  }
+})
+await check('active or confirmed mission blocks a different provider; another owner is not a duplicate',async()=>{
+  for(const state of ['waiting_approval','completed']){
+    const db=reservationDb()
+    const first=await prepareToitRoute(db,false)
+    assert.equal(first.result.status,'waiting_approval')
+    const run=db.tables.agent_runs.find(r=>r.metadata_json?.plan_type==='restaurant_reservation_release')!
+    run.status=state
+    if(state==='completed')db.tables.life_events[0].metadata_json.reservationConfirmed=true
+    const retry=await prepareToitRoute(db,true)
+    assert.equal(retry.result.status,'paused')
+    assert.equal(db.tables.agent_approvals.length,1)
+    assert.equal(db.tables.life_event_actions.length,1)
+  }
+  const db=reservationDb()
+  const first=await prepareToitRoute(db,false)
+  assert.equal(first.result.status,'waiting_approval')
+  for(const table of ['life_events','life_event_actions','agent_approvals','agent_runs'])for(const row of db.tables[table])row.telegram_id='456'
+  const other=await prepareToitRoute(db,true)
+  assert.equal(other.result.status,'waiting_approval')
+  assert.equal(db.tables.agent_approvals.length,2)
+  assert.notEqual(db.tables.life_events[0].dedupe_key,undefined)
+})
+await check('a replacement slot cannot create another objective after earlier unknown result',async()=>{
+  const db=reservationDb()
+  const first=await prepareToitRoute(db,false)
+  assert.equal(first.result.status,'waiting_approval')
+  const run=db.tables.agent_runs.find(r=>r.metadata_json?.plan_type==='restaurant_reservation_release')!
+  run.status='outcome_unknown';run.error='restaurant_reservation_confirmation_unknown'
+  db.tables.life_event_actions[0].status='blocked'
+  const h=loadReservation({db,search:()=>[RESERVEGO],browser:widgetPage(['7:01 PM'])})
+  const out=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.match(out.text,/reconcil/i)
+  assert.doesNotMatch(out.text,/Which one should I book/i)
+  assert.equal(db.tables.agent_approvals.length,1)
+  assert.equal(db.tables.life_events.length,1)
+})
+await check('new booking objective key is provider-independent, while approval remains provider-bound',async()=>{
+  const a=reservationDb(),b=reservationDb()
+  const one=await prepareToitRoute(a,false)
+  const two=await prepareToitRoute(b,true)
+  assert.equal(one.result.status,'waiting_approval')
+  assert.equal(two.result.status,'waiting_approval')
+  assert.equal(a.tables.life_events[0].dedupe_key,b.tables.life_events[0].dedupe_key)
+  // Exact provider approval remains separately bound.
+  assert.notEqual(a.tables.agent_approvals[0].action_hash,b.tables.agent_approvals[0].action_hash)
+})
+
+await check('concurrent provider claim cannot overwrite winner or stage a second approval',async()=>{
+  const db=makeDb({users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}]},{competingClaim:true})
+  const {result}=await prepareToitRoute(db,false)
+  assert.equal(result.status,'paused')
+  assert.match(result.text,/reconcil/i)
+  assert.equal(db.tables.life_events.length,1)
+  assert.equal(db.tables.life_events[0].id,'competing-event')
+  assert.equal(db.tables.life_events[0].metadata_json.reservationUrl,alternateToit.url)
+  assert.equal(db.tables.life_events[0].metadata_json.winner,true)
+  assert.equal(db.tables.life_event_actions?.length||0,0)
+  assert.equal(db.tables.agent_approvals?.length||0,0)
+})
+await check('unreadable objective inventory fails closed before mutation authority',async()=>{
+  const db=makeDb({users:[{id:actor.userId,telegram_id:actor.legacyTelegramId,timezone:'Asia/Kolkata'}]},{inventoryError:true})
+  const {result}=await prepareToitRoute(db,false)
+  assert.equal(result.status,'paused')
+  assert.equal(db.tables.life_events?.length||0,0)
+  assert.equal(db.tables.life_event_actions?.length||0,0)
+  assert.equal(db.tables.agent_approvals?.length||0,0)
 })
 
 await check('release-time providers (Naru) keep the existing release mission path',async()=>{

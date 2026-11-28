@@ -10,7 +10,7 @@ type City = { name: string; aliases: string[]; localities: string[] }
 const CITIES: City[] = [
   { name: 'Bengaluru', aliases: ['bengaluru', 'bangalore', 'blr'], localities: [
     'hsr layout', 'hsr', 'indiranagar', 'koramangala', 'whitefield', 'jayanagar', 'jp nagar', 'j p nagar', 'btm layout', 'btm',
-    'marathahalli', 'electronic city', 'hebbal', 'yelahanka', 'mg road', 'brigade road', 'church street', 'malleshwaram',
+    'marathahalli', 'electronic city', 'hebbal', 'yelahanka', 'mg road', 'brigade road', 'church street', 'malleshwaram', 'malleshwara', 'malleswaram', 'malleswara',
     'rajajinagar', 'basavanagudi', 'banashankari', 'bellandur', 'sarjapur', 'sarjapur road', 'hennur', 'kalyan nagar',
     'rt nagar', 'frazer town', 'ulsoor', 'domlur', 'old airport road', 'cunningham road', 'lavelle road', 'richmond town',
     'sadashivanagar', 'yeshwanthpur', 'vijayanagar', 'kr puram', 'bannerghatta road', 'hosur road', 'kanakapura road',
