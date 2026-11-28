@@ -61,7 +61,7 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
   }
   return <section aria-label="Governed skill review" className="mt-6 space-y-4 rounded-2xl border border-[#262626] bg-[#141a19] p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h2 className="text-lg font-semibold text-[#f2efea]">Skill review &amp; history</h2><p className="mt-1 text-sm leading-relaxed text-[#a8a8a4]">Review independently tested descriptions for this scope. Publishing never changes executable code, permissions or approval requirements.</p></div>
+      <div><h2 className="text-lg font-semibold text-[#f2efea]">Skill review &amp; history</h2><p className="mt-1 text-sm leading-relaxed text-[#a8a8a4]">Review independently tested revisions for this scope. A reviewed recovery profile can select a fixed read-only handler; publishing never grants new permissions or changes approval requirements.</p></div>
       <button type="button" className={button} disabled={busy} onClick={()=>{setNotice('');void load()}}>Refresh</button>
     </div>
     {busy&&<p role="status" className="text-sm text-[#a8a8a4]">Checking the review store…</p>}
@@ -87,7 +87,7 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
       <p className="text-xs text-[#a8a8a4]">Distinct verified and failed/corrected decisions identified a recurring recovery pattern. These are engineering suggestions; no skill changed or received approval.</p>
       {snapshot.learningCandidates.map(c=><div key={c.skill_id} className="text-sm text-[#b7b7b7]">{c.skill_id} · {c.positive_count} verified outcomes · {c.negative_count} failed, corrected or uncertain outcomes</div>)}
     </div>}
-    {snapshot?.items.length===0&&<p className="text-sm text-[#a8a8a4]">No skill descriptions are registered in this scope.</p>}
+    {snapshot?.items.length===0&&<p className="text-sm text-[#a8a8a4]">No skills are registered in this scope.</p>}
     {snapshot?.items.map(skill=><article key={skill.skillId} className="space-y-3 rounded-xl border border-[#262626] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h3 className="text-sm font-semibold text-[#f2efea]">{skill.skillId}</h3><p className="mt-1 text-xs text-[#a8a8a4]">Active version: {skill.activeVersion||'unverified'} · revision generation {skill.generation}</p></div>

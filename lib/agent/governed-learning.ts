@@ -1,6 +1,7 @@
 // A proposed improvement is data, never an executable handler or authority.
 import { createHash } from 'node:crypto'
 import { vetSkill, type SkillDefinition } from './skill-registry'
+import {profileForSkill} from './governed-recovery-profiles'
 export type LearningScope={kind:'personal'|'workspace';id:string}
 export type SkillRevision={scope:LearningScope;skillId:string;baseVersion:string;nextVersion:string;authorId:string;evidenceRefs:readonly string[];summary:string}
 export type ReviewContext={scope:LearningScope;reviewerId:string;role:'owner'|'admin'|'member'|'viewer';approved:boolean;testedRevision:string;testReceipt:string;securityReceipt:string;currentVersion:string;testedDigest:string;securityDigest:string;currentDigest:string}
@@ -32,6 +33,7 @@ export function canReviewSkillRevision(p:SkillRevision,current:SkillDefinition,n
   if(!safeRef(p.skillId)||p.skillId!==current.id||next.id!==current.id||p.baseVersion!==current.sopVersion||r.currentVersion!==p.baseVersion||next.sopVersion!==p.nextVersion||!greater(p.nextVersion,p.baseVersion))return deny('stale_or_invalid_version')
   if(!Array.isArray(p.evidenceRefs)||p.evidenceRefs.length<1||p.evidenceRefs.length>20||!p.evidenceRefs.every(safeRef)||typeof p.summary!=='string'||!p.summary.trim()||p.summary.length>1000)return deny('missing_evidence')
   if(r.testedRevision!==p.skillId+'@'+p.nextVersion||!safeRef(r.testReceipt)||!safeRef(r.securityReceipt)||r.testReceipt===r.securityReceipt)return deny('missing_independent_receipts')
+  if(next.runtimeProfile!==undefined&&(p.scope.kind!=='personal'||profileForSkill(next.id)!==next.runtimeProfile)||current.runtimeProfile!==undefined&&current.runtimeProfile!==next.runtimeProfile)return deny('unreviewed_recovery_profile')
   // An improvement may tighten but may never widen the vetted capability or risk envelope.
   if(JSON.stringify(canonical(next.input))!==JSON.stringify(canonical(current.input))||JSON.stringify(canonical(next.output))!==JSON.stringify(canonical(current.output))||
     // The bound handler has not changed. Both addition AND removal of

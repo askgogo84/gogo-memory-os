@@ -293,6 +293,7 @@ create table public.gogo_skill_revisions (
   summary text not null check(length(trim(summary)) between 1 and 1000),
   expires_at timestamptz not null,
   created_at timestamptz not null default clock_timestamp(),
+  behavior_profile text check(behavior_profile is null or (scope_kind='personal' and ((skill_id='calendar.exact.read' and behavior_profile='calendar_exact_v1') or (skill_id='email.exact.verify' and behavior_profile='gmail_verify_v1') or (skill_id='reminder.exact.read' and behavior_profile='reminder_exact_v1') or (skill_id='watcher.exact.status' and behavior_profile='watcher_status_v1')))),
   unique(scope_kind,scope_id,skill_id,version),
   unique(scope_kind,scope_id,skill_id,id),
   foreign key(scope_kind,scope_id) references public.gogo_governed_policies(scope_kind,scope_id) on delete restrict
@@ -378,6 +379,10 @@ begin
   if p_action='publish' then
     select * into rev from public.gogo_skill_revisions where id=p_revision_id and scope_kind=p_scope_kind and scope_id=p_scope_id and skill_id=p_skill_id;
     if not found or rev.expires_at<=clock_timestamp() or rev.author_id=p_actor_id or rev.base_digest<>digest or rev.static_digest<>p_static_digest or rev.build_sha<>p_build_sha then return 'unreviewed'; end if;
+    if rev.behavior_profile is not null then
+      perform 1 from public.user_consent_settings where telegram_id::text=p_actor_id and memory_enabled=true for share;
+      if not found then return 'unreviewed'; end if;
+    end if;
     select * into t from public.gogo_skill_revision_receipts where revision_id=rev.id and review_kind='test';
     if not found then return 'unreviewed'; end if;
     select * into s from public.gogo_skill_revision_receipts where revision_id=rev.id and review_kind='security';
@@ -630,4 +635,39 @@ create table public.gogo_governed_connector_prices (
 alter table public.gogo_governed_connector_prices enable row level security;
 revoke all on public.gogo_governed_connector_prices from public,anon,authenticated,service_role;
 grant select on public.gogo_governed_connector_prices to service_role;
+-- Materialization uses only the database's scoped evidence row. The narrow
+-- definer grants no direct INSERT privilege on reviewed revisions, receipts,
+-- or pointers. Inputs are treated as candidate metadata, never as authority.
+create unique index gogo_recovery_proposal_per_build on public.gogo_skill_revisions(scope_kind,scope_id,skill_id,build_sha) where behavior_profile is not null;
+create function public.gogo_materialize_recovery_revision(p_owner text,p_skill_id text,p_build_sha text,p_version text,p_static_digest text,p_revision_digest text,p_title text,p_purpose text)
+returns text language plpgsql security definer set search_path='' as $$
+declare c public.gogo_skill_learning_candidates%rowtype; profile text;
+begin
+  if p_owner is null or p_owner !~ '^-?[1-9][0-9]{0,18}$' or p_build_sha is null or p_build_sha !~ '^[0-9a-f]{40}$' or p_version is null or p_version !~ '^(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})$' or p_static_digest is null or p_static_digest !~ '^[0-9a-f]{64}$' or p_revision_digest is null or p_revision_digest !~ '^[0-9a-f]{64}$' or p_static_digest=p_revision_digest or p_title is null or p_purpose is null or length(trim(p_title)) not between 1 and 100 or length(trim(p_purpose)) not between 1 and 240 then return 'unavailable'; end if;
+  case p_skill_id
+    when 'calendar.exact.read' then profile:='calendar_exact_v1';
+    when 'email.exact.verify' then profile:='gmail_verify_v1';
+    when 'reminder.exact.read' then profile:='reminder_exact_v1';
+    when 'watcher.exact.status' then profile:='watcher_status_v1';
+    else return 'unavailable';
+  end case;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('skill:personal:'||p_owner||':'||p_skill_id,0));
+  perform 1 from public.gogo_governed_policies where scope_kind='personal' and scope_id=p_owner and enabled and valid_until>clock_timestamp() for share;
+  if not found then return 'unavailable'; end if;
+  perform 1 from public.users where telegram_id::text=p_owner and access_status='active' for share;
+  if not found then return 'unavailable'; end if;
+  perform 1 from public.user_consent_settings where telegram_id::text=p_owner and memory_enabled=true for share;
+  if not found then return 'unavailable'; end if;
+  select * into c from public.gogo_skill_learning_candidates where scope_kind='personal' and scope_id=p_owner and skill_id=p_skill_id and build_sha=p_build_sha and expires_at>clock_timestamp() for share;
+  if not found then return 'unavailable'; end if;
+  if exists(select 1 from public.gogo_skill_active where scope_kind='personal' and scope_id=p_owner and skill_id=p_skill_id and (revision_id is not null or active_digest<>p_static_digest)) then return 'stale'; end if;
+  if exists(select 1 from public.gogo_skill_revisions where scope_kind='personal' and scope_id=p_owner and skill_id=p_skill_id and build_sha=p_build_sha and behavior_profile is not null) then return 'existing'; end if;
+  insert into public.gogo_skill_revisions(scope_kind,scope_id,skill_id,version,base_digest,static_digest,revision_digest,build_sha,title,purpose,author_id,evidence_refs,summary,expires_at,behavior_profile)
+    values('personal',p_owner,p_skill_id,p_version,p_static_digest,p_static_digest,p_revision_digest,p_build_sha,p_title,p_purpose,'agent:hachi-learning',c.evidence_ids,'Evidence-backed proposal for the code-owned read recovery profile. Independent test and security receipts and explicit owner publication are required.',c.expires_at,profile)
+    on conflict do nothing;
+  if not found then return 'existing'; end if;
+  return 'proposed';
+end $$;
+revoke all on function public.gogo_materialize_recovery_revision(text,text,text,text,text,text,text,text) from public,anon,authenticated;
+grant execute on function public.gogo_materialize_recovery_revision(text,text,text,text,text,text,text,text) to service_role;
 commit;

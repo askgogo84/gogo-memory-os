@@ -1,6 +1,5 @@
-// Server-side, scope-bound review store for descriptive skill revisions.
-// Only operator-created proposals/receipts can be published. No new handlers,
-// instructions, input schemas, risk controls, limits or capabilities are loaded.
+// Server-side, scope-bound review store. Evidence can propose only a static
+// read profile; independent receipts and owner publication remain mandatory.
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {exactSessionOwnerId} from '@/lib/dashboard/owner-identity'
 import {requireWorkspaceRole} from '@/lib/workspaces/access'
@@ -9,8 +8,9 @@ import {governedEnabled} from './governed-runtime'
 import {canReviewSkillRevision,skillRevisionDigest,type LearningScope} from './governed-learning'
 import type {SkillDefinition} from './skill-registry'
 import {catalogBaseDefinitions} from './governed-skill-catalog'
+import {profileForSkill} from './governed-recovery-profiles'
 type Scope=LearningScope
-export type RevisionRow={id:string;scope_kind:Scope['kind'];scope_id:string;skill_id:string;version:string;base_digest:string;static_digest:string;revision_digest:string;build_sha:string;title:string;purpose:string;author_id:string;evidence_refs:string[];summary:string;expires_at:string}
+export type RevisionRow={id:string;scope_kind:Scope['kind'];scope_id:string;skill_id:string;version:string;base_digest:string;static_digest:string;revision_digest:string;build_sha:string;title:string;purpose:string;author_id:string;evidence_refs:string[];summary:string;expires_at:string;behavior_profile?:string|null}
 export type ReceiptRow={revision_id:string;review_kind:'test'|'security';reviewer_id:string;receipt_ref:string;revision_digest:string;build_sha:string;valid_until:string}
 type Pointer={skill_id:string;revision_id:string|null;generation:number|string;active_digest:string;build_sha:string}
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -18,7 +18,7 @@ const DIGEST=/^[0-9a-f]{64}$/
 const BUILD=/^[0-9a-f]{40}$/
 const VERSION=/^(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})$/
 const REF=/^[A-Za-z0-9_:.@/-]{1,200}$/
-const revisionFields='id,scope_kind,scope_id,skill_id,version,base_digest,static_digest,revision_digest,build_sha,title,purpose,author_id,evidence_refs,summary,expires_at'
+const revisionFields='id,scope_kind,scope_id,skill_id,version,base_digest,static_digest,revision_digest,build_sha,title,purpose,author_id,evidence_refs,summary,expires_at,behavior_profile'
 const receiptFields='revision_id,review_kind,reviewer_id,receipt_ref,revision_digest,build_sha,valid_until'
 const pointerFields='skill_id,revision_id,generation,active_digest,build_sha'
 const build=()=>String(process.env.VERCEL_GIT_COMMIT_SHA||'')
@@ -31,7 +31,9 @@ export function revisionDefinition(base:SkillDefinition,row:RevisionRow,scope:Sc
     !textOk(row.title,100)||!textOk(row.purpose,240)||!textOk(row.summary,1000)||!REF.test(row.author_id)||
     !Array.isArray(row.evidence_refs)||row.evidence_refs.length<1||row.evidence_refs.length>20||!row.evidence_refs.every(x=>typeof x==='string'&&REF.test(x)&&!isSecretShapedMemory(x))||
     !Number.isFinite(now)||!(Date.parse(row.expires_at)>now))return null
-  const next={...base,title:row.title,purpose:row.purpose,sopVersion:row.version}
+  const profile=row.behavior_profile==null?null:profileForSkill(base.id)
+  if(row.behavior_profile!=null&&(scope.kind!=='personal'||!profile||row.behavior_profile!==profile))return null
+  const next:SkillDefinition={...base,title:row.title,purpose:row.purpose,sopVersion:row.version,...(profile?{runtimeProfile:profile}:{})}
   return skillRevisionDigest(next)===row.revision_digest?next:null
 }
 export function verifiedRevisionReceipts(row:RevisionRow,receipts:readonly ReceiptRow[],reviewer?:string,now=Date.now()):{test:ReceiptRow;security:ReceiptRow}|null{
@@ -84,8 +86,8 @@ async function currentDefinition(scope:Scope,base:SkillDefinition,p:Pointer|unde
   if(!r||r.revision_digest!==p.active_digest||!verifiedRevisionReceipts(r,await receipts(r.id)))return null
   return revisionDefinition(base,r,scope,buildSha)
 }
-/** Approved metadata only, never used for execution. Expired/revoked/build-stale
- * revisions fall back to the static description; the operator can roll back. */
+/** The catalog can describe a published revision; executable read profiles
+ * independently revalidate the active pointer, consent and receipts. */
 export async function reviewedCatalogDefinitions(actor:string,scope:Scope):Promise<SkillDefinition[]>{
   await access(actor,scope,false)
   const defs=catalogBaseDefinitions(scope.kind),sha=build()
@@ -108,12 +110,12 @@ export async function listSkillReview(actor:string,scope:Scope){
       const next=revisionDefinition(base,row,scope,sha)
       if(!next)continue
       const reviewed=!!verifiedRevisionReceipts(row,await receipts(row.id),actor)
-      proposals.push({id:row.id,version:row.version,title:row.title,purpose:row.purpose,summary:row.summary,digest:row.revision_digest,baseDigest:row.base_digest,reviewed,selfAuthored:row.author_id===actor})
+      proposals.push({id:row.id,version:row.version,title:row.title,purpose:row.purpose,summary:row.summary,digest:row.revision_digest,baseDigest:row.base_digest,reviewed,selfAuthored:row.author_id===actor,runtimeProfile:next.runtimeProfile||null})
     }
     const active=await currentDefinition(scope,base,p,sha)
     items.push({skillId:base.id,generation:generation(p),activeDigest:p?.active_digest||skillRevisionDigest(base),activeVersion:active?.sopVersion||null,activeRevisionId:p?.revision_id||null,canRestore:!!p&&(!!p.revision_id||p.active_digest!==skillRevisionDigest(base)||p.build_sha!==sha),proposals})
   }
-  // Automatic candidates are separate from the approved revision store and never executable.
+  // Evidence candidates themselves are not executable; materialized proposals still need review.
   let learningCandidates:unknown[]=[]
   if(scope.kind==='personal'){
     const consent=await supabaseAdmin.from('user_consent_settings').select('memory_enabled').eq('telegram_id',actor).maybeSingle()
@@ -149,4 +151,41 @@ export async function changeSkillReview(actor:string,scope:Scope,x:ReviewChange)
   if(r.error)return fail('review_unavailable')
   if(r.data!=='changed')return fail(r.data==='forbidden'?'scope_forbidden':r.data==='stale'?'stale_revision':'unreviewed_revision',r.data==='forbidden'?403:409)
   return {status:'changed' as const,generation:x.expectedGeneration+1}
+}
+
+
+// No data-selected executable path. A live read requires the exact published
+// code-owned profile, exact build, unexpired independent receipts, active
+// access and affirmative memory consent. The caller rechecks before dispatch.
+export async function activeRecoveryRevision(owner:string,skill:string):Promise<{digest:string;version:string;profile:NonNullable<SkillDefinition['runtimeProfile']>}|null>{
+  if(!profileForSkill(skill))return null
+  const scope={kind:'personal' as const,id:owner}
+  await access(owner,scope,false)
+  const consent=await supabaseAdmin.from('user_consent_settings').select('memory_enabled').eq('telegram_id',owner).maybeSingle()
+  if(consent.error||consent.data?.memory_enabled!==true)return null
+  const base=catalogBaseDefinitions('personal').find(d=>d.id===skill),sha=build()
+  if(!base||!BUILD.test(sha))return null
+  const pointer=(await pointers(scope)).find(x=>x.skill_id===skill)
+  if(!pointer?.revision_id)return null
+  const active=await currentDefinition(scope,base,pointer,sha)
+  if(!active?.runtimeProfile||active.runtimeProfile!==profileForSkill(skill))return null
+  return {digest:pointer.active_digest,version:active.sopVersion,profile:active.runtimeProfile}
+}
+
+// The cron can propose an immutable, prewritten profile. It cannot publish,
+// attach receipts, widen authority or write an arbitrary executable.
+export async function materializeRecoveryRevision(owner:string,skill:string,sha:string,signal:AbortSignal):Promise<string>{
+  const profile=profileForSkill(skill)
+  if(!profile||!BUILD.test(sha)||sha!==build()||!governedEnabled('personal',owner))return 'unavailable'
+  const base=catalogBaseDefinitions('personal').find(d=>d.id===skill)
+  if(!base)return 'unavailable'
+  const r=await supabaseAdmin.from('gogo_skill_revisions').select('version').eq('scope_kind','personal').eq('scope_id',owner).eq('skill_id',skill).limit(101).abortSignal(signal)
+  if(r.error||!Array.isArray(r.data)||r.data.length>100)return 'unavailable'
+  const versions=[base.sopVersion,...r.data.map(x=>String(x.version))]
+  if(!versions.every(v=>VERSION.test(v)))return 'unavailable'
+  const parts=versions.map(v=>v.split('.').map(Number)).sort((a,b)=>b[0]-a[0]||b[1]-a[1]||b[2]-a[2])[0]
+  if(parts[2]>=99_999_999)return 'unavailable'
+  const next:SkillDefinition={...base,sopVersion:[parts[0],parts[1],parts[2]+1].join('.'),runtimeProfile:profile}
+  const result=await supabaseAdmin.rpc('gogo_materialize_recovery_revision',{p_owner:owner,p_skill_id:skill,p_build_sha:sha,p_version:next.sopVersion,p_static_digest:skillRevisionDigest(base),p_revision_digest:skillRevisionDigest(next),p_title:base.title,p_purpose:base.purpose}).abortSignal(signal)
+  return result.error?'unavailable':String(result.data)
 }

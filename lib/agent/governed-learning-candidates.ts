@@ -15,19 +15,19 @@ export function recoverySkillDefinitions():SkillDefinition[]{
 // A bounded hourly pass asks the DB to derive candidates from its own verified
 // decision receipts. A candidate is an engineering/review suggestion, NOT an
 // active skill revision, an approval, a new handler or a claim of success.
-export async function generateGovernedLearningCandidates(env:Record<string,string|undefined>,deadline:number,deps?:{now:()=>number;propose:(owner:string,skillId:string,build:string,signal:AbortSignal)=>Promise<unknown>}){
+export async function generateGovernedLearningCandidates(env:Record<string,string|undefined>,deadline:number,deps?:{now:()=>number;propose:(owner:string,skillId:string,build:string,signal:AbortSignal)=>Promise<unknown>;materialize?:(owner:string,skillId:string,build:string,signal:AbortSignal)=>Promise<unknown>}){
   if(env.GOGO_HACHI_ENFORCEMENT!=='1'||env.GOGO_HACHI_LEARNING_ENABLED!=='1'||!/^[0-9a-f]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA||''))return {considered:0,created:0,unavailable:0}
   const d=deps||{now:Date.now,propose:async(owner,skillId,build,signal)=>{
     const {supabaseAdmin}=await import('@/lib/supabase-admin')
     const r=await supabaseAdmin.rpc('gogo_propose_skill_learning',{p_owner:owner,p_skill_id:skillId,p_build_sha:build}).abortSignal(signal)
     if(r.error)throw Error('learning_candidate_unavailable')
     return r.data
-  }}
+  },materialize:async(owner,skillId,build,signal)=>(await import('./governed-review-store')).materializeRecoveryRevision(owner,skillId,build,signal)}
   const owners=[...new Set(String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map(s=>s.trim()).filter(s=>/^-?[1-9][0-9]{0,18}$/.test(s)&&Number.isSafeInteger(Number(s))&&String(Number(s))===s))].sort()
   const tasks=owners.flatMap(owner=>RECOVERY_SKILLS.map(s=>({owner,skill:s.id})))
   const offset=tasks.length?Math.floor(d.now()/3600000)%tasks.length:0
   const work=[...tasks.slice(offset),...tasks.slice(0,offset)].slice(0,12)
-  let considered=0,created=0,unavailable=0
+  let considered=0,created=0,unavailable=0,proposed=0
   for(const item of work){
     const left=deadline-d.now()
     if(left<300)break
@@ -35,7 +35,9 @@ export async function generateGovernedLearningCandidates(env:Record<string,strin
     try{const r=await d.propose(item.owner,item.skill,env.VERCEL_GIT_COMMIT_SHA!,AbortSignal.timeout(Math.min(1500,left)))
       if(r==='created')created++
       else if(!['existing','insufficient','unavailable'].includes(String(r)))unavailable++
+      const remaining=deadline-d.now()
+      if((r==='created'||r==='existing')&&d.materialize&&remaining>=300){const result=await d.materialize(item.owner,item.skill,env.VERCEL_GIT_COMMIT_SHA!,AbortSignal.timeout(Math.min(1500,remaining)));if(result==='proposed')proposed++;else if(!['existing','stale','unavailable'].includes(String(result)))unavailable++}
     }catch{unavailable++}
   }
-  return {considered,created,unavailable}
+  return {considered,created,unavailable,proposed}
 }
