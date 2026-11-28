@@ -566,7 +566,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'assistant',reply)
     return {text:reply,handledBy:'secret-guard',resolvedUser}
   }
-  console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
+  console.log('PIM:start', { channel: params.channel, textLength: String(params.text || '').length })
 
   const incomingText = (params.text || '').trim()
   // Cheap pre-filter + env gate: the vm route harnesses never load the module.
@@ -1970,6 +1970,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   {
     const ts = parseTopicSave(incomingText)
     if (ts && !params.internalStep) {
+      if(isSecretShapedMemory(ts.fact)||isSecretShapedMemory(ts.topic)){
+        const reply="I haven't saved that. Please use the secure Vault for sensitive information."
+        await saveConversation(resolvedUser.telegramId,'assistant',reply)
+        return {text:reply,handledBy:'secret-guard',resolvedUser}
+      }
       await saveMemory(resolvedUser.telegramId, ts.fact, ts.topic)
       const reply = `Got it \u2014 saved to your *${ts.topic}* bucket: "${ts.fact}".`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -2002,6 +2007,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const directMemory = intent.type === 'save_memory' ? explicitMemoryFact(incomingText, Boolean(params.internalStep)) : null
   if (intent.type === 'save_memory' && directMemory) {
     const fact = directMemory
+    if(isSecretShapedMemory(fact)){
+        const reply="I haven't saved that. Please use the secure Vault for sensitive information."
+        await saveConversation(resolvedUser.telegramId,'assistant',reply)
+        return {text:reply,handledBy:'secret-guard',resolvedUser}
+    }
     await saveMemory(resolvedUser.telegramId, fact)
     const reply = `Got it \u2014 I'll remember that ${rememberedForReply(fact)}.`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)

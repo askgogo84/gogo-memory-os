@@ -20,6 +20,7 @@ import { brainMessages, brainSystemBlocks, brainUsage, estimateCostUsd, toolRequ
 import { SONNET_MODEL, forModel, isAdaptiveOnlyModel, resolveSonnetModel, textOf } from '@/lib/services/model-ids'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { stripUnrequestedAddress } from '@/lib/services/claude'
+import type { GovernedRuntime } from './governed-runtime'
 
 export type ToolClass = 'read' | 'prepare' | 'act'
 export type LoopTool = {
@@ -44,6 +45,7 @@ export type LoopResult = {
   prepared: LoopState['prepared']
   steps: LoopStep[]; turns: number; ms: number; usd: number | null; usage: BrainUsage; model: string
   stop: 'final' | 'max_steps' | 'time' | 'error' | 'no_tool'
+  governance?: { reason: string }
 }
 
 export const LOOP_LIMITS = { maxToolCalls: 6, maxModelCalls: 11, maxBatchToolUses: 10, maxMs: 25_000, toolMs: 8_000, resultChars: 4_000, callMs: 12_000 }
@@ -125,7 +127,7 @@ export function validateTools(tools: LoopTool[]): string[] {
 }
 
 type Client = Pick<Anthropic, 'messages'>
-export type LoopParams = { actor: AgentActor; text: string; ctx: BrainContext; tools: LoopTool[]; client?: Client; model?: string; now?: Date; clock?: () => number; limits?: Partial<typeof LOOP_LIMITS>
+export type LoopParams = { actor: AgentActor; text: string; ctx: BrainContext; tools: LoopTool[]; client?: Client; model?: string; now?: Date; clock?: () => number; limits?: Partial<typeof LOOP_LIMITS>; governed?: GovernedRuntime
   /** Called once per model call, for the cost ledger. */
   onModelCall?: (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => void }
 /** One shadow pass: only read tools run; nothing is prepared, sent or changed. Never throws. */
@@ -144,11 +146,21 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
   const steps: LoopStep[] = []
   const state: LoopState = { verified: new Set(), prepared: [] }
   let turns = 0
+  let governed = p.governed
+  let governance: LoopResult['governance']
   const done = (stop: LoopResult['stop'], final: LoopResult['final'] = { kind: 'none', text: '' }): LoopResult =>
-    ({ final, prepared: state.prepared, steps, turns, ms: clock() - t0, usd: estimateCostUsd(model, total), usage: total, stop, model })
+    ({ final, prepared: state.prepared, steps, turns, ms: clock() - t0, usd: estimateCostUsd(model, total), usage: total, stop, model, ...(governance ? { governance } : {}) })
   // Overrides may tighten defaults only. Malformed limits fail before contacting a model.
   if (Object.entries(L).some(([key, value]) => !Number.isSafeInteger(value) || value <= 0 || value > LOOP_LIMITS[key as keyof typeof LOOP_LIMITS])) return done('error')
   if (validateTools(p.tools).length) return done('error')
+  // Disabled unless the exact actor is an operator-selected canary. If enabled,
+  // opening a policy-backed run is mandatory; never fall back to unmetered calls.
+  const env=(globalThis as any).process?.env||{}
+  const selected=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(p.actor.legacyTelegramId))
+  if(selected&&!governed){
+    try{governed=(await import('./governed-runtime').then(m=>m.openPersonalGovernedRuntime(p.actor)))||undefined}catch{/* fail closed */}
+    if(!governed){governance={reason:'policy_unavailable'};return done('error')}
+  }
   const byName = new Map(p.tools.map(t => [t.name, t]))
   const toolDefs: Anthropic.Tool[] = [...p.tools.map(t => ({ name: t.name, description: `[${t.klass}] ${t.description}`, input_schema: t.input_schema })), ...TERMINAL, NOTHING_TOOL, ...(p.alreadyReplied ? [] : [HANDOFF_TOOL])]
   // What Gogo already sent is given as data, so the pass adds a step instead of repeating the reply.
@@ -166,7 +178,14 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
       turns++
       const c0 = clock()
       let res: any
-      try { res = await client.messages.create(forModel({ model, max_tokens: 1200, system, tools: toolDefs, tool_choice: { type: 'any' as const }, messages }), { timeout: Math.max(1000, Math.min(L.callMs, left())), maxRetries: 0 }) }
+      try {
+        const invoke=()=>client.messages.create(forModel({ model, max_tokens: 1200, system, tools: toolDefs, tool_choice: { type: 'any' as const }, messages }), { timeout: Math.max(1000, Math.min(L.callMs, left())), maxRetries: 0 })
+        if(governed){
+          const metered=await governed.model(model,invoke,()=>left()>=1500)
+          if(metered.state!=='completed'){governance={reason:metered.reason};return done('error')}
+          res=metered.value
+        }else res=await invoke()
+      }
       catch (e) { try { p.onModelCall?.({ model, ms: clock() - c0, ok: false, usage: brainUsage(null) }) } catch { /* never */ } throw e }
       add(brainUsage(res))
       try { p.onModelCall?.({ model, ms: clock() - c0, ok: true, usage: brainUsage(res) }) } catch { /* never */ }
@@ -201,11 +220,22 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
         else if (tool.klass === 'prepare' && (p.mode !== 'live' || !tool.run)) { out = p.mode === 'live' ? LIVE_PREPARE_NOT_RUN : SHADOW_NOT_RUN; ok = true }
         else if (left() < 500) out = 'Out of time for this message. Finish with reply or ask.'
         else {
-          executed = true
           let timer: ReturnType<typeof setTimeout> | undefined
           try {
             const input = u.input && typeof u.input === 'object' && !Array.isArray(u.input) ? u.input as Record<string, unknown> : {}
-            out = await Promise.race([tool.run!(p.actor, input, state), new Promise<string>((_r, rej) => { timer = setTimeout(() => rej(new Error('timeout')), Math.max(50, Math.min(L.toolMs, left()))) })])
+            const invoke=()=>{
+              executed=true
+              return Promise.race([tool.run!(p.actor,input,state),new Promise<string>((_r,rej)=>{timer=setTimeout(()=>rej(new Error('timeout')),Math.max(50,Math.min(L.toolMs,left())))})])
+            }
+            if(governed){
+              const metered=await governed.local(tool.name,invoke,()=>left()>=500)
+              if(metered.state!=='completed'){
+                governance={reason:metered.reason}
+                steps.push({tool:tool.name,klass:tool.klass,executed,ok:false,ms:clock()-s0})
+                return done('error')
+              }
+              out=metered.value
+            }else out=await invoke()
             ok = true
           } catch (e: any) { out = `The tool failed (${e?.message === 'timeout' ? 'timeout' : 'error'}). Do not guess its answer.` }
           finally { if (timer) clearTimeout(timer) }

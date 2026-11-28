@@ -180,4 +180,15 @@ grant execute on function public.gogo_open_governed_run(text,text,text,text) to 
 grant execute on function public.gogo_reserve_governed_attempt(text,text,text,text,text,text,bigint,bigint) to service_role;
 grant execute on function public.gogo_finish_governed_attempt(text,text,text,text,text,bigint,bigint,text) to service_role;
 grant execute on function public.gogo_settle_governed_attempt(text,text,text,text,text,bigint,bigint) to service_role;
+-- Verified provider ceilings, configured by the operator, never by the model.
+create table public.gogo_governed_model_prices (
+  model text primary key check(model ~ '^[A-Za-z0-9_.:-]{1,150}$'),
+  max_total_tokens bigint not null check(max_total_tokens between 1 and 9007199254740991),
+  micros_per_token bigint not null check(micros_per_token between 1 and 9007199254740991),
+  valid_until timestamptz not null,
+  verified_source text not null check(length(trim(verified_source)) between 1 and 300)
+);
+alter table public.gogo_governed_model_prices enable row level security;
+revoke all on public.gogo_governed_model_prices from public,anon,authenticated,service_role;
+grant select on public.gogo_governed_model_prices to service_role;
 commit;
