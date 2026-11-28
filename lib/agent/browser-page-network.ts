@@ -104,6 +104,10 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   if(host==='www.zepto.com'||host==='zepto.com')hosts.push(...ZEPTO_PAGE_DEPENDENCIES)
   if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
     hosts.push(...GOOGLE_FLIGHTS_PAGE_DEPENDENCIES)
+  // Maps reservation discovery stays on Google; only first-party rendering assets.
+  // Do not grant navigation to booking partners in the discovery sandbox.
+  if((host==='www.google.com'||host==='google.com') && /^\/maps(?:\/|$)/.test(target.pathname))
+    hosts.push('www.gstatic.com','maps.gstatic.com','maps.googleapis.com','fonts.googleapis.com','fonts.gstatic.com')
   // 17 Oct 12:06: on Google Flights' booking page, "Continue to book with IndiGo" opens the airline. A booking
   // follows that one hand-off, so the airlines and Indian agencies Google lists there are reachable from it.
   // 17 Oct 16:52: the managed browser fixes its allowlist from the FIRST url of the run (the search, not
