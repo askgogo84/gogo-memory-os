@@ -4,7 +4,7 @@ import type { AgentActor } from './actor'
 import { recordDecisionLearning } from './decision-learning'
 import { isGmailVerificationQuery, readGmailSendVerification } from './gmail-verification'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
-import { buildGmailSendConnectUrl, fetchGmailAttentionThreads, searchGmailThreads, refreshGmailAccessToken, sendGmailReply, verifyGmailSentMessage } from '@/lib/services/google-gmail'
+import { buildGmailSendConnectUrl, fetchGmailAttentionThreads, searchGmailThreads, refreshGmailAccessToken, sendGmailReply, verifyGmailSentMessage, gmailSendWireBody } from '@/lib/services/google-gmail'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 
@@ -169,29 +169,46 @@ function preview(draft:any){
 // A reply is bound to its Gmail thread; a new email (no thread yet) is bound to its recipient. Both sides of the
 // approval (stage and execute) use this one function, and the payload binds to, subject and body either way.
 function approvalTarget(draft:any){return draft.newMessage?`gmail_new:${String(draft.to||'').toLowerCase()}`:`gmail_thread:${draft.threadId}`}
+function governedGmailWriteFor(actor:AgentActor){
+  const env=(globalThis as any).process?.env||{}
+  return env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(actor.legacyTelegramId))
+}
+function gmailApprovalPayload(draft:any,wire:boolean){
+  const legacy={threadId:draft.threadId,to:draft.to,subject:draft.subject,body:draft.body}
+  if(!wire)return legacy
+  if(typeof draft.to!=='string'||!/^[^\s@,;<>\r\n]+@[^\s@,;<>\r\n]+\.[^\s@,;<>\r\n]+$/.test(draft.to)||
+    typeof draft.subject!=='string'||!draft.subject.trim()||draft.subject.length>300||/[\r\n]/.test(draft.subject)||
+    typeof draft.body!=='string'||!draft.body.trim()||draft.body.length>6000||
+    (!draft.newMessage&&(typeof draft.threadId!=='string'||!/^[A-Za-z0-9_-]{1,200}$/.test(draft.threadId)))||
+    (draft.inReplyTo!=null&&(typeof draft.inReplyTo!=='string'||/[\r\n]/.test(draft.inReplyTo)||draft.inReplyTo.length>500))||
+    (draft.newMessage&&draft.inReplyTo))throw Error('gmail_send_wire_invalid')
+  return {...legacy,wireVersion:'gmail-wire-v2',newMessage:draft.newMessage===true,inReplyTo:draft.inReplyTo||null,wireBody:gmailSendWireBody(draft)}
+}
+
 
 async function stageApproval(actor:AgentActor,draft:any,learningText:string){
+  const wire=governedGmailWriteFor(actor),payload=gmailApprovalPayload(draft,wire)
   const now=new Date().toISOString()
   const {data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({
     telegram_id:String(actor.legacyTelegramId),type:'gmail_send',capability:'email',status:'waiting_approval',
     title:`${draft.newMessage?'Send email':'Send reply'}: ${clean(draft.subject,140)}`,summary:'Waiting for approval before sending Gmail.',progress:25,
     why:'Sending email creates an external communication.',source:'whatsapp',
-    metadata_json:{plan_type:'gmail_send',draft,learning_text:learningText},started_at:now,updated_at:now,
+    metadata_json:{plan_type:'gmail_send',draft,learning_text:learningText,...(wire?{gmail_binding:'gmail-wire-v2'}:{})},started_at:now,updated_at:now,
   }).select('id').single()
   if(runError||!run?.id)throw new Error(`gmail_send_run_create_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id)
   const binding=buildApprovalBinding({
     missionId:runId,stepId:'send',capability:'email',actionType:'send_email',
     target:approvalTarget(draft),
-    payload:{threadId:draft.threadId,to:draft.to,subject:draft.subject,body:draft.body},
+    payload,
   })
   const {data:approval,error}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(actor.legacyTelegramId),run_id:runId,action_type:'send_email',
     title:draft.newMessage?`Send email to ${draft.to}`:`Send email reply to ${draft.to}`,description:draft.newMessage?'This will send a new external Gmail email.':'This will send an external Gmail reply.',
     payload_preview:[
-      {label:'To',value:draft.to},{label:'Subject',value:draft.subject},{label:'Message',value:clean(draft.body,700)},{label:'Risk',value:'high'},
+      {label:'To',value:draft.to},{label:'Subject',value:draft.subject},{label:'Message',value:wire?draft.body:clean(draft.body,700)},{label:'Risk',value:'high'},
     ],
-    execution_payload:{plan_type:'gmail_send',capability:'email',threadId:draft.threadId},
+    execution_payload:{plan_type:'gmail_send',capability:'email',threadId:draft.threadId,...(wire?{gmail_binding:'gmail-wire-v2'}:{})},
     risk_level:'high',status:'pending',...binding,
   }).select('id').single()
   if(error||!approval?.id)throw new Error(`gmail_send_approval_create_failed:${error?.message||'unknown'}`)
@@ -380,6 +397,14 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
 }
 
 export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:string}){
+  const wire=governedGmailWriteFor(params.actor)
+  if(wire){
+    const ctx=await import('./governed-run-context')
+    if(!ctx.currentGovernedRun()&&!ctx.currentGovernedForeground())return ctx.withGovernedForeground(async()=>{
+      ctx.bindGovernedForegroundOwner(params.actor.legacyTelegramId)
+      return executeApprovedGmailSend(params)
+    })
+  }
   const tg=String(params.actor.legacyTelegramId)
   const [{data:run,error:runError},{data:approval,error:approvalError}]=await Promise.all([
     supabaseAdmin.from('agent_runs').select('id,status,metadata_json').eq('id',params.runId).eq('telegram_id',tg).maybeSingle(),
@@ -389,11 +414,12 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   if(approvalError||!approval||approval.status!=='approved')throw new Error('gmail_send_approval_missing')
   if(!['queued','waiting_approval'].includes(String(run.status)))throw new Error('agent_run_already_claimed')
   const draft:any=(run.metadata_json as any)?.draft
+  if(wire&&((run.metadata_json as any)?.gmail_binding!=='gmail-wire-v2'||!params.actor.userId))throw Error('gmail_send_fresh_exact_approval_required')
   if((!draft?.threadId&&!draft?.newMessage)||!draft?.to||!draft?.subject||!draft?.body)throw new Error('gmail_send_draft_missing')
   assertApprovalBinding({
     missionId:params.runId,stepId:'send',capability:'email',actionType:'send_email',
     target:approvalTarget(draft),
-    payload:{threadId:draft.threadId,to:draft.to,subject:draft.subject,body:draft.body},
+    payload:gmailApprovalPayload(draft,wire),
   },approval)
 
   // Switched off after the approval card was made: the approval does not outlive the switch. Nothing is claimed or
@@ -413,8 +439,30 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   if(!claimed?.id)throw new Error('agent_run_already_claimed')
   let mutationStarted=false
   try{
+    let approvedFetch:typeof fetch|undefined
+    if(wire){
+      const {governedApprovedGmailFetch}=await import('./governed-google-read')
+      const {isApprovalExpired}=await import('./approval-ttl')
+      const expectedBody=gmailSendWireBody(draft)
+      const authorize=async()=>{
+        const [fresh,grant]=await Promise.all([
+          supabaseAdmin.from('agent_runs').select('id,status,metadata_json,error').eq('id',params.runId).eq('telegram_id',tg).maybeSingle(),
+          supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version,requested_at,execution_payload').eq('id',approval.id).eq('telegram_id',tg).eq('run_id',params.runId).maybeSingle()
+        ])
+        if(fresh.error||grant.error||fresh.data?.status!=='running'||fresh.data.error==='user_cancelled'||fresh.data.metadata_json?.gmail_binding!=='gmail-wire-v2'||grant.data?.status!=='approved'||grant.data.action_hash!==approval.action_hash||grant.data.execution_payload?.gmail_binding!=='gmail-wire-v2'||isApprovalExpired(grant.data))return false
+        try{
+          const current=fresh.data.metadata_json.draft
+          assertApprovalBinding({missionId:params.runId,stepId:'send',capability:'email',actionType:'send_email',target:approvalTarget(current),payload:gmailApprovalPayload(current,true)},grant.data)
+          return gmailSendWireBody(current)===expectedBody&&!await emailBlock(params.actor)
+        }catch{return false}
+      }
+      approvedFetch=(async(input,init)=>{
+        if(typeof input!=='string'||!init)throw Error('gmail_send_wire_invalid')
+        return governedApprovedGmailFetch(input,init,tg,{actorId:params.actor.userId,expectedBody,authorize})
+      }) as typeof fetch
+    }
     mutationStarted=true
-    const sent=await sendGmailReply(access.accessToken,draft)
+    const sent=await sendGmailReply(access.accessToken,draft,approvedFetch)
     // Preserve the exact provider receipt even if the subsequent readback fails.
     // This enables later read-only reconciliation without retrying the mutation.
     const {error:receiptError}=await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_submitted',message:'Gmail returned a send receipt; verification is pending.',metadata_json:{gmail_message_id:sent.id,thread_id:draft.threadId}})
@@ -438,7 +486,8 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   }catch(err:any){
     const now=new Date().toISOString()
     const reason=clean(err?.message||err,300)
-    const definitiveNoSend=/^gmail_send_(?:scope_required|failed_(?:400|401|403|404|422))$/.test(reason)
+    const governedDenied=wire&&/^governed_model_(?:not_authorized|authorization_revoked|authorization_unavailable|reservation_unavailable|unavailable|breach|deadline|duplicate|steps|cost|tokens|unresolved|policy_unavailable|price_unavailable|connector_scope_mismatch|connector_identity_mismatch|exact_send_approval_required|unreviewed_connector_shape)$/.test(reason)
+    const definitiveNoSend=governedDenied||/^gmail_send_(?:scope_required|failed_(?:400|401|403|404|422))$/.test(reason)
     if(mutationStarted&&!definitiveNoSend){
       await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'Gmail send outcome is unknown after the provider request started.',progress:100,error:reason,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
       await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
@@ -449,6 +498,6 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gmail rejected the send before provider acceptance.',progress:100,error:reason,completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_approvals').update({status:'failed',resolved_at:now}).eq('id',approval.id).eq('telegram_id',tg)
     await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:String((run.metadata_json as any)?.learning_text||'approved gmail send'),domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:draft.threadId,outcome:'failed',verified:false}).catch(()=>{})
-    return {runId:params.runId,status:'failed' as const,capability:'email' as const,risk:'high' as const,text:'Gmail rejected the send before acceptance. Nothing is marked sent. Please review the Gmail Send connection before trying again.',handledBy:'gmail-send'}
+    return {runId:params.runId,status:'failed' as const,capability:'email' as const,risk:'high' as const,text:governedDenied?'The approval, account permission or execution budget could not be verified. Nothing was sent. Ask for a fresh draft when the issue is resolved.':'Gmail rejected the send before acceptance. Nothing is marked sent. Please review the Gmail Send connection before trying again.',handledBy:'gmail-send'}
   }
 }

@@ -515,7 +515,7 @@ export type GmailReplyDraft = {
   newMessage?:boolean
 }
 
-export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft){
+export function gmailSendWireBody(draft:GmailReplyDraft){
   const subject=draft.newMessage||/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`
   const headers=[
     `To: ${sanitizeHeader(draft.to)}`,
@@ -529,12 +529,15 @@ export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft){
     headers.push(`References: ${mid}`)
   }
   const raw=base64Url(`${headers.join('\r\n')}\r\n\r\n${draft.body}`)
-  const res=await withTimeout(fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
-    method:'POST',
-    headers:{Authorization:`Bearer ${accessToken}`,'Content-Type':'application/json'},
-    body:JSON.stringify(draft.newMessage?{raw}:{raw,threadId:draft.threadId}),
-    cache:'no-store',
-  }),12000)
+  return JSON.stringify(draft.newMessage?{raw}:{raw,threadId:draft.threadId})
+}
+
+export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft,approvedFetch?:typeof fetch){
+  const url='https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+  const init:RequestInit={method:'POST',headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},body:gmailSendWireBody(draft),cache:'no-store'}
+  // A governed adapter has its own pre-dispatch deadline and transport timeout;
+  // do not race it with a caller timer that could expire before authorization.
+  const res=approvedFetch?await approvedFetch(url,init):await withTimeout(fetch(url,init),12000)
   const data=await res.json().catch(()=>({}))
   if(!res.ok||!data?.id){
     const err=res.status===403?'gmail_send_scope_required':`gmail_send_failed_${res.status}`

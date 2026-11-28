@@ -265,3 +265,31 @@ await withGovernedPersonalRun('101',googleRt,()=>true,async()=>{
 },guard)
 assert.equal(guardedPages,1)
 console.log('Inherited recovery authorization rechecked for actual nested connector and physical dispatch boundaries')
+
+
+// Read API cannot become a mutation. Exact approved body and fresh callback
+// are required before the priced Gmail provider request; revoked grant never
+// reaches the transport. These are inert fixture requests, not real mail.
+const {governedApprovedGmailFetch}=await import('../lib/agent/governed-google-read')
+const {gmailSendWireBody}=await import('../lib/services/google-gmail')
+const gmailUrl='https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+const sendBody=gmailSendWireBody({threadId:'fixture_thread',to:'fixture@example.invalid',subject:'Fixture',body:'Only fixture'})
+const sendInit={method:'POST',headers:{Authorization:'Bearer access-fixture','Content-Type':'application/json'},body:sendBody}
+assert.ok(googleRequestShape('google.gmail.send',gmailUrl,sendInit))
+await assert.rejects(()=>governedGoogleFetch('google.gmail.send',gmailUrl,sendInit,'101',connectorDeps),/exact_send_approval_required/)
+let sendLive=true,mailDispatches=0
+const mailDeps={...connectorDeps,fetcher:async()=>{mailDispatches++;return new Response(JSON.stringify({id:'sent-fixture',threadId:'fixture_thread'}))}}
+const authority={actorId:'fixture-user-uuid',expectedBody:sendBody,authorize:async()=>sendLive}
+await assert.rejects(()=>governedApprovedGmailFetch(gmailUrl,{...sendInit,body:JSON.stringify({raw:'tampered'})},'101',authority,mailDeps),/exact_send_approval_required/)
+sendLive=false
+await assert.rejects(()=>governedApprovedGmailFetch(gmailUrl,sendInit,'101',authority,mailDeps),/not_authorized/)
+assert.equal(mailDispatches,0)
+sendLive=true
+assert.equal((await governedApprovedGmailFetch(gmailUrl,sendInit,'101',authority,mailDeps)).status,200)
+assert.equal(mailDispatches,1)
+await withReservedOutbound('connector',gmailUrl,async()=>{
+  sendLive=false
+  await assert.rejects(()=>authorizeGovernedFetch(gmailUrl,sendInit,fixtureEnv),/authority_revoked/)
+},'POST',authority.authorize)
+assert.equal(mailDispatches,1)
+console.log('Approved Gmail connector wire payload, current authority, read/write separation and physical fence fixtures passed')

@@ -2,7 +2,7 @@
 // scope. Not a network sandbox: custom SDK transports must still be audited.
 import {AsyncLocalStorage} from 'node:async_hooks'
 import {currentGovernedRun} from './governed-run-context'
-type Permit={kind:'model'|'search'|'connector';name:string;method?:'GET'|'POST';used:boolean;closed:boolean}
+type Permit={kind:'model'|'search'|'connector';name:string;method?:'GET'|'POST';used:boolean;closed:boolean;authorize?:()=>Promise<boolean>}
 const store:AsyncLocalStorage<Permit>=(globalThis as any).__gogoGovernedPermitStore||new AsyncLocalStorage<Permit>()
 ;(globalThis as any).__gogoGovernedPermitStore=store
 const meterStore:AsyncLocalStorage<{deadline:number}>=(globalThis as any).__gogoGovernedMeterWriteStore||new AsyncLocalStorage<{deadline:number}>()
@@ -17,8 +17,8 @@ function modelUrl(model:string):string|null{
   if(/^mercury-/.test(model))return 'https://api.inceptionlabs.ai/v1/chat/completions'
   return null
 }
-export async function withReservedOutbound<T>(kind:Permit['kind'],name:string,work:()=>Promise<T>,method?:'GET'|'POST'):Promise<T>{
-  const p:Permit={kind,name,method,used:false,closed:false}
+export async function withReservedOutbound<T>(kind:Permit['kind'],name:string,work:()=>Promise<T>,method?:'GET'|'POST',authorize?:()=>Promise<boolean>):Promise<T>{
+  const p:Permit={kind,name,method,used:false,closed:false,authorize}
   try{return await store.run(p,work)}finally{p.closed=true}
 }
 export function governedFenceInstalled(){return (globalThis as any).__gogoGovernedFetchFence===true}
@@ -72,6 +72,7 @@ export async function authorizeGovernedFetch(input:RequestInfo|URL,init?:Request
   // after pricing, credential reads and body inspection. Internal DB reads
   // return above so checking the predicate cannot recurse through the fence.
   if(active&&await active.authorize()!==true)throw Error('governed_egress_authority_revoked')
+  if(p.authorize&&await p.authorize()!==true)throw Error('governed_egress_authority_revoked')
   if(p.used||p.closed||active&&!active.inTime())throw Error('governed_egress_revoked')
   p.used=true
   return 'provider'

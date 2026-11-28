@@ -1,6 +1,6 @@
 // Pure protocol constraints. The operation is chosen by existing trusted
 // server adapters, never from a model's URL or an arbitrary HTTP tool.
-export const GOOGLE_OPERATIONS=['google.calendar.refresh','google.calendar.read','google.workspace.refresh','google.gmail.read','google.drive.read','google.contacts.read'] as const
+export const GOOGLE_OPERATIONS=['google.calendar.refresh','google.calendar.read','google.workspace.refresh','google.gmail.read','google.gmail.send','google.drive.read','google.contacts.read'] as const
 export type GoogleOperation=typeof GOOGLE_OPERATIONS[number]
 export type GoogleRequest={operation:GoogleOperation;url:string;method:'GET'|'POST';credential:string}
 const ID='[A-Za-z0-9_.@%+-]{1,1024}'
@@ -29,6 +29,17 @@ export function googleRequestShape(operation:GoogleOperation,raw:string,init:Req
     if(keys.length!==4||new Set(keys).size!==4||!keys.every(k=>['refresh_token','client_id','client_secret','grant_type'].includes(k))||body.get('grant_type')!=='refresh_token'||!body.get('client_id')||!body.get('client_secret'))return null
     const token=body.get('refresh_token')
     return token&&token.length<=8192?{operation,url:u.href,method:'POST',credential:token}:null
+  }
+  if(operation==='google.gmail.send'){
+    if(method!=='POST'||u.href!=='https://gmail.googleapis.com/gmail/v1/users/me/messages/send'||typeof init.body!=='string'||init.body.length>25000)return null
+    try{
+      const b=JSON.parse(init.body)
+      if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>!['raw','threadId'].includes(k))||
+        typeof b.raw!=='string'||!/^[A-Za-z0-9_-]{1,24000}$/.test(b.raw)||
+        (b.threadId!==undefined&&(typeof b.threadId!=='string'||!/^[A-Za-z0-9_-]{1,200}$/.test(b.threadId))))return null
+      const token=/^Bearer ([^\s]{1,8192})$/.exec(new Headers(init.headers).get('authorization')||'')?.[1]
+      return token?{operation,url:u.href,method:'POST',credential:token}:null
+    }catch{return null}
   }
   if(method!=='GET'||init.body!=null)return null
   let accepted=false
