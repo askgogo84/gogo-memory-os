@@ -9,7 +9,7 @@ import ts from 'typescript'
 const path = 'lib/agent/google-workspace-drive-binary.ts'
 const original = readFileSync(path, 'utf8')
 const ast = ts.createSourceFile(path, original, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-const names = ['credentials', 'refresh', 'workspaceFetch', 'fetchDriveBytes']
+const names = ['governedRead', 'credentials', 'refresh', 'workspaceFetch', 'fetchDriveBytes']
 const functions = new Map(ast.statements
   .filter(ts.isFunctionDeclaration)
   .map(node => [node.name?.text, node.getText(ast)]))
