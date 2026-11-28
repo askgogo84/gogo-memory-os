@@ -1,1 +1,2 @@
 npx tsx scripts/verify-hachi-durable-review.mts
+npx tsx scripts/verify-hachi-recovery-execution.mts
