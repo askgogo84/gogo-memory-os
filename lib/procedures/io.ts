@@ -75,33 +75,12 @@ export const productionIO: ProcedureIO = {
         const incoming = r.match.incoming
         return { thread: { id: String(r.match.thread.id), subject: clip(r.match.thread.subject, 200), to: fromOf(incoming?.from), toName: clip(String(incoming?.from || '').replace(/<[^>]+>/, '').replace(/"/g, ''), 60), lastFromMe: !!last && fromOf(last.from) === own, lastDate: last?.date || null } }
       }
-      case 'enterprise.cancellation_incident:read_order': {
-        // Internal pilot records only (merchant_orders, scoped by the outlet's workspace). Never a merchant endpoint.
-        const { supabaseAdmin } = await import('@/lib/supabase-admin')
-        const { data: outlets } = await supabaseAdmin.from('merchant_outlets').select('id,name').eq('workspace_id', String(context.workspaceId))
-        const ids = (outlets || []).map((o: any) => String(o.id))
-        if (!ids.length) throw new Error('workspace_has_no_outlets')
-        const { data } = await supabaseAdmin.from('merchant_orders').select('id,outlet_id,source,state,cancel_reason,items,created_at').eq('id', String(context.orderRef)).in('outlet_id', ids).maybeSingle()
-        if (!data) throw new Error('order_not_found')
-        return { order: { ...data, outlet: (outlets || []).find((o: any) => o.id === data.outlet_id)?.name || data.outlet_id } }
-      }
-      case 'enterprise.cancellation_incident:read_history': {
-        const { supabaseAdmin } = await import('@/lib/supabase-admin')
-        const order = context.order as any
-        const since = new Date(Date.now() - 7 * 86_400_000).toISOString()
-        const { data } = await supabaseAdmin.from('merchant_orders').select('id,cancel_reason,created_at').eq('outlet_id', String(order?.outlet_id || '')).eq('state', 'cancelled').gte('created_at', since).limit(50)
-        return { recentCancellations: data || [], stockSignal: (data || []).some((r: any) => r.cancel_reason === 'out_of_stock') ? 'low' : 'none' }
-      }
-      case 'enterprise.cancellation_incident:create_task': {
-        // An internal record for the store team, keyed so a re-run does not create a second one.
-        const { supabaseAdmin } = await import('@/lib/supabase-admin')
-        const text = `Cancellation incident ${context.orderRef}: ${context.cause || 'cause unknown'} (${context.severity || 'medium'})`.slice(0, 240)
-        const { data: existing } = await supabaseAdmin.from('todos').select('id').eq('whatsapp_id', actor.whatsappId).eq('text', text).eq('done', false).maybeSingle()
-        if (existing?.id) return { taskId: String(existing.id) }
-        const { data, error } = await supabaseAdmin.from('todos').insert({ whatsapp_id: actor.whatsappId, text, done: false, created_at: new Date().toISOString() }).select('id').single()
-        if (error || !data?.id) throw new Error(`task_create_failed:${error?.message || 'unknown'}`)
-        return { taskId: String(data.id) }
-      }
+      // The legacy personal procedure store cannot carry tenant data. The
+      // workspace-scoped governed incident path owns these operations now.
+      case 'enterprise.cancellation_incident:read_order':
+      case 'enterprise.cancellation_incident:read_history':
+      case 'enterprise.cancellation_incident:create_task':
+        throw new Error('enterprise_workspace_incident_route_required')
       default: throw new Error(`read_not_wired:${key}`)
     }
   },

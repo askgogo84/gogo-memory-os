@@ -694,4 +694,110 @@ create table public.gogo_governed_voice_profiles (
 alter table public.gogo_governed_voice_profiles enable row level security;
 revoke all on public.gogo_governed_voice_profiles from public,anon,authenticated,service_role;
 grant select on public.gogo_governed_voice_profiles to service_role;
+-- A workspace-only internal incident review queue. This is not a POS or
+-- payment integration; neither staging nor confirming contacts a provider.
+create table public.gogo_workspace_incidents (
+  id uuid primary key default gen_random_uuid(),
+  scope_kind text not null default 'workspace' check(scope_kind='workspace'),
+  scope_id text not null,
+  order_id text not null check(order_id ~ '^[A-Za-z0-9_.:-]{1,100}$'),
+  outlet_id text not null,
+  source text not null check(source in ('flipkart','ondc')),
+  reason text not null check(reason in ('out_of_stock','no_response','rider_unavailable','customer','unknown')),
+  source_updated_at timestamptz not null,
+  recent_cancellations bigint not null check(recent_cancellations>=0),
+  state text not null default 'proposed' check(state in ('proposed','open','expired','stale')),
+  proposed_by text not null,
+  approved_by text,
+  proposed_at timestamptz not null default clock_timestamp(),
+  expires_at timestamptz not null default(clock_timestamp()+interval '30 minutes'),
+  approved_at timestamptz,
+  check((state='open' and approved_by is not null and approved_by<>proposed_by and approved_at is not null) or
+    (state<>'open' and approved_by is null and approved_at is null)),
+  foreign key(scope_kind,scope_id) references public.gogo_governed_policies(scope_kind,scope_id) on delete restrict
+);
+create unique index gogo_workspace_incidents_active_order on public.gogo_workspace_incidents(scope_id,order_id) where state in ('proposed','open');
+alter table public.gogo_workspace_incidents enable row level security;
+revoke all on public.gogo_workspace_incidents from public,anon,authenticated,service_role;
+grant select,insert,update on public.gogo_workspace_incidents to service_role;
+
+create function public.gogo_workspace_incident_action(p_scope_id text,p_actor_id text,p_action text,p_ref text)
+returns jsonb language plpgsql security invoker set search_path='' as $$
+declare
+  actor_role text;
+  proposer_role text;
+  incident public.gogo_workspace_incidents%rowtype;
+  observed record;
+  result jsonb;
+  recent_count bigint;
+begin
+  if p_scope_id is null or p_scope_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' or
+    p_actor_id is null or p_actor_id !~ '^-?[1-9][0-9]{0,18}$' or
+    p_action is null or p_action not in ('stage','approve','list') then return jsonb_build_object('state','unavailable'); end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('workspace-incident:'||p_scope_id,0));
+  perform 1 from public.gogo_governed_policies where scope_kind='workspace' and scope_id=p_scope_id and enabled and valid_until>clock_timestamp() for share;
+  if not found then return jsonb_build_object('state','unavailable'); end if;
+  perform 1 from public.users where telegram_id::text=p_actor_id and access_status='active' for share;
+  if not found then return jsonb_build_object('state','unavailable'); end if;
+  select role::text into actor_role from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=p_actor_id for share;
+  if not found or actor_role not in ('owner','admin','member','viewer') then return jsonb_build_object('state','unavailable'); end if;
+  perform 1 from public.workspaces where id::text=p_scope_id and pilot_read_only=true for share;
+  if not found then return jsonb_build_object('state','unavailable'); end if;
+  if p_action='list' then
+    select coalesce(jsonb_agg(jsonb_build_object('id',i.id,'orderId',i.order_id,'state',i.state,'reason',i.reason,
+      'observedAt',i.source_updated_at,'expiresAt',i.expires_at,'approvedAt',i.approved_at) order by i.proposed_at desc),'[]'::jsonb)
+      into result from (select * from public.gogo_workspace_incidents
+        where scope_id=p_scope_id and (state='open' or (state='proposed' and expires_at>clock_timestamp() and actor_role<>'viewer'))
+        order by proposed_at desc limit 51) i;
+    return jsonb_build_object('state','listed','items',result);
+  end if;
+  if p_action='stage' then
+    if actor_role='viewer' or p_ref is null or p_ref !~ '^[A-Za-z0-9_.:-]{1,100}$' then return jsonb_build_object('state','unavailable'); end if;
+    -- Exact tenant-owned cancelled record, no customer names, items or amount.
+    select o.id,o.outlet_id,o.source,o.state,coalesce(o.cancel_reason,'unknown') as reason,o.updated_at
+      into observed from public.merchant_orders o join public.merchant_outlets l on l.id=o.outlet_id
+      where l.workspace_id::text=p_scope_id and o.id=p_ref and o.state='cancelled' for share of o,l;
+    if not found or observed.updated_at is null then return jsonb_build_object('state','unavailable'); end if;
+    update public.gogo_workspace_incidents set state='expired'
+      where scope_id=p_scope_id and order_id=p_ref and state='proposed' and expires_at<=clock_timestamp();
+    update public.gogo_workspace_incidents set state='stale'
+      where scope_id=p_scope_id and order_id=p_ref and state='proposed' and
+        (source_updated_at<>observed.updated_at or outlet_id<>observed.outlet_id or source<>observed.source or reason<>observed.reason);
+    select * into incident from public.gogo_workspace_incidents where scope_id=p_scope_id and order_id=p_ref and state in ('proposed','open');
+    if not found then
+      select count(*) into recent_count from public.merchant_orders o join public.merchant_outlets l on l.id=o.outlet_id
+        where l.workspace_id::text=p_scope_id and o.outlet_id=observed.outlet_id and o.state='cancelled' and o.created_at>=clock_timestamp()-interval '7 days';
+      insert into public.gogo_workspace_incidents(scope_id,order_id,outlet_id,source,reason,source_updated_at,recent_cancellations,proposed_by)
+        values(p_scope_id,observed.id,observed.outlet_id,observed.source,observed.reason,observed.updated_at,recent_count,p_actor_id)
+        returning * into incident;
+    end if;
+  else
+    if actor_role not in ('owner','admin') or p_ref is null or p_ref !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then return jsonb_build_object('state','unavailable'); end if;
+    select * into incident from public.gogo_workspace_incidents where scope_id=p_scope_id and id=p_ref::uuid for update;
+    if not found or incident.proposed_by=p_actor_id then return jsonb_build_object('state','unavailable'); end if;
+    if incident.state='open' then
+      return jsonb_build_object('state','open','id',incident.id,'orderId',incident.order_id,'approvedAt',incident.approved_at);
+    end if;
+    if incident.state<>'proposed' or incident.expires_at<=clock_timestamp() then return jsonb_build_object('state','expired'); end if;
+    perform 1 from public.users where telegram_id::text=incident.proposed_by and access_status='active' for share;
+    if not found then return jsonb_build_object('state','unavailable'); end if;
+    select role::text into proposer_role from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=incident.proposed_by for share;
+    if not found or proposer_role not in ('owner','admin','member') then return jsonb_build_object('state','unavailable'); end if;
+    perform 1 from public.merchant_orders o join public.merchant_outlets l on l.id=o.outlet_id
+      where l.workspace_id::text=p_scope_id and o.id=incident.order_id and o.outlet_id=incident.outlet_id
+        and o.state='cancelled' and o.source=incident.source and coalesce(o.cancel_reason,'unknown')=incident.reason and o.updated_at=incident.source_updated_at for share of o,l;
+    if not found then
+      update public.gogo_workspace_incidents set state='stale' where scope_id=p_scope_id and id=incident.id and state='proposed';
+      return jsonb_build_object('state','stale');
+    end if;
+    update public.gogo_workspace_incidents set state='open',approved_by=p_actor_id,approved_at=clock_timestamp()
+      where scope_id=p_scope_id and id=incident.id and state='proposed' returning * into incident;
+    if not found then return jsonb_build_object('state','unavailable'); end if;
+  end if;
+  return jsonb_build_object('state',incident.state,'id',incident.id,'orderId',incident.order_id,'outletId',incident.outlet_id,'source',incident.source,
+    'reason',incident.reason,'observedAt',incident.source_updated_at,'recentCancellations',incident.recent_cancellations::text,
+    'expiresAt',incident.expires_at,'approvedAt',incident.approved_at);
+end $$;
+revoke all on function public.gogo_workspace_incident_action(text,text,text,text) from public,anon,authenticated,service_role;
+grant execute on function public.gogo_workspace_incident_action(text,text,text,text) to service_role;
 commit;
