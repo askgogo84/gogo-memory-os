@@ -444,7 +444,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   const {data:claimed,error:claimError}=await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Sending approved Gmail reply.',progress:60,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg).in('status',['queued','waiting_approval']).select('id').maybeSingle()
   if(claimError)throw new Error('gmail_send_claim_failed')
   if(!claimed?.id)throw new Error('agent_run_already_claimed')
-  let mutationStarted=false
+  let mutationStarted=false,providerAccepted=false
   try{
     let approvedFetch:typeof fetch|undefined
     if(wire){
@@ -470,6 +470,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     }
     mutationStarted=true
     const sent=await sendGmailReply(access.accessToken,draft,approvedFetch)
+    providerAccepted=true
     // Preserve the exact provider receipt even if the subsequent readback fails.
     // This enables later read-only reconciliation without retrying the mutation.
     const {error:receiptError}=await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_submitted',message:'Gmail returned a send receipt; verification is pending.',metadata_json:{gmail_message_id:sent.id,thread_id:draft.threadId}})
@@ -493,8 +494,8 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   }catch(err:any){
     const now=new Date().toISOString()
     const reason=clean(err?.message||err,300)
-    const governedDenied=wire&&/^governed_model_(?:not_authorized|authorization_revoked|authorization_unavailable|reservation_unavailable|unavailable|breach|deadline|duplicate|steps|cost|tokens|unresolved|policy_unavailable|price_unavailable|connector_scope_mismatch|connector_identity_mismatch|exact_send_approval_required|unreviewed_connector_shape)$/.test(reason)
-    const definitiveNoSend=governedDenied||/^gmail_send_(?:scope_required|failed_(?:400|401|403|404|422))$/.test(reason)
+    const governedDenied=wire&&!providerAccepted&&/^governed_model_(?:not_authorized|authorization_revoked|authorization_unavailable|reservation_unavailable|unavailable|breach|deadline|duplicate|steps|cost|tokens|unresolved|policy_unavailable|price_unavailable|connector_scope_mismatch|connector_identity_mismatch|exact_send_approval_required|unreviewed_connector_shape)$/.test(reason)
+    const definitiveNoSend=!providerAccepted&&(governedDenied||/^gmail_send_(?:scope_required|failed_(?:400|401|403|404|422))$/.test(reason))
     if(mutationStarted&&!definitiveNoSend){
       await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'Gmail send outcome is unknown after the provider request started.',progress:100,error:reason,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
       await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)

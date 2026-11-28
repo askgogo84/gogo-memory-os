@@ -96,7 +96,7 @@ export async function executeApprovedCalendarUpdate({actor,runId}:{actor:AgentAc
   }
   const {data:claim,error:ce}=await supabaseAdmin.from('agent_runs').update({status:'running',updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',tg).in('status',['queued','waiting_approval']).select('id').maybeSingle()
   if(ce||!claim)throw new Error('agent_run_already_claimed')
-  let verified=false,rejected=false,denied=false
+  let verified=false,rejected=false,denied=false,patchAccepted=false
   try{
     let approvedFetch:typeof fetch|undefined
     if(governed){
@@ -118,13 +118,15 @@ export async function executeApprovedCalendarUpdate({actor,runId}:{actor:AgentAc
       }
       approvedFetch=(async(input,init)=>{
         if(typeof input!=='string'||!init||!credentialKey)throw Error('calendar_move_shape_invalid')
-        return governedApprovedCalendarMoveFetch(input,init,tg,{actorId:actor.userId,credentialKey,expectedUrl,expectedBody,expectedEtag:draft.etag,authorize})
+        const receipt=await governedApprovedCalendarMoveFetch(input,init,tg,{actorId:actor.userId,credentialKey,expectedUrl,expectedBody,expectedEtag:draft.etag,authorize})
+        patchAccepted=receipt.ok
+        return receipt
       }) as typeof fetch
     }
     const result=await updateCalendarEvent(token,draft.eventId,{startTime:draft.startIso,endTime:draft.endIso,ifMatch:draft.etag,timezone:draft.timezone},approvedFetch)
     verified=result.ok&&result.verification==='verified';rejected=result.verification==='rejected'
   }catch(e){
-    denied=governed&&/^governed_model_(?:not_authorized|authorization_revoked|authorization_unavailable|reservation_unavailable|unavailable|breach|deadline|duplicate|steps|cost|tokens|unresolved|policy_unavailable|price_unavailable|connector_scope_mismatch|connector_identity_mismatch|exact_calendar_approval_required|unreviewed_connector_shape)$/.test(String((e as Error)?.message||''))
+    denied=governed&&!patchAccepted&&/^governed_model_(?:not_authorized|authorization_revoked|authorization_unavailable|reservation_unavailable|unavailable|breach|deadline|duplicate|steps|cost|tokens|unresolved|policy_unavailable|price_unavailable|connector_scope_mismatch|connector_identity_mismatch|exact_calendar_approval_required|unreviewed_connector_shape)$/.test(String((e as Error)?.message||''))
     rejected=denied
   }
   const now=new Date().toISOString(),status=verified?'completed':rejected?'failed':'outcome_unknown'
