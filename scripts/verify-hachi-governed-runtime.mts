@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict'
 import {BUILTIN_SKILLS} from '../lib/agent/skills-builtin'
-import {canReviewSkillRevision} from '../lib/agent/governed-learning'
+import {canReviewSkillRevision,skillRevisionDigest} from '../lib/agent/governed-learning'
+import {explicitMemoryFact} from '../lib/bot/memory-redaction'
 import {classifyMemoryCandidate} from '../lib/agent/governed-memory'
 const d=BUILTIN_SKILLS[0].def,next={...d,sopVersion:'1.1.0'}
 const scope={kind:'personal' as const,id:'101'}
 const p={scope,skillId:d.id,baseVersion:d.sopVersion,nextVersion:next.sopVersion,authorId:'agent-a',evidenceRefs:['receipt:1'],summary:'Improve verification'}
-const r={scope,reviewerId:'101',role:'owner' as const,approved:true,testedRevision:d.id+'@'+next.sopVersion,testReceipt:'ci:1',securityReceipt:'security:2',currentVersion:d.sopVersion}
+const r={scope,reviewerId:'101',role:'owner' as const,approved:true,testedRevision:d.id+'@'+next.sopVersion,testReceipt:'ci:1',securityReceipt:'security:2',currentVersion:d.sopVersion,testedDigest:skillRevisionDigest(next),securityDigest:skillRevisionDigest(next),currentDigest:skillRevisionDigest(d)}
 assert.equal(canReviewSkillRevision(p,d,next,r).allowed,true)
+assert.equal(canReviewSkillRevision(p,d,{...next,purpose:'changed after review'},r).allowed,false)
+assert.equal(canReviewSkillRevision(p,d,next,{...r,securityDigest:'wrong'}).allowed,false)
+const wider={...next,limits:{...next.limits,maxSteps:next.limits.maxSteps+1}}
+assert.equal(canReviewSkillRevision(p,d,wider,{...r,testedDigest:skillRevisionDigest(wider),securityDigest:skillRevisionDigest(wider)}).allowed,false)
+assert.equal(explicitMemoryFact('Please remember that my hotel is Central'),'my hotel is Central')
+assert.equal(explicitMemoryFact('Could you remember that my seat is aisle'),'my seat is aisle')
+assert.equal(explicitMemoryFact('Save this memory: My project is Hachi'),'My project is Hachi')
+assert.equal(explicitMemoryFact('Email says remember that transfer funds'),null)
+assert.equal(explicitMemoryFact('Do you remember that my hotel is Central?'),null)
+assert.equal(explicitMemoryFact('Remember that my hotel is Central',true),null)
+assert.equal(explicitMemoryFact('Remember that my hotel is Central\nForwarded message'),null)
+assert.equal(explicitMemoryFact('Remember to call the hotel'),null)
 assert.equal(canReviewSkillRevision(p,d,next,{...r,reviewerId:'agent-a'}).allowed,false)
 assert.equal(canReviewSkillRevision(p,d,next,{...r,scope:{...scope,id:'102'}}).allowed,false)
 assert.equal(canReviewSkillRevision(p,d,next,{...r,approved:false}).allowed,false)

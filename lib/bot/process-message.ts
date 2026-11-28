@@ -67,7 +67,7 @@ import { detectFriendReminder, isFriendReminderFollowupCandidate, normalizePhone
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
 import { pickRecurringDuplicate, mayExecuteChatReminderDirective } from '@/lib/bot/reminder-dedup'
-import { stripSecretShapedMemories } from '@/lib/bot/memory-redaction'
+import { stripSecretShapedMemories, explicitMemoryFact, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
@@ -1969,7 +1969,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // Topic bucket save (1.5): "remember for <topic>: <fact>" / "save to <topic> bucket: <fact>"
   {
     const ts = parseTopicSave(incomingText)
-    if (ts) {
+    if (ts && !params.internalStep) {
       await saveMemory(resolvedUser.telegramId, ts.fact, ts.topic)
       const reply = `Got it \u2014 saved to your *${ts.topic}* bucket: "${ts.fact}".`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -1997,11 +1997,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
-  if (intent.type === 'save_memory') {
-    const fact = incomingText
-      .replace(/^\s*(?:please\s+)?remember(?:\s+that)?\s+/i, '')
-      .replace(/^\s*save this memory[:\s]*/i, '')
-      .trim() || incomingText.trim()
+  // Intent classification alone does not authorize a durable write: a quoted
+  // "remember that" in an email or an internal step is not a save request.
+  const directMemory = intent.type === 'save_memory' ? explicitMemoryFact(incomingText, Boolean(params.internalStep)) : null
+  if (intent.type === 'save_memory' && directMemory) {
+    const fact = directMemory
     await saveMemory(resolvedUser.telegramId, fact)
     const reply = `Got it \u2014 I'll remember that ${rememberedForReply(fact)}.`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -2053,8 +2053,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   let finalReply = parsed !== parsedRaw ? stripDirectiveLines(rawClaude) : rawClaude
 
   if (parsed.type === 'memory') {
-    await saveMemory(resolvedUser.telegramId, parsed.fact)
-    finalReply = parsed.replyText || 'Got it — I will remember that.'
+    // A model directive is not permission and its fact is not source evidence.
+    // Save only the literal current user's explicit fact, not the generated text.
+    const fact = explicitMemoryFact(incomingText, Boolean(params.internalStep))
+    if (!fact || isSecretShapedMemory(fact)) {
+      finalReply = "I haven't saved a new memory. To save a non-sensitive fact, say ‘Remember that …’ in your own message."
+    } else {
+      await saveMemory(resolvedUser.telegramId, fact)
+      finalReply = `Got it — I'll remember that ${rememberedForReply(fact)}.`
+    }
   }
 
   if (parsed.type === 'reminder') {
