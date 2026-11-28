@@ -129,6 +129,7 @@ console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmai
 {
   const exports: any = {}
   const dependencies: Record<string, unknown> = {
+    './governed-run-context': { currentGovernedRun: () => null, currentGovernedForeground: () => null },
     '@/lib/security/email-redaction': { formatEmailSnippet: (value: string) => value, decodeHtmlEntities: (value: string) => value },
     '@/lib/security/google-token-crypto': { decryptGoogleToken: (value: string) => value, hasGoogleTokenEncryptionKey: () => false },
     '@/lib/bot/memory-redaction': { redactSecretShapedText: (value: string) => value },
