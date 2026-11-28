@@ -58,8 +58,11 @@ function restaurantName(text:string){
   // the date and time sat between "table for 2" and "at <venue>". A reservation ask whose venue follows a
   // later "at <Name>" (not "at 8pm") keeps the name, without the "near …" landmark.
   if(/\b(?:table|reservation|reserve|book)\b/i.test(raw)){
-    const later=raw.match(new RegExp('\\bat\\s+(?:the\\s+)?(?!\\d)(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP,'i'))?.[1]
-    if(later&&!GENERIC_NAME.test(later.trim())&&!temporalVenue(later))return safe(later,160)
+    const laterMatches=raw.matchAll(new RegExp('(?=\\bat\\s+(?:the\\s+)?(?!\\d)(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP+')','gi'))
+    for(const match of laterMatches){
+      const later=match[1]
+      if(later&&!GENERIC_NAME.test(later.trim())&&!temporalVenue(later))return safe(later,160)
+    }
   }
   const direct=raw.match(new RegExp('\\b(?:book|reserve)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
   const cleaned=direct?direct.replace(/^(?:a|an)\s+(?:table\s+at\s+)?/i,'').replace(/^table\s+at\s+/i,'').trim():''
@@ -262,7 +265,8 @@ function publicReserveXVenue(url:string){
       &&/^\/r\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/?$/i.test(u.pathname)&&!u.search&&!u.hash
   }catch{return false}
 }
-function isReserveXHost(url:string){return host(url).toLowerCase()==='reservex.explorex.co.in'}
+// Recognize DNS-equivalent host spellings for exclusion; only the canonical HTTPS venue URL is allowed.
+function isReserveXHost(url:string){return host(url).toLowerCase().replace(/\.+$/,'')==='reservex.explorex.co.in'}
 const NON_BOOKING_HOSTS=/instagram|facebook|reddit|tripadvisor|youtube|linkedin|(?:^|\.)x\.com$|twitter|rocketreach|crunchbase|justdial|wikipedia|google\./
 export type ReservationLinkKind='widget'|'own_site'|'aggregator'|'other'
 function restaurantIdentity(restaurant:string){
@@ -318,6 +322,7 @@ function candidateScore(result:WebSearchResult,restaurant:string){
 
 function firstPartyRuleScore(result:WebSearchResult,restaurant:string){
   const url=String(result.url||'')
+  if(isReserveXHost(url)&&!publicReserveXVenue(url))return-100
   const h=host(url).toLowerCase()
   if(!h||/instagram|facebook|reddit|tripadvisor|zomato|swiggy|youtube|linkedin|x\.com|twitter/.test(h))return-100
   const title=String(result.title||'').toLowerCase()
