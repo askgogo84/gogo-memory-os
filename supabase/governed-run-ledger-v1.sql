@@ -17,15 +17,52 @@ create table public.gogo_governed_policies (
   month_tool_calls bigint not null check(month_tool_calls between 0 and 10000000),
   -- Row-lock privilege only; service_role cannot change any substantive policy.
   lock_pad boolean not null default false check(lock_pad=false),
+  require_actor_policy boolean not null default false check(scope_kind='workspace' or not require_actor_policy),
   primary key(scope_kind,scope_id),
   check ((scope_kind='personal' and scope_id ~ '^-?[1-9][0-9]{0,18}$') or
     (scope_kind='workspace' and scope_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
 );
+-- Optional enterprise hierarchy: operator-owned assignment and caps, pinned
+-- to each run. Workspace lock serializes both member and department usage.
+create table public.gogo_governed_departments (
+  scope_kind text not null default 'workspace' check(scope_kind='workspace'),
+  scope_id text not null,
+  department_id text not null check(department_id ~ '^[A-Za-z0-9_-]{1,80}$'),
+  enabled boolean not null default false,
+  valid_until timestamptz not null,
+  month_cost_micros bigint not null check(month_cost_micros between 0 and 9007199254740991),
+  month_tokens bigint not null check(month_tokens between 0 and 9007199254740991),
+  month_model_calls integer not null check(month_model_calls between 0 and 10000000),
+  month_tool_calls integer not null check(month_tool_calls between 0 and 10000000),
+  lock_pad boolean not null default false check(lock_pad=false),
+  primary key(scope_id,department_id),
+  foreign key(scope_kind,scope_id) references public.gogo_governed_policies(scope_kind,scope_id) on delete restrict
+);
+create table public.gogo_governed_workspace_actors (
+  scope_id text not null,
+  actor_id text not null check(actor_id ~ '^-?[1-9][0-9]{0,18}$'),
+  department_id text not null,
+  enabled boolean not null default false,
+  valid_until timestamptz not null,
+  month_cost_micros bigint not null check(month_cost_micros between 0 and 9007199254740991),
+  month_tokens bigint not null check(month_tokens between 0 and 9007199254740991),
+  month_model_calls integer not null check(month_model_calls between 0 and 10000000),
+  month_tool_calls integer not null check(month_tool_calls between 0 and 10000000),
+  lock_pad boolean not null default false check(lock_pad=false),
+  primary key(scope_id,actor_id),
+  foreign key(scope_id,department_id) references public.gogo_governed_departments(scope_id,department_id) on delete restrict
+);
+alter table public.gogo_governed_departments enable row level security;
+alter table public.gogo_governed_workspace_actors enable row level security;
+revoke all on public.gogo_governed_departments,public.gogo_governed_workspace_actors from public,anon,authenticated,service_role;
+grant select on public.gogo_governed_departments,public.gogo_governed_workspace_actors to service_role;
+grant update(lock_pad) on public.gogo_governed_departments,public.gogo_governed_workspace_actors to service_role;
 create table public.gogo_governed_runs (
   scope_kind text not null,
   scope_id text not null,
   run_id text not null check(run_id ~ '^[A-Za-z0-9_-]{1,128}$'),
   actor_id text not null check(actor_id ~ '^-?[1-9][0-9]{0,18}$'),
+  department_id text,
   period_start date not null,
   deadline_at timestamptz not null,
   max_cost_micros bigint not null check(max_cost_micros between 0 and 9007199254740991),
@@ -43,6 +80,8 @@ create table public.gogo_governed_runs (
   check(scope_kind<>'personal' or scope_id=actor_id)
 );
 create index gogo_governed_period_idx on public.gogo_governed_runs(scope_kind,scope_id,period_start);
+create index gogo_governed_actor_period_idx on public.gogo_governed_runs(scope_id,actor_id,period_start) where scope_kind='workspace';
+create index gogo_governed_department_period_idx on public.gogo_governed_runs(scope_id,department_id,period_start) where scope_kind='workspace';
 create table public.gogo_governed_attempts (
   scope_kind text not null, scope_id text not null, run_id text not null,
   attempt_id text not null check(attempt_id ~ '^[A-Za-z0-9_:-]{1,160}$'),
@@ -73,6 +112,8 @@ declare
   pol public.gogo_governed_policies%rowtype;
   t timestamptz;
   m date;
+  actor_policy public.gogo_governed_workspace_actors%rowtype;
+  department public.gogo_governed_departments%rowtype;
 begin
   if p_scope_kind is null or p_scope_kind not in ('personal','workspace') or p_scope_id is null or
     p_actor_id is null or p_actor_id !~ '^-?[1-9][0-9]{0,18}$' or
@@ -83,8 +124,16 @@ begin
   m:=date_trunc('month',t at time zone 'Asia/Kolkata')::date;
   select * into pol from public.gogo_governed_policies where scope_kind=p_scope_kind and scope_id=p_scope_id for share;
   if not found or not pol.enabled or pol.valid_until<=t then return 'unavailable'; end if;
-  insert into public.gogo_governed_runs(scope_kind,scope_id,run_id,actor_id,period_start,deadline_at,max_cost_micros,max_tokens,max_model_calls,max_tool_calls)
-    values(p_scope_kind,p_scope_id,p_run_id,p_actor_id,m,
+  if p_scope_kind='workspace' and pol.require_actor_policy then
+    select * into actor_policy from public.gogo_governed_workspace_actors where scope_id=p_scope_id and actor_id=p_actor_id for share;
+    if not found or not actor_policy.enabled or actor_policy.valid_until<=t then return 'unavailable'; end if;
+    select * into department from public.gogo_governed_departments where scope_id=p_scope_id and department_id=actor_policy.department_id for share;
+    if not found or not department.enabled or department.valid_until<=t then return 'unavailable'; end if;
+    perform 1 from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=p_actor_id and role::text in ('owner','admin','member','viewer') for share;
+    if not found then return 'unavailable'; end if;
+  end if;
+  insert into public.gogo_governed_runs(scope_kind,scope_id,run_id,actor_id,department_id,period_start,deadline_at,max_cost_micros,max_tokens,max_model_calls,max_tool_calls)
+    values(p_scope_kind,p_scope_id,p_run_id,p_actor_id,actor_policy.department_id,m,
     least(t+make_interval(secs=>pol.run_seconds),pol.valid_until,((m+interval '1 month') at time zone 'Asia/Kolkata')),
     pol.run_cost_micros,pol.run_tokens,pol.run_model_calls,pol.run_tool_calls) on conflict do nothing;
   if not found then return 'duplicate'; end if;
@@ -99,6 +148,10 @@ declare
   r public.gogo_governed_runs%rowtype;
   pol public.gogo_governed_policies%rowtype;
   totals record;
+  actor_policy public.gogo_governed_workspace_actors%rowtype;
+  department public.gogo_governed_departments%rowtype;
+  actor_totals record;
+  department_totals record;
 begin
   if p_scope_kind is null or p_scope_kind not in ('personal','workspace') or p_scope_id is null or
     p_kind is null or p_kind not in ('model','tool') or p_attempt_id is null or
@@ -123,6 +176,25 @@ begin
     or (p_kind='tool' and (r.tool_calls>=least(r.max_tool_calls,pol.run_tool_calls) or totals.tools>=pol.month_tool_calls)) then return 'steps'; end if;
   if r.charged_cost_micros+p_cost_micros>least(r.max_cost_micros,pol.run_cost_micros) or totals.cost+p_cost_micros>pol.month_cost_micros then return 'cost'; end if;
   if r.charged_tokens+p_tokens>least(r.max_tokens,pol.run_tokens) or totals.tokens+p_tokens>pol.month_tokens then return 'tokens'; end if;
+  -- Recheck membership, assignments and all caps while holding the same
+  -- workspace lock; a changed department cannot reset a member's spend.
+  if p_scope_kind='workspace' and (pol.require_actor_policy or r.department_id is not null) then
+    if not pol.require_actor_policy or r.department_id is null then return 'unavailable'; end if;
+    select * into actor_policy from public.gogo_governed_workspace_actors where scope_id=p_scope_id and actor_id=p_actor_id for share;
+    if not found or not actor_policy.enabled or actor_policy.valid_until<=clock_timestamp() or actor_policy.department_id<>r.department_id then return 'unavailable'; end if;
+    select * into department from public.gogo_governed_departments where scope_id=p_scope_id and department_id=r.department_id for share;
+    if not found or not department.enabled or department.valid_until<=clock_timestamp() then return 'unavailable'; end if;
+    perform 1 from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=p_actor_id and role::text in ('owner','admin','member','viewer') for share;
+    if not found then return 'unavailable'; end if;
+    select coalesce(sum(charged_cost_micros),0) as cost,coalesce(sum(charged_tokens),0) as tokens,coalesce(sum(model_calls),0) as models,coalesce(sum(tool_calls),0) as tools
+      into actor_totals from public.gogo_governed_runs where scope_kind='workspace' and scope_id=p_scope_id and actor_id=p_actor_id and period_start=r.period_start;
+    select coalesce(sum(charged_cost_micros),0) as cost,coalesce(sum(charged_tokens),0) as tokens,coalesce(sum(model_calls),0) as models,coalesce(sum(tool_calls),0) as tools
+      into department_totals from public.gogo_governed_runs where scope_kind='workspace' and scope_id=p_scope_id and department_id=r.department_id and period_start=r.period_start;
+    if actor_totals.cost+p_cost_micros>actor_policy.month_cost_micros or department_totals.cost+p_cost_micros>department.month_cost_micros then return 'cost'; end if;
+    if actor_totals.tokens+p_tokens>actor_policy.month_tokens or department_totals.tokens+p_tokens>department.month_tokens then return 'tokens'; end if;
+    if (p_kind='model' and (actor_totals.models>=actor_policy.month_model_calls or department_totals.models>=department.month_model_calls)) or
+       (p_kind='tool' and (actor_totals.tools>=actor_policy.month_tool_calls or department_totals.tools>=department.month_tool_calls)) then return 'steps'; end if;
+  end if;
   insert into public.gogo_governed_attempts(scope_kind,scope_id,run_id,attempt_id,kind,reserved_cost_micros,reserved_tokens)
     values(p_scope_kind,p_scope_id,p_run_id,p_attempt_id,p_kind,p_cost_micros,p_tokens);
   update public.gogo_governed_runs set charged_cost_micros=charged_cost_micros+p_cost_micros,

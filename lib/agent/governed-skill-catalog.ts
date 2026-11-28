@@ -13,6 +13,7 @@ export function skillQuery(text:string):string|null {
 }
 const personal=[...BUILTIN_SKILLS.map(x=>x.def).filter(d=>d.id==='people.brief'||d.id==='thread.reply'),...recoverySkillDefinitions()]
 const workspace:SkillDefinition[]=[
+  {id:'workspace.shared.reports',sopVersion:'1.0.0',title:'Explicitly shared workspace reports',purpose:'List the titles of reports still explicitly shared by current workspace members. No personal source or document contents are queried.',input:{},output:{},limits:{maxSteps:1,maxMinutes:1,maxCostPaise:0},requiredCapabilities:['files'],exactActionApproval:false,evidence:['ledger_row'],risk:'low',irreversible:false},
   {id:'workspace.orders.summary',sopVersion:'1.0.0',title:'Recorded orders and cancellations',purpose:'All-history recorded order totals and cancellations in the read-only hospitality workspace pilot.',input:{},output:{},limits:{maxSteps:1,maxMinutes:1,maxCostPaise:0},requiredCapabilities:['merchant'],exactActionApproval:false,evidence:['ledger_row'],risk:'low',irreversible:false},
   {id:'workspace.stock.summary',sopVersion:'1.0.0',title:'Recorded stock availability',purpose:'Recorded menu item availability across the member’s pilot outlets; not live POS status.',input:{},output:{},limits:{maxSteps:1,maxMinutes:1,maxCostPaise:0},requiredCapabilities:['merchant'],exactActionApproval:false,evidence:['ledger_row'],risk:'low',irreversible:false}
 ]
@@ -37,5 +38,5 @@ export async function personalSkillCatalog(query:string,permission:(c:AgentCapab
   return render(reviewed,query,allowed)
 }
 export function workspaceSkillCatalog(query:string,pilotEnabled:boolean,reviewed:readonly SkillDefinition[]=workspace):string{
-  return render(reviewed,query,new Set(pilotEnabled?reviewed.map(key):[]))
+  return render(reviewed,query,new Set(reviewed.filter(d=>pilotEnabled||d.id==='workspace.shared.reports').map(key)))
 }

@@ -1,5 +1,5 @@
 // The workspace lane retains tenant checks before and after every read.
-import { requireWorkspaceRole, WorkspaceError } from './access'
+import { requireWorkspaceRole, WorkspaceError, getWorkspaceDetail } from './access'
 import { askWorkspace, type WorkspaceAnswer } from './ask'
 import { openWorkspaceGovernedRuntime } from '@/lib/agent/governed-runtime'
 import { skillQuery, workspaceSkillCatalog } from '@/lib/agent/governed-skill-catalog'
@@ -19,7 +19,14 @@ export async function governedWorkspaceAsk(owner:string,id:string,question:strin
     const reviewed=await import('@/lib/agent/governed-review-store').then(m=>m.reviewedCatalogDefinitions(owner,{kind:'workspace',id}))
     return {answer:workspaceSkillCatalog(query||'',row.data.pilot_read_only===true,reviewed),source:{label:'Scoped skill catalog · reviewed descriptions',checkedAt:new Date().toISOString(),firstRecordAt:null,lastRecordAt:null}}
   }
-  const r=await runtime.local(query!==null?'workspace_skill_catalog':'workspace_recorded_ask',query!==null?readCatalog:()=>askWorkspace(owner,id,question),()=>Date.now()<deadline)
+  const shared=/^(?:show|list)(?: explicitly)? shared (?:reports|artifacts)[.!?]?$/i.test(question.trim())
+  const readShared=async():Promise<WorkspaceAnswer>=>{
+    const detail=await getWorkspaceDetail(owner,id)
+    if(detail.id!==id)throw new WorkspaceError('workspace_forbidden')
+    const titles=detail.artifacts.slice(0,50).map(a=>String(a.title||'Untitled').replace(/[\r\n\x00-\x1f]/g,' ').slice(0,140))
+    return {answer:titles.length?['Reports explicitly shared in this workspace (titles only; contents not read):',...titles.map(t=>'• '+t),...(detail.artifacts.length>50?['More shared reports are available on the workspace page.']:[])].join('\n'):'No currently shared reports were found in this workspace.',source:{label:'Authorized workspace share records · titles only',checkedAt:new Date().toISOString(),firstRecordAt:null,lastRecordAt:null}}
+  }
+  const r=await runtime.local(query!==null?'workspace_skill_catalog':shared?'workspace_shared_reports':'workspace_recorded_ask',query!==null?readCatalog:shared?readShared:()=>askWorkspace(owner,id,question),()=>Date.now()<deadline)
   await requireWorkspaceRole(owner,id,'view')
   return r.state==='completed'?r.value:unavailable()
 }

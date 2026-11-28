@@ -37,5 +37,5 @@ const fast = await processLearningPass({ events, budgetMs: 5000, generate: async
 eq([fast.processed, fast.deferred], [80, 0], 'with quick users every considered user is worked')
 
 const route = readFileSync(new URL('../app/api/cron/agent-learning/route.ts', import.meta.url), 'utf8')
-ok(/processLearningPass\(\{ budgetMs: 40_000 \}\)/.test(route) && /Date\.now\(\) - started < 60_000 - 12_000/.test(route) && /export const maxDuration = 60/.test(route), 'the cron gives learning 40 s and runs semantic sync only with 12 s to spare')
+ok(/processLearningPass\(\{ budgetMs: Math\.max\(1000,40_000-\(Date\.now\(\)-started\)\) \}\)/.test(route) && /Date\.now\(\) - started < 60_000 - 12_000/.test(route) && /export const maxDuration = 60/.test(route), 'the cron gives learning 40 s and runs semantic sync only with 12 s to spare')
 console.log(`AGENT_LEARNING_BUDGET_OK ${checks} checks`)

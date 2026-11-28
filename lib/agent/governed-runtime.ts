@@ -115,7 +115,7 @@ export function makeGovernedRuntime(scope:GovernedScope,d:Deps):GovernedRuntime 
     async local(operation,execute,inTime){
       // Only verified DB-only paths. A provider/tool without a bounded billing
       // adapter is blocked; it must never be treated as a zero-cost operation.
-      const allowed=s.kind==='personal'?(operation==='events_list'||operation==='personal_skill_catalog'):(operation==='workspace_recorded_ask'||operation==='workspace_skill_catalog')
+      const allowed=s.kind==='personal'?(operation==='events_list'||operation==='personal_skill_catalog'):(operation==='workspace_recorded_ask'||operation==='workspace_skill_catalog'||operation==='workspace_shared_reports')
       if(!allowed)return denied('unpriced_tool')
       return runGovernedAttempt({scope:s,attempt:{id:d.nextAttempt(),kind:'tool',ceiling:{tokens:0,costMicrosInr:0}},rpc:d.rpc,
         authorize:()=>current(inTime),

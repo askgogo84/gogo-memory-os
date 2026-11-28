@@ -13,7 +13,7 @@ function rupees(v:string):string{
 }
 type Change={action:'publish'|'rollback';skillId:string;revisionId?:string;expectedGeneration:number;expectedDigest:string}
 
-const button='min-h-10 rounded-xl border border-[#36524d] bg-[#132a27] px-3 py-2 text-sm font-medium text-[#85d9cc] disabled:cursor-not-allowed disabled:opacity-45'
+const button='min-h-10 rounded-xl border border-[#24433e] bg-[#132a27] px-3 py-2 text-sm font-medium text-[#77d2c4] disabled:cursor-not-allowed disabled:opacity-45'
 const humanError=(code:string)=>code==='scope_forbidden'?'Your current role cannot review this scope.':code==='stale_revision'?'The revision changed since you opened this page. Refresh to verify it.':code==='unreviewed_revision'?'The exact revision no longer has the required independent receipts.':code==='invalid_revision'?'The requested revision could not be verified.':'The review store is unavailable. No change has been confirmed.'
 
 export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
@@ -59,16 +59,16 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
       if(n===sequence.current){setSnapshot(null);setError(e instanceof Error?e.message:'Outcome not confirmed. Refresh to verify before retrying.')}
     }finally{locked.current=false;if(n===sequence.current)setBusy(false)}
   }
-  return <section aria-label="Governed skill review" className="mt-6 space-y-4 rounded-2xl border border-[#303c39] bg-[#121817] p-4 sm:p-5">
+  return <section aria-label="Governed skill review" className="mt-6 space-y-4 rounded-2xl border border-[#262626] bg-[#141a19] p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 className="text-lg font-semibold text-[#f2efea]">Skill review &amp; history</h2><p className="mt-1 text-sm leading-relaxed text-[#a8a8a4]">Review independently tested descriptions for this scope. Publishing never changes executable code, permissions or approval requirements.</p></div>
       <button type="button" className={button} disabled={busy} onClick={()=>{setNotice('');void load()}}>Refresh</button>
     </div>
     {busy&&<p role="status" className="text-sm text-[#a8a8a4]">Checking the review store…</p>}
-    {notice&&!busy&&<p role="status" className="text-sm text-[#85d9cc]">{notice}</p>}
-    {error&&<p role="alert" className="text-sm text-[#e6be7e]">{error}</p>}
-    {snapshot&&!snapshot.buildVerified&&<p className="text-sm text-[#e6be7e]">The running build has no verified commit identity. Publication is disabled.</p>}
-    {snapshot&&<div className="space-y-2 rounded-xl border border-[#303c39] p-3">
+    {notice&&!busy&&<p role="status" className="text-sm text-[#77d2c4]">{notice}</p>}
+    {error&&<p role="alert" className="text-sm text-[#e4c17b]">{error}</p>}
+    {snapshot&&!snapshot.buildVerified&&<p className="text-sm text-[#e4c17b]">The running build has no verified commit identity. Publication is disabled.</p>}
+    {snapshot&&<div className="space-y-2 rounded-xl border border-[#262626] p-3">
       <h3 className="text-sm font-semibold text-[#f2efea]">Scope budget · IST month</h3>
       {snapshot.budget?<><p className="text-xs text-[#a8a8a4]">Month beginning {snapshot.budget.periodStart} · conservative ledger charges, not provider invoices.</p>
         <div className="grid grid-cols-2 gap-3 text-sm text-[#f2efea]">
@@ -79,16 +79,16 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
           <div><p className="text-xs text-[#a8a8a4]">Unresolved attempts, all periods</p>{snapshot.budget.unresolved} · {rupees(snapshot.budget.unresolvedCostMicros)} held</div>
           <div><p className="text-xs text-[#a8a8a4]">Recent memory denials</p>{snapshot.budget.recentMemoryBlocks}</div>
         </div>
-        {(!snapshot.budget.enabled||snapshot.budget.overrun||snapshot.budget.unresolved!=='0')&&<p role="status" className="text-xs text-[#e6be7e]">Budget execution is disabled, breached, or awaiting reconciliation. Check the operator ledger before another attempt.</p>}
+        {(!snapshot.budget.enabled||snapshot.budget.overrun||snapshot.budget.unresolved!=='0')&&<p role="status" className="text-xs text-[#e4c17b]">Budget execution is disabled, breached, or awaiting reconciliation. Check the operator ledger before another attempt.</p>}
       </>:<p className="text-xs text-[#a8a8a4]">Usage totals could not be verified.</p>}
     </div>}
-    {!!snapshot?.learningCandidates?.length&&<div className="space-y-2 rounded-xl border border-[#303c39] p-3">
+    {!!snapshot?.learningCandidates?.length&&<div className="space-y-2 rounded-xl border border-[#262626] p-3">
       <h3 className="text-sm font-semibold text-[#f2efea]">Evidence-driven improvement candidates</h3>
       <p className="text-xs text-[#a8a8a4]">Distinct verified and failed/corrected decisions identified a recurring recovery pattern. These are engineering suggestions; no skill changed or received approval.</p>
-      {snapshot.learningCandidates.map(c=><div key={c.skill_id} className="text-sm text-[#b8b8b5]">{c.skill_id} · {c.positive_count} verified outcomes · {c.negative_count} failed, corrected or uncertain outcomes</div>)}
+      {snapshot.learningCandidates.map(c=><div key={c.skill_id} className="text-sm text-[#b7b7b7]">{c.skill_id} · {c.positive_count} verified outcomes · {c.negative_count} failed, corrected or uncertain outcomes</div>)}
     </div>}
     {snapshot?.items.length===0&&<p className="text-sm text-[#a8a8a4]">No skill descriptions are registered in this scope.</p>}
-    {snapshot?.items.map(skill=><article key={skill.skillId} className="space-y-3 rounded-xl border border-[#303c39] p-3">
+    {snapshot?.items.map(skill=><article key={skill.skillId} className="space-y-3 rounded-xl border border-[#262626] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h3 className="text-sm font-semibold text-[#f2efea]">{skill.skillId}</h3><p className="mt-1 text-xs text-[#a8a8a4]">Active version: {skill.activeVersion||'unverified'} · revision generation {skill.generation}</p></div>
         {skill.canRestore&&<button type="button" className={button} disabled={busy||!snapshot.buildVerified} onClick={()=>setConfirm({change:{action:'rollback',skillId:skill.skillId,expectedGeneration:skill.generation,expectedDigest:skill.activeDigest},label:'Restore the built-in description for '+skill.skillId})}>Restore built-in</button>}
@@ -97,9 +97,9 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
       {skill.proposals.map(p=>{
         const active=p.id===skill.activeRevisionId
         const eligible=p.reviewed&&!p.selfAuthored&&p.baseDigest===skill.activeDigest&&!active&&!!skill.activeVersion&&snapshot.buildVerified
-        return <div key={p.id} className="space-y-2 rounded-lg border border-[#27332f] p-3">
+        return <div key={p.id} className="space-y-2 rounded-lg border border-[#24433e] p-3">
           <div className="flex flex-wrap justify-between gap-2"><span className="text-sm font-medium text-[#f2efea]">{p.title} · v{p.version}</span><span className="text-xs text-[#a8a8a4]">{active?'Active':p.reviewed?'Independent receipts present':'Not independently reviewed'}</span></div>
-          <p className="text-sm leading-relaxed text-[#b8b8b5]">{p.purpose}</p><p className="text-xs text-[#a8a8a4]">{p.summary}</p>
+          <p className="text-sm leading-relaxed text-[#b7b7b7]">{p.purpose}</p><p className="text-xs text-[#a8a8a4]">{p.summary}</p>
           <button type="button" className={button} disabled={busy||!eligible} onClick={()=>setConfirm({change:{action:'publish',skillId:skill.skillId,revisionId:p.id,expectedGeneration:skill.generation,expectedDigest:skill.activeDigest},label:'Publish '+p.title+' v'+p.version})}>Review &amp; publish</button>
         </div>
       })}
