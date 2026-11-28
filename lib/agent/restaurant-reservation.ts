@@ -43,21 +43,26 @@ function explicitClock(raw:string){
 const NAME_STOP='(?=\\s+(?:for\\s+(?:a\\s+)?(?:party\\s+of\\s+)?\\d{1,2}|between\\s+\\d|at\\s+\\d|on\\s+|this\\s+|next\\s+|coming\\s+|today|tomorrow|tonight|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\\b|[,.!?]|$)'
 const GENERIC_NAME=/^(?:a\s+|an\s+|the\s+)?(?:table|reservation|booking|seat|seats|dinner|lunch|brunch)$/i
 
+// A time/date is not a venue, even when it follows "table for N at".
+function temporalVenue(value:string){
+  return /^(?:\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|(?:noon|midnight|today|tomorrow|tonight|around|about|between|only)\b)/i.test(value.trim())
+}
+
 function restaurantName(text:string){
   const raw=String(text||'').replace(/https?:\/\/\S+/gi,' ').replace(/\s+/g,' ').trim()
   // "Book a table for 4 at Toit Indiranagar this Friday" -> "Toit Indiranagar" (live run 10 Oct read "table").
   const atName=raw.match(new RegExp('\\b(?:table|reservation|booking|seats?)\\b(?:\\s+for\\s+(?:a\\s+party\\s+of\\s+)?\\d{1,2}(?:\\s+(?:people|persons?|guests?|pax))?)?\\s+(?:at|in)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
-  if(atName&&!GENERIC_NAME.test(atName.trim()))return safe(atName,160)
+  if(atName&&!GENERIC_NAME.test(atName.trim())&&!temporalVenue(atName))return safe(atName,160)
   // 20 Oct live: "Book a table for 2 Saturday 8pm at District 6 near Orion mall" asked "Which restaurant?":
   // the date and time sat between "table for 2" and "at <venue>". A reservation ask whose venue follows a
   // later "at <Name>" (not "at 8pm") keeps the name, without the "near …" landmark.
   if(/\b(?:table|reservation|reserve|book)\b/i.test(raw)){
     const later=raw.match(new RegExp('\\bat\\s+(?:the\\s+)?(?!\\d)(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP))?.[1]
-    if(later&&!GENERIC_NAME.test(later.trim()))return safe(later,160)
+    if(later&&!GENERIC_NAME.test(later.trim())&&!temporalVenue(later))return safe(later,160)
   }
   const direct=raw.match(new RegExp('\\b(?:book|reserve)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
   const cleaned=direct?direct.replace(/^(?:a|an)\s+(?:table\s+at\s+)?/i,'').replace(/^table\s+at\s+/i,'').trim():''
-  if(cleaned&&!GENERIC_NAME.test(cleaned))return safe(cleaned,160)
+  if(cleaned&&!GENERIC_NAME.test(cleaned)&&!temporalVenue(cleaned))return safe(cleaned,160)
   return ''
 }
 
@@ -247,6 +252,16 @@ const INDIA_BOOKING_HOSTS=/(?:^|\.)(?:district\.in|eazydiner\.com|zomato\.com|di
 // outranks every aggregator; aggregators are only the fallback.
 // The live widget host is widget.reservego.co (19 Oct); .com kept for older links.
 const FIRST_PARTY_WIDGET_HOSTS=/(?:^|\.)reservego\.co(?:m)?$/
+// ReserveX public venue links use /r/<venue UUID>. /manage/ links are private
+// reservation capabilities: never discover, open, rank or echo them as booking pages.
+function publicReserveXVenue(url:string){
+  try{
+    const u=new URL(url)
+    return u.protocol==='https:'&&u.hostname==='reservex.explorex.co.in'&&!u.username&&!u.password&&!u.port
+      &&/^\/r\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/?$/i.test(u.pathname)&&!u.search&&!u.hash
+  }catch{return false}
+}
+function isReserveXHost(url:string){return host(url).toLowerCase()==='reservex.explorex.co.in'}
 const NON_BOOKING_HOSTS=/instagram|facebook|reddit|tripadvisor|youtube|linkedin|(?:^|\.)x\.com$|twitter|rocketreach|crunchbase|justdial|wikipedia|google\./
 export type ReservationLinkKind='widget'|'own_site'|'aggregator'|'other'
 function restaurantIdentity(restaurant:string){
@@ -256,6 +271,7 @@ function restaurantIdentity(restaurant:string){
 export function reservationLinkKind(url:string,restaurant:string):ReservationLinkKind{
   const h=host(url).toLowerCase()
   if(!h)return'other'
+  if(isReserveXHost(url))return publicReserveXVenue(url)?'widget':'other'
   if(FIRST_PARTY_WIDGET_HOSTS.test(h))return'widget'
   if(INDIA_BOOKING_HOSTS.test(h))return'aggregator'
   if(NON_BOOKING_HOSTS.test(h))return'other'
@@ -266,6 +282,7 @@ export function rankReservationCandidates(results:WebSearchResult[]|null|undefin
   const seen=new Set<string>()
   return (results||[])
     .filter(r=>/^https?:\/\//i.test(String(r.url||'')))
+    .filter(r=>!isReserveXHost(String(r.url))||publicReserveXVenue(String(r.url)))
     .filter(r=>{const key=String(r.url).replace(/[#?].*$/,'').replace(/\/+$/,'').toLowerCase();if(seen.has(key))return false;seen.add(key);return true})
     .map(r=>({url:String(r.url),title:safe(r.title||restaurant,220),kind:reservationLinkKind(String(r.url),restaurant),score:candidateScore(r,restaurant)}))
     .sort((a,b)=>b.score-a.score)
@@ -278,8 +295,16 @@ function candidateScore(result:WebSearchResult,restaurant:string){
   const hits=tokens.filter(t=>title.includes(t)||snippet.includes(t)||url.includes(t)).length
   if(!tokens.length||hits===0)return -100
   if(!resultInPlace(`${title} ${snippet} ${url}`,resolveIndiaPlace(restaurant)))return -100
+  const kind=reservationLinkKind(String(result.url||''),restaurant)
+  if(kind==='other')return -100
+  // Locality and generic venue words alone do not establish identity. Require at
+  // least one distinctive requested name in the title/host, not just a snippet
+  // mentioning many nearby places. A requested bar must not silently become a cafe.
+  const identity=restaurantIdentity(restaurant).filter(t=>!['road','street','layout','nagar','coffee','and'].includes(t)).slice(0,1)
+  const titled=title+' '+host(String(result.url||'')).toLowerCase()
+  if(!identity.length||!identity.some(t=>new RegExp('(?:^|[^a-z0-9])'+t+'(?:$|[^a-z0-9])','i').test(titled)||host(String(result.url||'')).toLowerCase().replace(/[^a-z0-9]/g,'').includes(t)))return -100
+  if(/\bbar\b/i.test(restaurant)&&!/\bbar\b/i.test(title+' '+url))return -100
   let score=hits*4
-  const kind=reservationLinkKind(url,restaurant)
   if(kind==='widget')score+=30
   else if(kind==='own_site')score+=22
   else if(kind==='aggregator')score+=10
@@ -349,28 +374,33 @@ async function findBookingOptions(intent:RestaurantReservationIntent,connectedSi
   const options=engine.collectBookingOptions(scored.map(c=>({url:c.url,title:c.title,snippet:String(byUrl.get(c.url)?.snippet||'')})),connectedSiteIds)
   return typeof engine.enrichOffersFromListings==='function'?engine.enrichOffersFromListings(options):options
 }
-async function discoverProvider(intent:RestaurantReservationIntent):Promise<ReservationProvider|null>{
-  if(intent.sourceUrl)return{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url',firstParty:reservationLinkKind(intent.sourceUrl,intent.restaurant)!=='aggregator'}
-  if(!intent.restaurant)return null
+async function discoverProviders(intent:RestaurantReservationIntent):Promise<ReservationProvider[]>{
+  if(intent.sourceUrl){
+    if(isReserveXHost(intent.sourceUrl)&&!publicReserveXVenue(intent.sourceUrl))return []
+    return [{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url',firstParty:reservationLinkKind(intent.sourceUrl,intent.restaurant)!=='aggregator'}]
+  }
+  if(!intent.restaurant)return []
   const known=KNOWN_RESERVATION_PROVIDERS[intent.restaurant.toLowerCase().replace(/\s+/g,' ').trim()]
-  if(known)return{url:known.url,title:intent.restaurant,source:'known_provider_page',location:known.location||null,firstParty:true}
+  if(known)return [{url:known.url,title:intent.restaurant,source:'known_provider_page',location:known.location||null,firstParty:true}]
   const place=resolveIndiaPlace(intent.restaurant)
   const city=place.city&&!intent.restaurant.toLowerCase().includes(place.city.toLowerCase())?place.city+' ':''
-  // First-party first: the restaurant's own booking widget (ReserveGo) or its own site's Reserve page.
-  // The old single query named District and EazyDiner, so aggregators were all it ever found.
-  const firstPartyResults=await searchWebResults(`${intent.restaurant} ${city}reservego reserve a table`).catch(()=>[] as WebSearchResult[])
-  let ranked=rankReservationCandidates(firstPartyResults,intent.restaurant)
-  const firstPartyTop=(r:typeof ranked)=>r[0]&&r[0].score>0&&(r[0].kind==='widget'||r[0].kind==='own_site')
-  if(!firstPartyTop(ranked)){
-    const fallback=await searchWebResults(`${intent.restaurant} ${city}India book a table District EazyDiner`)
-    ranked=rankReservationCandidates([...(firstPartyResults||[]),...(fallback||[])],intent.restaurant)
-  }
-  const top=ranked[0]
-  // A listing's reviews/menu/photos page is not where a table is booked (10 Oct retest opened
-  // eazydiner.com/.../toit-indiranagar-330151/reviews). Use the restaurant's main listing page.
+  // Preserve the existing first-party query, but also search without a vendor
+  // assumption. Discover public booking pages from the venue's own name/location.
+  const query=intent.restaurant+' '+city
+  const batches=await Promise.all([
+    searchWebResults(query+'reservego reserve a table').catch(()=>[] as WebSearchResult[]),
+    searchWebResults(query+'official restaurant reserve a table online booking').catch(()=>[] as WebSearchResult[]),
+    searchWebResults(query+'India book a table District EazyDiner Swiggy Dineout').catch(()=>[] as WebSearchResult[]),
+  ])
+  const ranked=rankReservationCandidates(batches.flatMap(r=>r||[]),intent.restaurant).filter(c=>c.score>0&&c.kind!=='other')
   const bookingUrl=(url:string)=>{try{const u=new URL(url);if(INDIA_BOOKING_HOSTS.test(u.hostname.replace(/^www\./,''))){u.pathname=u.pathname.replace(/\/(?:reviews?|menu|photos?|gallery|info|order-online|overview)\/?$/i,'');u.search=''}return u.toString()}catch{return url}}
-  // A first-party widget URL is kept exactly: its query can carry the restaurant id.
-  return top&&top.score>0?{url:top.kind==='aggregator'?bookingUrl(top.url):top.url,title:top.title,source:'web_search',location:null,firstParty:top.kind==='widget'||top.kind==='own_site'}:null
+  const seen=new Set<string>()
+  return ranked.flatMap(c=>{
+    const url=c.kind==='aggregator'?bookingUrl(c.url):c.url
+    if(seen.has(url))return []
+    seen.add(url)
+    return [{url,title:c.title,source:'web_search',location:null,firstParty:c.kind==='widget'||c.kind==='own_site'}]
+  }).slice(0,5)
 }
 
 // ---- Live slot read (Instinct-style): read the first-party widget for the requested date/party/time ----
@@ -514,7 +544,7 @@ async function savePendingSlotStep(p:{actor:AgentActor;text:string;intent:Restau
 
 function slotReadObjective(intent:RestaurantReservationIntent){
   const when=intent.preferredStart&&intent.preferredEnd?(intent.preferredStart===intent.preferredEnd?` around ${intent.preferredStart}`:` between ${intent.preferredStart} and ${intent.preferredEnd}`):''
-  return `Read the live table availability at ${intent.restaurant} for ${intent.partySize} guests on ${intent.requestedDate}${when} (Asia/Kolkata). If this is the restaurant's own site, open its Reserve or Book a table link to its booking widget. In the booking widget, choose the date ${intent.requestedDate} and ${intent.partySize} guests (choosing a date or guest count books nothing), then report the selected date and every time slot shown as available for that date. Do not enter a name, phone or email, do not press Reserve, Book or Confirm, do not sign in, submit or pay.`
+  return `Read the live table availability at ${intent.restaurant} for ${intent.partySize} guests on ${intent.requestedDate}${when} (Asia/Kolkata). If this is the restaurant's own site, open its Reserve or Book a table link to its booking widget. In the booking widget, choose the date ${intent.requestedDate} and ${intent.partySize} guests (choosing a date or guest count books nothing), select the relevant meal/service period if offered (not a booking submission), then report the selected date, guest count and individual selectable time slots. Do not report opening hours or service-period ranges as available slots. Do not enter a name, phone or email, do not press Reserve, Book or Confirm, do not sign in, submit or pay.`
 }
 
 export type ReservationRelease={
@@ -888,9 +918,10 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   if(!intent.partySize){
     return askReservationDetail(params.actor,params.text,intent,'party',`How many people should I book at ${intent.restaurant} for?`)
   }
-  let provider=await discoverProvider(intent)
+  const providers=await discoverProviders(intent)
+  let provider=providers[0]
   if(!provider){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I could not verify an official reservation page for ${intent.restaurant}. Send me the booking link and I will keep the reservation objective intact.`}
+    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I couldn't verify a public booking page for ${intent.restaurant} after checking multiple routes. Nothing was booked. I can also prepare a restaurant phone call for your approval if you want me to try that.`}
   }
   const timezone=await actorTimezone(params.actor)
   // A specific dining date is a live-slot read on the booking widget (Instinct-style); otherwise the
@@ -964,19 +995,29 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     if(!connected)return connectFirst()
   }
   let inspected:Awaited<ReturnType<typeof runSecureBrowser>>
-  try{
-    inspected=await runSecureBrowser({
+  const readDeadline=Date.now()+165_000
+  const inspectProvider=(candidate:ReservationProvider,publicOnly=false)=>runSecureBrowser({
       userId:params.actor.userId,
-      url:provider.url,
-      mode:'read',
+      url:candidate.url,
+      mode:'read',readDeadline,...(publicOnly?{publicOnly:true}:{}),
       objective:slotMode?slotReadObjective(intent):`Read only the live reservation state and booking-release rules for ${intent.restaurant}. Determine whether bookings are open, sold out, or scheduled to open later. Capture any explicit next-open date and recurring release weekday/time. Do not sign in, fill personal details, reserve, submit, pay, or change anything.`,
     })
+  try{
+    inspected=await inspectProvider(provider)
   }catch(error:any){
     if(error?.message==='browser_handoff_in_use')return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:await (await import('./browser-auth-notice')).browserHandoffInUseReply(params.actor.legacyTelegramId)}
     console.error('RESTAURANT_SLOT_READ_FAILED:',safe(error?.message||error,160))
     // A signed-in booking app that times out is almost always waiting at its sign-in/code screen.
     if(signInSite){await markSignInForReconnect();return connectFirst()}
-    return unreadable()
+    // Only a definite failed read may switch to a different public first-party
+    // route. Never retry a mutation, an auth block, or the same URL.
+    const alternative=slotMode&&!intent.sourceUrl&&error?.message==='browser_objective_unverified'&&readDeadline-Date.now()>60_000
+      ?providers.find(c=>c.firstParty&&c.url!==provider.url&&!bookingEngine?.signedInBookingSiteForUrl?.(c.url)):undefined
+    if(!alternative)return unreadable()
+    try{
+      inspected=await inspectProvider(alternative,true)
+      provider=alternative
+    }catch{return unreadable()}
   }
   // A sign-in wall on a signed-in booking app means the saved sign-in ended: ask to connect again, never guess.
   if(inspected.status==='blocked'){
