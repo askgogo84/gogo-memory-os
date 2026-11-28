@@ -27,7 +27,7 @@ import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { isJobScanNow, jobScanQuery } from './jobs'
 import { nearbyRewrite, placeAsk } from './places-search'
-import { SONNET_MODEL, forModel, isAdaptiveOnlyModel, textOf, TOOL_REQUIRED_NOTE } from '@/lib/services/model-ids'
+import { SONNET_MODEL, forModel, isAdaptiveOnlyModel, isRetiredSonnet45, resolveSonnetModel, textOf, TOOL_REQUIRED_NOTE } from '@/lib/services/model-ids'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -46,7 +46,7 @@ export type BrainContext = {
   timezone: string
 }
 
-const MODEL = () => process.env.GOGO_BRAIN_MODEL || SONNET_MODEL
+const MODEL = () => resolveSonnetModel(process.env.GOGO_BRAIN_MODEL, SONNET_MODEL)
 // 4 Nov (owner approved): a cheaper first pass. With GOGO_BRAIN_FAST=on, Haiku 5.5 decides first. Its routing decisions
 // (hand to a handler, flight, later) are used as they are; when it would write the reply itself, or fails, the main
 // model (Sonnet) decides instead, so replies keep today's quality. Off by default until the admin console shows
@@ -844,7 +844,7 @@ export function estimateCostUsd(model: string, u: BrainUsage): number | null {
 export function shadowModels(env: Record<string, string | undefined> = (globalThis as any).process?.env || {}): string[] {
   const raw = String(env.GOGO_BRAIN_SHADOW ?? (env.VERCEL_ENV === 'production' ? 'claude-haiku-5-5' : '')).trim()
   if (!raw || raw.toLowerCase() === 'off') return []
-  return raw.split(',').map(x => x.trim()).filter(x => /^claude-[a-z0-9.-]+$/.test(x)).slice(0, 2)
+  return raw.split(',').map(x => x.trim()).filter(x => /^claude-[a-z0-9.-]+$/.test(x) && !isRetiredSonnet45(x)).slice(0, 2)
 }
 
 const norm = (t: string) => clean(t, 600).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')

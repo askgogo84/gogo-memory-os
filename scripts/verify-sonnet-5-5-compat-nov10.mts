@@ -2,7 +2,7 @@
 // Rules from Anthropic's Sonnet 5.5 migration guide (thinking default on, sampling params / forced tool_choice /
 // thinking:disabled / prefill → 400). No network: a fake client records what would be sent.
 import assert from 'node:assert/strict'
-import { forModel, textOf, isAdaptiveOnlyModel, TOOL_REQUIRED_NOTE } from '../lib/services/model-ids.ts'
+import { forModel, textOf, isAdaptiveOnlyModel, resolveSonnetModel, TOOL_REQUIRED_NOTE } from '../lib/services/model-ids.ts'
 let n = 0; const ok = (c: unknown, m: string) => { assert.ok(c, m); n++ }
 
 // 1. textOf: thinking-first responses (the 10 Nov empty-reply incident) still yield the text.
@@ -25,6 +25,11 @@ for (const m of ['claude-sonnet-4-5', 'claude-haiku-5-5', 'claude-haiku-4-5']) {
   ok(forModel(same) === same && !isAdaptiveOnlyModel(m), `${m} passes through unchanged`)
 }
 ok(isAdaptiveOnlyModel('claude-sonnet-5-5') && isAdaptiveOnlyModel('claude-sonnet-5-5-20261001'), 'dated ids are recognised')
+for (const model of [undefined, ' ', 'claude-sonnet-4-5', ' claude-sonnet-4-5-20250929 ']) {
+  ok(resolveSonnetModel(model) === 'claude-sonnet-5-5', 'blank or retired Sonnet configuration uses 5.5')
+}
+ok(resolveSonnetModel(undefined, 'claude-sonnet-4-6') === 'claude-sonnet-4-6', 'an unset brain override inherits the configured shared model')
+ok(resolveSonnetModel(' claude-haiku-5-5 ') === 'claude-haiku-5-5', 'an intentional model override is preserved and trimmed')
 
 // 3. Brain: what is sent, and how each answer shape is read.
 const brain = await import('../lib/agent/brain.ts')
@@ -32,6 +37,16 @@ const ctx: any = { turns: [{ role: 'user', content: 'hello' }, { role: 'assistan
 const sent: any[] = []
 const client = (content: any[]) => ({ messages: { create: async (body: any) => { sent.push(body); return { content, usage: { input_tokens: 10, output_tokens: 5 } } } } }) as any
 const noMeter = () => {}
+const originalBrainModel = process.env.GOGO_BRAIN_MODEL
+try {
+  process.env.GOGO_BRAIN_MODEL = 'claude-sonnet-4-5-20250929'
+  await brain.decide({ text: 'hi', ctx, client: client([{ type: 'text', text: 'Hi' }]), meter: noMeter })
+  ok(sent.at(-1).model === 'claude-sonnet-5-5' && sent.at(-1).tool_choice.type === 'auto', 'the actual Brain uses the compatible model with a stale override')
+} finally {
+  if (originalBrainModel === undefined) delete process.env.GOGO_BRAIN_MODEL
+  else process.env.GOGO_BRAIN_MODEL = originalBrainModel
+}
+ok(brain.shadowModels({ GOGO_BRAIN_SHADOW: 'claude-sonnet-4-5,claude-sonnet-4-5-20250929,claude-haiku-5-5' }).join(',') === 'claude-haiku-5-5', 'shadow traffic excludes retired models')
 // 5.5 calls a tool
 let d: any = await brain.decide({ text: 'remind me to call Divya at 5', ctx, client: client([{ type: 'thinking', thinking: '', signature: 's' }, { type: 'tool_use', name: 'handle', input: { instruction: 'remind me to call Divya at 5' } }]), model: 'claude-sonnet-5-5', meter: noMeter })
 ok(d.kind === 'handle', `5.5 tool call after a thinking block is used (got ${d.kind}${d.reason ? ':' + d.reason : ''})`)
