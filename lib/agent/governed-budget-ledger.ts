@@ -26,7 +26,7 @@ export async function runGovernedAttempt<T>(p:{
   try{if(await p.authorize()!==true)return{state:'blocked',reason:'not_authorized'}}catch{return{state:'blocked',reason:'authorization_unavailable'}}
   let result:unknown
   try{result=await call('gogo_reserve_governed_attempt',{p_kind:a.kind,p_cost_micros:a.ceiling.costMicrosInr,p_tokens:a.ceiling.tokens})}catch{return{state:'blocked',reason:'reservation_unavailable'}}
-  if(result!=='reserved')return{state:'blocked',reason:typeof result==='string'&&['invalid','unavailable','breach','deadline','duplicate','steps','cost','tokens'].includes(result)?result:'reservation_unavailable'}
+  if(result!=='reserved')return{state:'blocked',reason:typeof result==='string'&&['invalid','unavailable','breach','deadline','duplicate','steps','cost','tokens','unresolved'].includes(result)?result:'reservation_unavailable'}
   // Recheck immediately before dispatch. If revoked, do not execute. A failed
   // release is conservative: the reservation remains charged, and no replay is allowed.
   let permitted=false
