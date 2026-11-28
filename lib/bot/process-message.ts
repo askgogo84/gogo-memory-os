@@ -2088,6 +2088,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // Save only the literal current user's explicit fact, not the generated text.
     const fact = explicitMemoryFact(incomingText, Boolean(params.internalStep))
     if (!fact || isSecretShapedMemory(fact)) {
+      // Record only a bounded no-content denial receipt for an opted-in
+      // selected owner. Never persist parsed.fact or a hash of its text.
+      const env=(globalThis as any).process?.env||{}
+      if(env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(resolvedUser.telegramId))){
+        await import('@/lib/agent/governed-memory').then(m=>m.recordPersonalMemoryBlock(String(resolvedUser.telegramId),fact?'secret_rejected':'untrusted_directive')).catch(()=>false)
+      }
       finalReply = "I haven't saved a new memory. To save a non-sensitive fact, say ‘Remember that …’ in your own message."
     } else {
       await saveMemory(resolvedUser.telegramId, fact)

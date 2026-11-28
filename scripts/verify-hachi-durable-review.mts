@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict'
+import {readFileSync} from 'node:fs'
+import {PGlite} from '@electric-sql/pglite'
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
+const {catalogBaseDefinitions,personalSkillCatalog,workspaceSkillCatalog}=await import('../lib/agent/governed-skill-catalog')
+const {skillRevisionDigest}=await import('../lib/agent/governed-learning')
+const {revisionDefinition,verifiedRevisionReceipts}=await import('../lib/agent/governed-review-store')
+const ws='00000000-0000-4000-8000-000000000001',otherWs='00000000-0000-4000-8000-000000000002'
+const sha='a'.repeat(40)
+const base=catalogBaseDefinitions('personal').find(x=>x.id==='people.brief')!
+const next={...base,sopVersion:'1.1.0',title:'Reviewed person brief',purpose:'Read permitted contact, mail and calendar evidence for a person.'}
+const digest=skillRevisionDigest(base),nextDigest=skillRevisionDigest(next)
+const row={id:'00000000-0000-4000-8000-000000000011',scope_kind:'personal' as const,scope_id:'101',skill_id:base.id,version:next.sopVersion,base_digest:digest,static_digest:digest,revision_digest:nextDigest,build_sha:sha,title:next.title,purpose:next.purpose,author_id:'agent:verified',evidence_refs:['fixture:readback'],summary:'Clarify description.',expires_at:'2035-01-01T00:00:00Z'}
+const t={revision_id:row.id,review_kind:'test' as const,reviewer_id:'code-reviewer',receipt_ref:'ci:verified',revision_digest:nextDigest,build_sha:sha,valid_until:row.expires_at}
+const s={...t,review_kind:'security' as const,reviewer_id:'security-reviewer',receipt_ref:'security:verified'}
+const now=Date.parse('2026-11-28T00:00:00Z')
+assert.deepEqual(revisionDefinition(base,row,{kind:'personal',id:'101'},sha,now),next)
+assert.equal(revisionDefinition(base,{...row,purpose:'Altered after review'},{kind:'personal',id:'101'},sha,now),null)
+assert.equal(revisionDefinition(base,row,{kind:'personal',id:'102'},sha,now),null)
+assert.equal(revisionDefinition(base,row,{kind:'personal',id:'101'},'b'.repeat(40),now),null)
+assert.equal(revisionDefinition(base,{...row,expires_at:'2020-01-01'},{kind:'personal',id:'101'},sha,now),null)
+assert.equal(revisionDefinition(base,{...row,summary:'password is unsafe'},{kind:'personal',id:'101'},sha,now),null)
+assert.ok(verifiedRevisionReceipts(row,[t,s],'101',now))
+assert.equal(verifiedRevisionReceipts(row,[t],'101',now),null)
+assert.equal(verifiedRevisionReceipts(row,[t,{...s,reviewer_id:t.reviewer_id}],'101',now),null)
+assert.equal(verifiedRevisionReceipts(row,[t,{...s,revision_digest:digest}],'101',now),null)
+assert.equal(verifiedRevisionReceipts(row,[t,s],t.reviewer_id,now),null)
+assert.match(await personalSkillCatalog('',async()=> 'read',[next]),/Reviewed person brief/)
+assert.match(await personalSkillCatalog('',async()=> 'off',[next]),/No matching/)
+assert.doesNotMatch(workspaceSkillCatalog('',true),/Reviewed person brief/)
+const db=new PGlite()
+await db.exec('create role anon; create role authenticated; create role service_role bypassrls;')
+await db.exec('create table public.users(telegram_id bigint primary key,access_status text); create table public.workspace_members(workspace_id uuid,telegram_id bigint,role text,primary key(workspace_id,telegram_id)); create table public.user_consent_settings(telegram_id bigint primary key,memory_enabled boolean); grant select,update on public.users,public.workspace_members,public.user_consent_settings to service_role;')
+await db.exec("insert into public.users values(101,'active'),(102,'active'),(103,'blocked'); insert into public.user_consent_settings values(101,true),(102,false);")
+await db.query('insert into public.workspace_members values($1,101,$2),($1,102,$3),($1,103,$2),($4,101,$3)',[ws,'admin','viewer',otherWs])
+await db.exec(readFileSync(new URL('../supabase/governed-run-ledger-v1.sql',import.meta.url),'utf8'))
+for(const [kind,id] of [['personal','101'],['personal','102'],['workspace',ws],['workspace',otherWs]]){
+  await db.query('insert into public.gogo_governed_policies(scope_kind,scope_id,enabled,valid_until,run_seconds,run_cost_micros,run_tokens,run_model_calls,run_tool_calls,month_cost_micros,month_tokens,month_model_calls,month_tool_calls) values($1,$2,true,now()+interval \'1 hour\',600,100,100,2,2,100,100,4,4)',[kind,id])
+}
+async function putRevision(x:typeof row|Record<string,any>){
+  await db.query("insert into public.gogo_skill_revisions(id,scope_kind,scope_id,skill_id,version,base_digest,static_digest,revision_digest,build_sha,title,purpose,author_id,evidence_refs,summary,expires_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,ARRAY['fixture:readback'],$13,now()+interval '1 hour')",[x.id,x.scope_kind,x.scope_id,x.skill_id,x.version,x.base_digest,x.static_digest,x.revision_digest,x.build_sha,x.title,x.purpose,x.author_id,x.summary])
+}
+async function putReceipts(id:string,rd:string,same=false){
+  await db.query("insert into public.gogo_skill_revision_receipts values($1,'test','code-reviewer','ci:verified',$2,$3,now()+interval '1 hour'),($1,'security',$4,'security:verified',$2,$3,now()+interval '1 hour')",[id,rd,sha,same?'code-reviewer':'security-reviewer'])
+}
+await putRevision(row)
+const change=(kind:string,id:string,actor:string,skill:string,action:string,candidate:string|null,gen:number,expected:string,stat:string)=>db.query<{r:string}>('select public.gogo_change_skill_revision($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as r',[kind,id,actor,skill,action,candidate,gen,expected,stat,sha]).then(x=>x.rows[0].r)
+const personal=(actor:string,action:string,candidate:string|null,gen:number,expected:string)=>change('personal','101',actor,base.id,action,candidate,gen,expected,digest)
+await db.exec('set role service_role')
+assert.equal(await personal('102','publish',row.id,0,digest),'forbidden')
+assert.equal(await personal('101','publish',row.id,0,digest),'unreviewed')
+await assert.rejects(()=>db.query("update public.gogo_skill_revisions set title='tampered' where id=$1",[row.id]))
+await assert.rejects(()=>db.query("insert into public.gogo_skill_revision_receipts values($1,'test','forger','fake',$2,$3,now()+interval '1 hour')",[row.id,nextDigest,sha]))
+await db.exec('reset role')
+await putReceipts(row.id,nextDigest,true)
+await db.exec('set role service_role')
+assert.equal(await personal('101','publish',row.id,0,digest),'unreviewed')
+await db.exec('reset role')
+await db.query("update public.gogo_skill_revision_receipts set reviewer_id='security-reviewer' where revision_id=$1 and review_kind='security'",[row.id])
+await db.exec('set role service_role')
+assert.equal(await personal('101','publish',row.id,0,digest),'changed')
+assert.equal(await personal('101','publish',row.id,0,digest),'stale')
+assert.equal(await personal('101','rollback',null,1,nextDigest),'changed')
+assert.equal(await personal('101','publish',row.id,0,digest),'stale','generation prevents ABA after rollback')
+const events=await db.query<{action:string}>("select action from public.gogo_skill_review_events where scope_kind='personal' and scope_id='101' order by generation")
+assert.deepEqual(events.rows.map(x=>x.action),['publish','rollback'])
+await assert.rejects(()=>db.exec("delete from public.gogo_skill_review_events"))
+await db.exec('reset role')
+const wb=catalogBaseDefinitions('workspace')[0],wd=skillRevisionDigest(wb),wn={...wb,sopVersion:'1.1.0',title:'Reviewed workspace summary'},wnd=skillRevisionDigest(wn)
+const wr={...row,id:'00000000-0000-4000-8000-000000000012',scope_kind:'workspace',scope_id:ws,skill_id:wb.id,version:wn.sopVersion,title:wn.title,purpose:wn.purpose,base_digest:wd,static_digest:wd,revision_digest:wnd}
+await putRevision(wr);await putReceipts(wr.id,wnd)
+const workspace=(id:string,actor:string)=>change('workspace',id,actor,wb.id,'publish',wr.id,0,wd,wd)
+await db.exec('set role service_role')
+assert.equal(await workspace(ws,'102'),'forbidden')
+assert.equal(await workspace(ws,'103'),'forbidden')
+assert.equal(await workspace(otherWs,'101'),'forbidden')
+assert.equal(await workspace(ws,'101'),'changed')
+const audit=(kind:string,id:string,actor:string)=>db.query<{r:boolean}>("select public.gogo_record_memory_block_event($1,$2,$3,'model','untrusted_directive') as r",[kind,id,actor]).then(x=>x.rows[0].r)
+assert.equal(await audit('personal','101','102'),false)
+assert.equal(await audit('personal','102','102'),false)
+assert.equal(await audit('personal','101','101'),true)
+assert.equal(await audit('workspace',ws,'102'),false)
+assert.equal(await audit('workspace',ws,'101'),true)
+const auditRows=await db.query("select scope_kind,scope_id,origin,reason from public.gogo_memory_block_events order by scope_kind")
+assert.deepEqual(auditRows.rows,[{scope_kind:'personal',scope_id:'101',origin:'model',reason:'untrusted_directive'},{scope_kind:'workspace',scope_id:ws,origin:'model',reason:'untrusted_directive'}])
+await db.exec('reset role')
+await db.query('delete from public.workspace_members where workspace_id=$1 and telegram_id=101',[ws])
+await db.exec('set role service_role')
+assert.equal(await change('workspace',ws,'101',wb.id,'rollback',null,1,wnd,wd),'forbidden')
+await db.exec('reset role');await db.exec('set role authenticated')
+await assert.rejects(()=>db.query('select * from public.gogo_skill_revisions'))
+await assert.rejects(()=>db.query('select * from public.gogo_memory_block_events'))
+await assert.rejects(()=>personal('101','publish',row.id,2,digest))
+await db.exec('reset role');await db.close()
+console.log('HACHI_DURABLE_REVIEW_OK — actual migration, immutable independent receipts, actor/tenant isolation, CAS publish and rollback, consent-gated no-content quarantine audit')

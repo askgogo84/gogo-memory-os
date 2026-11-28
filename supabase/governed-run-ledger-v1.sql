@@ -298,7 +298,7 @@ begin
     if p_scope_id<>p_actor_id then return 'forbidden'; end if;
   else
     select role::text into role_value from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=p_actor_id for share;
-    if not found or role_value not in ('owner','admin') then return 'forbidden'; end if;
+    if not found or role_value is null or role_value not in ('owner','admin') then return 'forbidden'; end if;
   end if;
   select * into ptr from public.gogo_skill_active where scope_kind=p_scope_kind and scope_id=p_scope_id and skill_id=p_skill_id for update;
   if found then gen:=ptr.generation; digest:=ptr.active_digest; else digest:=p_static_digest; end if;
@@ -347,4 +347,38 @@ create index gogo_memory_block_scope_idx on public.gogo_memory_block_events(scop
 alter table public.gogo_memory_block_events enable row level security;
 revoke all on public.gogo_memory_block_events from public,anon,authenticated,service_role;
 grant select,insert,delete on public.gogo_memory_block_events to service_role;
+-- This intake accepts only classified reason codes and the resolved scope,
+-- never model-provided text, a content digest or a candidate to auto-promote.
+create function public.gogo_record_memory_block_event(p_scope_kind text,p_scope_id text,p_actor_id text,p_origin text,p_reason text)
+returns boolean language plpgsql security invoker set search_path='' as $$
+declare pol public.gogo_governed_policies%rowtype;
+begin
+  if p_scope_kind is null or p_scope_kind not in ('personal','workspace') or p_scope_id is null or
+    p_actor_id is null or p_actor_id !~ '^-?[1-9][0-9]{0,18}$' or
+    p_origin is null or p_origin not in ('model','email','web','document','tool') or
+    p_reason is null or p_reason not in ('untrusted_directive','secret_rejected','missing_authority') then return false; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('memory-audit:'||p_scope_kind||':'||p_scope_id,0));
+  select * into pol from public.gogo_governed_policies where scope_kind=p_scope_kind and scope_id=p_scope_id for share;
+  if not found or not pol.enabled or pol.valid_until<=clock_timestamp() then return false; end if;
+  perform 1 from public.users where telegram_id::text=p_actor_id and access_status='active' for share;
+  if not found then return false; end if;
+  if p_scope_kind='personal' then
+    if p_scope_id<>p_actor_id then return false; end if;
+    perform 1 from public.user_consent_settings where telegram_id::text=p_actor_id and memory_enabled=true for share;
+    if not found then return false; end if;
+  else
+    perform 1 from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=p_actor_id and role::text in ('owner','admin','member') for share;
+    if not found then return false; end if;
+  end if;
+  delete from public.gogo_memory_block_events where scope_kind=p_scope_kind and scope_id=p_scope_id and expires_at<=clock_timestamp();
+  insert into public.gogo_memory_block_events(scope_kind,scope_id,origin,reason)
+    values(p_scope_kind,p_scope_id,p_origin,p_reason);
+  delete from public.gogo_memory_block_events where id in (
+    select id from public.gogo_memory_block_events where scope_kind=p_scope_kind and scope_id=p_scope_id
+    order by created_at desc,id desc offset 100
+  );
+  return true;
+end $$;
+revoke all on function public.gogo_record_memory_block_event(text,text,text,text,text) from public,anon,authenticated,service_role;
+grant execute on function public.gogo_record_memory_block_event(text,text,text,text,text) to service_role;
 commit;

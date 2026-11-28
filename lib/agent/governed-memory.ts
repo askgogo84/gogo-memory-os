@@ -13,3 +13,18 @@ export function classifyMemoryCandidate(m:MemoryCandidate,auth:{scopeKind:'perso
   // The caller must verify sourceRef/identity and publish through existing memory permissions.
   return'candidate'
 }
+
+// Keep only a privacy-preserving blocked-event receipt. Never persist the
+// proposed fact, retrieved passage, prompt, source URI, or content digest.
+// Failure to write an audit row never authorizes the rejected memory.
+export async function recordPersonalMemoryBlock(owner:string,reason:'untrusted_directive'|'secret_rejected'|'missing_authority'):Promise<boolean>{
+  try{
+    const {exactSessionOwnerId}=await import('@/lib/dashboard/owner-identity')
+    if(exactSessionOwnerId(owner)!==owner)return false
+    const {governedEnabled}=await import('./governed-runtime')
+    if(!governedEnabled('personal',owner))return false
+    const {supabaseAdmin}=await import('@/lib/supabase-admin')
+    const r=await supabaseAdmin.rpc('gogo_record_memory_block_event',{p_scope_kind:'personal',p_scope_id:owner,p_actor_id:owner,p_origin:'model',p_reason:reason})
+    return !r.error&&r.data===true
+  }catch{return false}
+}
