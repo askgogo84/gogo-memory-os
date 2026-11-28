@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { researchSourceScopeFromUserText, runDeepResearch } from '../lib/agent/deep-research'
+import { extractResearchPages, researchSourceScopeFromUserText, runDeepResearch } from '../lib/agent/deep-research'
 
 function runUserResearch(question: string, deps: Parameters<typeof runDeepResearch>[1]) {
   return runDeepResearch(question, { ...deps, userSourceScope: researchSourceScopeFromUserText(question) })
@@ -28,7 +28,7 @@ assert.match(partial.text, /could not verify.*requested source/i)
 assert.doesNotMatch(partial.text, /10,000|Unrequested/)
 assert.deepEqual(partial.sources.map(s => s.url), [guide])
 
-const allSourceResults = async () => [third, second, { ...first, url: wallet.slice(0, -1) }]
+const allSourceResults = async () => [third, second, { ...first }]
 const queries: string[] = []
 const complete = await runUserResearch(question, {
   search: async (query) => { queries.push(query); return allSourceResults() },
@@ -46,6 +46,12 @@ assert.deepEqual(complete.sources.map(s => s.url.replace(/\/$/, '')), [wallet.sl
 assert.match(complete.text, /coming soon\. \[1\]/)
 assert.match(complete.text, /are unavailable\. \[2\]/)
 assert.doesNotMatch(complete.text, /10,000|Unrequested/)
+
+const wrongPath = await runUserResearch(question, {
+  search: async () => [second, { ...first, url: wallet.slice(0, -1) }],
+  model: async () => assert.fail('a different pathname cannot supply the requested evidence'),
+})
+assert.match(wrongPath.text, /could not verify.*requested source/i)
 
 const invalid = await runUserResearch(question, {
   search: allSourceResults,
@@ -90,6 +96,86 @@ const unsafe = await runUserResearch('Research a service using only https://www.
 })
 assert.equal(unsafe.sources.length, 0)
 assert.doesNotMatch(unsafe.text, /not-public/)
+
+const exactBrief = `Research Cashfree using only ${wallet} and ${guide}. In 160 words or fewer, cite what is live, upcoming, restricted, sandbox access, and settlement.`
+const walletSentences = ['Cashfree Wallet is in invite-only beta and supports Bharat Connect bill payments.', 'Travel, food, groceries and shopping are coming soon.']
+const guideSentences = ['The wallet can’t pay Credit Card or Loan Repayment bills.', 'Cashfree sales provisions the sandbox API key.', 'On SUCCESS, give the customer the UTR as proof of settlement.']
+const providerCalls: string[] = []
+const extract = (urls: string[]) => extractResearchPages(urls, async (url, init) => {
+  providerCalls.push(String(url))
+  assert.equal(init?.redirect, 'error')
+  assert.equal(new Headers(init?.headers).has('authorization'), false)
+  assert.ok(url === wallet || url === guide)
+  const html = url === wallet
+    ? `<h2>Beta</h2><p>${walletSentences.join(' ')} Bills today.</p>`
+    : '<h2>Supported bills</h2><p>The wallet can&#8217;t pay <strong>Credit Card or Loan Repayment bills</strong>.</p>'
+      + '<h2>Sandbox access</h2><ul><li><a href="https://elsewhere.invalid/contact">Cashfree sales</a> provisions the sandbox API key.</li></ul>'
+      + '<p>On <code>SUCCESS</code>, give the customer the <abbr>UTR</abbr> as proof of settlement.</p>'
+  return new Response(`<html><head><title>https://app.askgogo.in/dashboard/connect/amazon</title></head><body><main>${html}</main></body></html>`, { headers: { 'content-type': 'text/html' } })
+})
+const selectFindings = () => JSON.stringify([
+  ...walletSentences.map(excerpt => ({ source: 1, excerpt })),
+  ...guideSentences.map(excerpt => ({ source: 2, excerpt })),
+])
+const exactResult = await runUserResearch(exactBrief, {
+  extract,
+  search: async () => assert.fail('both exact pages were extracted'),
+  model: async prompt => {
+    for (const sentence of [...walletSentences, ...guideSentences]) assert.ok(prompt.includes(sentence))
+    return selectFindings()
+  },
+})
+assert.deepEqual(providerCalls, [wallet, guide])
+assert.deepEqual(exactResult.sources.map(source => source.url), [wallet, guide])
+assert.ok(exactResult.text.trim().split(/\s+/).length <= 160)
+for (const sentence of [...walletSentences, ...guideSentences]) assert.ok(exactResult.text.includes(sentence))
+assert.doesNotMatch(exactResult.text, /elsewhere\.invalid|dashboard\/connect/)
+
+const pilotQuestion = `Research Cashfree AgentPay for an India beta, using only ${wallet} and ${guide}. In 160 words or fewer, cite the source for each finding: what is live, what is coming soon, credit-card and loan bill limits, sandbox access, and what confirms bill settlement. State what is unverified. Public sources only. Return a brief in chat.`
+const pilot = await runUserResearch(pilotQuestion, {
+  extract,
+  search: async () => assert.fail('both exact pages were extracted'),
+  model: async () => assert.fail('the Cashfree brief requires every evidence check independently of the model'),
+})
+for (const expected of [...walletSentences, ...guideSentences, 'Bills today.', 'Unverified here: authenticated sandbox access and actual bill settlement.']) {
+  assert.ok(pilot.text.includes(expected), expected)
+}
+assert.ok(pilot.text.trim().split(/\s+/).length <= 160)
+const missingSettlement = await runUserResearch(pilotQuestion, {
+  extract: async () => [
+    { ...first, snippet: walletSentences.concat('Bills today.').join('\n') },
+    { ...second, snippet: guideSentences.slice(0, -1).join('\n') },
+  ],
+  model: async () => assert.fail('a partial brief must fail without synthesis'),
+})
+assert.match(missingSettlement.text, /could not verify.*requested source/i)
+
+assert.deepEqual(await extractResearchPages([unrequested, wallet.slice(0, -1), 'https://share.example.com/private-bearer-token'], async () =>
+  assert.fail('only the two reviewed URLs can reach the direct transport')), [])
+assert.deepEqual(await extractResearchPages([wallet], async () => new Response(null, {
+  status: 302, headers: { location: 'https://other.example.com/', 'content-type': 'text/html' },
+})), [])
+assert.deepEqual(await extractResearchPages([wallet], async () => new Response('<p>' + 'x'.repeat(769 * 1024) + '</p>', {
+  headers: { 'content-type': 'text/html' },
+})), [])
+
+const overLimit = await runUserResearch(exactBrief.replace('160', '10'), {
+  extract,
+  search: async () => assert.fail('both exact pages were extracted'),
+  model: async () => selectFindings(),
+})
+assert.match(overLimit.text, /could not verify.*requested source/i)
+
+const substituted = await runUserResearch(exactBrief, {
+  extract: async () => [first, { ...third, snippet: 'An unrelated page mentioned a different plan.' }],
+  search: async query => {
+    assert.ok(query.startsWith('site:www.cashfree.com/docs/'))
+    return [third]
+  },
+  model: async () => assert.fail('an unrelated URL cannot replace the requested guide'),
+})
+assert.match(substituted.text, /could not verify.*requested source/i)
+assert.deepEqual(substituted.sources.map(source => source.url), [wallet])
 
 // Link Vault builds a question from external page counts, titles and descriptions.
 // Text inside the generated question does not carry a user source constraint.
