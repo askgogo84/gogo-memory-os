@@ -122,6 +122,15 @@ await check('time-first exact incident and lowercase venue retain party, date an
     assert.equal(parsed.timeClarificationNeeded,false)
   }
   assert.equal(h.mod.parseRestaurantReservationIntent('Book a table for 3 at 8pm today').restaurant,'')
+  // The lowercase later-at parser must not replace an explicitly named venue with a time preference.
+  for(const preference of ['the next available slot','the first available slot','the earliest open slot','any available time']){
+    const parsed=h.mod.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 at '+preference+' between 7 PM and 9 PM.')
+    assert.equal(parsed.restaurant,'Naru Noodle Bar',preference)
+    assert.equal(parsed.partySize,2)
+    assert.equal(parsed.preferredStart,'19:00')
+    assert.equal(parsed.preferredEnd,'21:00')
+  }
+  assert.equal(h.mod.parseRestaurantReservationIntent('Book a table for 3 at the next available slot between 7 PM and 9 PM.').restaurant,'')
 })
 await check('provider-neutral search recovers public ReserveX, rejects adjacent cafe and private management URLs',async()=>{
   const privateFixture='https://reservex.explorex.co.in/manage/00000000-0000-0000-0000-000000000000'
@@ -141,6 +150,13 @@ await check('provider-neutral search recovers public ReserveX, rejects adjacent 
   assert.match(h.browserCalls[0].objective,/3 guests/)
   assert.match(result.text,/8pm tonight is available for 3/)
   assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  // A private management capability supplied directly is not a new booking route either.
+  const blocked=loadReservation({search:()=>{throw Error('unexpected search')},browser:async()=>{throw Error('unexpected browser')}})
+  const refused=await blocked.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST+' '+privateFixture})
+  assert.equal(blocked.browserCalls.length,0)
+  assert.equal(blocked.searches.length,0)
+  assert.equal(blocked.db.tables.agent_approvals?.length||0,0)
+  assert.ok(!refused.text.includes(privateFixture))
 })
 await check('a ReserveX service range alone is not an available slot',async()=>{
   const h=loadReservation({search:()=>[CHINS_PUBLIC],browser:async p=>({status:'completed',url:p.url,title:'Chins',summary:'Selected date: 2026-10-19',pageText:'3 guests. Dinner 7:01 PM - 10:30 PM'})})
