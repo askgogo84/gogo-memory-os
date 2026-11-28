@@ -105,6 +105,72 @@ await check('impossible explicit dining dates pause both entry points before que
   }
 })
 
+// 28 Nov: real failed WhatsApp request. Public venue fixture only, no private management link.
+const CHINS_REQUEST='Book a table for 3 at 8pm today at Chins bar and coffee Lavelle road'
+const RESERVEX='https://reservex.explorex.co.in/r/0186b7ac-6775-4e1c-9193-eed9f1137077'
+const CHINS_PUBLIC={title:'Chins Bar & Kitchen, Plot Number 25 — Book a Table | ReserveX',url:RESERVEX,snippet:'Chins Bar & Kitchen, Lavelle Road, Bengaluru. Reserve a table.'}
+const CHINS_COFFEE={title:'Chins Coffee | Book a Table',url:'https://www.swiggy.com/restaurants/bangalore/lavelle-road/chins-coffee-fixture/dineout',snippet:'Chins Coffee Lavelle Road Bangalore'}
+await check('time-first exact incident and lowercase venue retain party, date and time',async()=>{
+  const h=loadReservation({search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  for(const request of [CHINS_REQUEST,CHINS_REQUEST.replace('Chins','chins'),CHINS_REQUEST.replace('8pm','8:00 PM')]){
+    const parsed=h.mod.parseRestaurantReservationIntent(request)
+    assert.match(parsed.restaurant,/^chins bar and coffee lavelle road$/i)
+    assert.equal(parsed.partySize,3)
+    assert.equal(parsed.preferredStart,'20:00')
+    assert.equal(parsed.preferredEnd,'20:00')
+    assert.equal(parsed.requestedDate,'2026-10-19')
+    assert.equal(parsed.timeClarificationNeeded,false)
+  }
+  assert.equal(h.mod.parseRestaurantReservationIntent('Book a table for 3 at 8pm today').restaurant,'')
+})
+await check('provider-neutral search recovers public ReserveX, rejects adjacent cafe and private management URLs',async()=>{
+  const privateFixture='https://reservex.explorex.co.in/manage/00000000-0000-0000-0000-000000000000'
+  const h=loadReservation({
+    search:q=>/official restaurant reserve a table/.test(q)?[CHINS_COFFEE,{...CHINS_PUBLIC,url:privateFixture},CHINS_PUBLIC]:[],
+    browser:async p=>({status:'completed',url:p.url,title:'Chins Bar & Kitchen',summary:'Selected date: 2026-10-19. 3 guests. Available slots: 8:00 PM',pageText:'Selected date: 2026-10-19. 3 guests. Available slots: 8:00 PM'})
+  })
+  const ranked=h.mod.rankReservationCandidates([CHINS_COFFEE,{...CHINS_PUBLIC,url:privateFixture},CHINS_PUBLIC],'Chins bar and coffee Lavelle road')
+  assert.equal(ranked[0].url,RESERVEX)
+  assert.equal(ranked[0].kind,'widget')
+  assert.equal(ranked.some((v:any)=>v.url===privateFixture),false)
+  assert.ok(ranked.find((v:any)=>v.url===CHINS_COFFEE.url).score<=0)
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST})
+  assert.equal(h.browserCalls.length,1)
+  assert.equal(h.browserCalls[0].url,RESERVEX)
+  assert.equal(h.browserCalls[0].mode,'read')
+  assert.match(h.browserCalls[0].objective,/3 guests/)
+  assert.match(result.text,/8pm tonight is available for 3/)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('a ReserveX service range alone is not an available slot',async()=>{
+  const h=loadReservation({search:()=>[CHINS_PUBLIC],browser:async p=>({status:'completed',url:p.url,title:'Chins',summary:'Selected date: 2026-10-19',pageText:'3 guests. Dinner 7:01 PM - 10:30 PM'})})
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST})
+  assert.doesNotMatch(result.text,/is available/)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('one definite read failure can switch to a distinct public route, never resubmit',async()=>{
+  const other={title:'Toit Indiranagar - Reserve a table',url:'https://toit.in/reservations',snippet:'Toit Indiranagar Bengaluru reservations'}
+  const h=loadReservation({search:()=>[RESERVEGO,other],browser:async p=>{
+    if(p.url===WIDGET)throw Error('browser_objective_unverified')
+    return {...await widgetPage(['7:00 PM'])(),url:p.url}
+  }})
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  assert.equal(h.browserCalls.length,2)
+  assert.equal(h.browserCalls[1].url,other.url)
+  assert.equal(h.browserCalls[1].publicOnly,true)
+  assert.ok(h.browserCalls.every(p=>p.mode==='read'))
+  assert.equal(h.browserCalls[0].readDeadline,h.browserCalls[1].readDeadline)
+  assert.match(result.text,/7pm tomorrow is available/)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('no public route offers phone escalation without asking for a booking link or placing a call',async()=>{
+  const h=loadReservation({search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  const result=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:CHINS_REQUEST})
+  assert.match(result.text,/phone call for your approval/)
+  assert.doesNotMatch(result.text,/send me the booking link/i)
+  assert.equal(h.browserCalls.length,0)
+})
+
 await check('ranking: widget.reservego.com outranks EazyDiner; aggregators only as fallback',async()=>{
   const {mod}=loadReservation({search:searchBoth,browser:async()=>{throw Error('unused')}})
   const ranked=mod.rankReservationCandidates([EAZY,RESERVEGO,{title:'Toit - Reserve',url:'https://toit.in/reservations',snippet:'Toit Indiranagar Bengaluru reservations'}],'Toit Indiranagar')
