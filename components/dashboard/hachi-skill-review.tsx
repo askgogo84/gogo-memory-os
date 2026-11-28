@@ -3,7 +3,7 @@
 import {useEffect,useRef,useState} from 'react'
 
 type Proposal={id:string;version:string;title:string;purpose:string;summary:string;digest:string;baseDigest:string;reviewed:boolean;selfAuthored:boolean}
-type Skill={skillId:string;generation:number;activeDigest:string;activeVersion:string|null;activeRevisionId:string|null;proposals:Proposal[]}
+type Skill={skillId:string;generation:number;activeDigest:string;activeVersion:string|null;activeRevisionId:string|null;canRestore:boolean;proposals:Proposal[]}
 type Budget={periodStart:string;costMicros:string;costLimitMicros:string;tokens:string;tokenLimit:string;modelCalls:string;modelCallLimit:string;toolCalls:string;toolCallLimit:string;unresolved:string;unresolvedCostMicros:string;recentMemoryBlocks:string;enabled:boolean;overrun:boolean}
 type ReviewSnapshot={items:Skill[];buildVerified:boolean;budget:Budget|null}
 function rupees(v:string):string{
@@ -86,7 +86,7 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
     {snapshot?.items.map(skill=><article key={skill.skillId} className="space-y-3 rounded-xl border border-[#303c39] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h3 className="text-sm font-semibold text-[#f2efea]">{skill.skillId}</h3><p className="mt-1 text-xs text-[#a8a8a4]">Active version: {skill.activeVersion||'unverified'} · revision generation {skill.generation}</p></div>
-        {skill.activeRevisionId&&<button type="button" className={button} disabled={busy||!snapshot.buildVerified} onClick={()=>setConfirm({change:{action:'rollback',skillId:skill.skillId,expectedGeneration:skill.generation,expectedDigest:skill.activeDigest},label:'Restore the built-in description for '+skill.skillId})}>Restore built-in</button>}
+        {skill.canRestore&&<button type="button" className={button} disabled={busy||!snapshot.buildVerified} onClick={()=>setConfirm({change:{action:'rollback',skillId:skill.skillId,expectedGeneration:skill.generation,expectedDigest:skill.activeDigest},label:'Restore the built-in description for '+skill.skillId})}>Restore built-in</button>}
       </div>
       {skill.proposals.length===0&&<p className="text-xs text-[#a8a8a4]">No operator-reviewed proposals for this build.</p>}
       {skill.proposals.map(p=>{

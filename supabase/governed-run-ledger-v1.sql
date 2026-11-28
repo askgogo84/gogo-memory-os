@@ -317,7 +317,10 @@ begin
       t.reviewer_id=p_actor_id or s.reviewer_id=p_actor_id or t.receipt_ref=s.receipt_ref then return 'unreviewed'; end if;
     new_digest:=rev.revision_digest;
   else
-    if gen=0 or ptr.revision_id is null then return 'no_active_revision'; end if;
+    -- A new deployment can invalidate a previously restored built-in digest.
+    -- The same audited CAS restore operation may rebase that stale pointer,
+    -- but must not create a fresh pointer or increment an unchanged pointer.
+    if gen=0 or (ptr.revision_id is null and ptr.active_digest=p_static_digest and ptr.build_sha=p_build_sha) then return 'no_active_revision'; end if;
     new_digest:=p_static_digest;
   end if;
   insert into public.gogo_skill_active(scope_kind,scope_id,skill_id,revision_id,generation,active_digest,build_sha)

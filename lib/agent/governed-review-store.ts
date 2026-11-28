@@ -111,7 +111,7 @@ export async function listSkillReview(actor:string,scope:Scope){
       proposals.push({id:row.id,version:row.version,title:row.title,purpose:row.purpose,summary:row.summary,digest:row.revision_digest,baseDigest:row.base_digest,reviewed,selfAuthored:row.author_id===actor})
     }
     const active=await currentDefinition(scope,base,p,sha)
-    items.push({skillId:base.id,generation:generation(p),activeDigest:p?.active_digest||skillRevisionDigest(base),activeVersion:active?.sopVersion||null,activeRevisionId:p?.revision_id||null,proposals})
+    items.push({skillId:base.id,generation:generation(p),activeDigest:p?.active_digest||skillRevisionDigest(base),activeVersion:active?.sopVersion||null,activeRevisionId:p?.revision_id||null,canRestore:!!p&&(!!p.revision_id||p.active_digest!==skillRevisionDigest(base)||p.build_sha!==sha),proposals})
   }
   const budget=await supabaseAdmin.rpc('gogo_read_scope_budget',{p_scope_kind:scope.kind,p_scope_id:scope.id,p_actor_id:actor})
   await access(actor,scope,true)
@@ -134,7 +134,7 @@ export async function changeSkillReview(actor:string,scope:Scope,x:ReviewChange)
     const review=canReviewSkillRevision({scope,skillId:base.id,baseVersion:current.sopVersion,nextVersion:next.sopVersion,authorId:row.author_id,evidenceRefs:row.evidence_refs,summary:row.summary},current,next,
       {scope,reviewerId:actor,role,approved:true,testedRevision:base.id+'@'+next.sopVersion,testReceipt:rs.test.receipt_ref,securityReceipt:rs.security.receipt_ref,currentVersion:current.sopVersion,currentDigest:skillRevisionDigest(current),testedDigest:rs.test.revision_digest,securityDigest:rs.security.revision_digest})
     if(!review.allowed)return fail('unreviewed_revision',409)
-  }else if(x.action!=='rollback'||x.revisionId||!p?.revision_id)return fail('invalid_revision',400)
+  }else if(x.action!=='rollback'||x.revisionId||!p||(!p.revision_id&&p.active_digest===skillRevisionDigest(base)&&p.build_sha===sha))return fail('invalid_revision',400)
   await access(actor,scope,true)
   const r=await supabaseAdmin.rpc('gogo_change_skill_revision',{p_scope_kind:scope.kind,p_scope_id:scope.id,p_actor_id:actor,p_skill_id:base.id,p_action:x.action,p_revision_id:x.revisionId||null,p_expected_generation:x.expectedGeneration,p_expected_digest:x.expectedDigest,p_static_digest:skillRevisionDigest(base),p_build_sha:sha})
   if(r.error)return fail('review_unavailable')
