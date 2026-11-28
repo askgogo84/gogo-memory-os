@@ -23,6 +23,12 @@ export async function askWorkspace(owner: string, workspaceId: string, question:
   await requireWorkspaceRole(owner, workspaceId, 'view')
   const q = typeof question === 'string' ? question.trim() : ''
   if (!q || q.length > 300) throw new WorkspaceError('invalid_question')
+  if (/^fact\s*:/i.test(q)) {
+    const { answerDatedQuestion } = await import('@/lib/memory/dated-facts')
+    const result = await answerDatedQuestion(owner, workspaceId, q)
+    if (!result) throw new WorkspaceError('invalid_question')
+    return result
+  }
   const evidence = source()
   const boundary = (answer: string) => ({ answer, source: evidence })
   if (/\b(refund|pay|transfer|charge|send|publish|accept|reject|delete|update|change|book)\b|\bturn\s+(?:off|on)\b/i.test(q)) {

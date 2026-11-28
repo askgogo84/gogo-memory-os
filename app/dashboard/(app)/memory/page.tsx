@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { DatedFacts } from '@/components/dashboard/dated-facts'
 import { getSession } from '@/lib/dashboard/session'
 import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { MemoryCollection } from '@/components/dashboard/memory-collection'
@@ -17,6 +18,7 @@ export default async function MemoryPage(){
       <p className="mt-2 max-w-2xl text-[16px] leading-5 text-[#9a9a9a]">What Gogo remembers about you. Edit or forget anything. <Link href="/dashboard/taste" className="underline">Food taste</Link></p>
     </header>
 
+    {session && <DatedFacts workspace={null} />}
     {!memory.ok?<div className="mt-5"><CardError message="Couldn’t load your memory right now."/></div>:<>
       <section className="mt-5 grid gap-2 sm:grid-cols-3">
         <div className="final-dark-card p-4"><div className="text-[23px] font-semibold text-[#f2efea]">{memory.items.length}</div><div className="mt-1 text-[13px] uppercase tracking-[.08em] text-[#6a6a6a]">Memories</div></div>

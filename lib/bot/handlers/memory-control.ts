@@ -438,7 +438,14 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
 
   if (lower === 'clear my memory' || lower === 'forget everything') {
     try {
+      if (!Number.isSafeInteger(telegramId) || !telegramId) throw new Error('invalid_personal_memory_owner')
       await forgetPersonalRows(telegramId)
+      // Only a genuinely absent pre-migration table is empty. An outage must not acknowledge erasure.
+      for (const [table, column] of [['dated_fact_topics', 'personal_owner'], ['dated_fact_questions', 'viewer_id']]) {
+        const { error } = await supabaseAdmin.from(table).delete().eq(column, String(telegramId))
+        if (error && error.code !== '42P01') throw new Error('dated_fact_erasure_unverified')
+      }
+
       const results = await Promise.all([
         supabaseAdmin.from('user_insights').update({ status: 'deleted' }).eq('telegram_id', telegramId),
         supabaseAdmin.from('user_memory_profile')

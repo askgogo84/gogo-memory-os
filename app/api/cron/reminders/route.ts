@@ -185,7 +185,8 @@ async function runDelivery(req: Request) {
       const isBriefing = BRIEFING_KEYWORDS.test(raw)
       const followup = String(reminder.recurring_pattern || '').startsWith('followup:')
       const topic = raw.startsWith('[topic_digest]') ? raw.replace(/^\[topic_digest\]\s*/i, '').trim() : null
-      const label = pickReminderEmoji(raw) + ' ' + raw.replace(/^to\s+/i, '')
+      const factRef = raw.match(/^(?:to\s+)?check saved fact ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})[.!]?$/i)?.[1]
+      const label = factRef ? 'Review your saved fact in AskGogo' : pickReminderEmoji(raw) + ' ' + raw.replace(/^to\s+/i, '')
       let text = followup ? '🔔 *Follow-up reminder*\n\n' + raw + '\n\nDid you hear back? Reply *done* or *snooze 2 days*.'
         : label + '\n\nQuick actions: snooze 10 mins · move it to 8 pm · done' + (reminder.is_recurring ? '\nRepeats: ' + describeCadence(reminder.recurring_pattern) : '')
       let empty = false
@@ -230,7 +231,7 @@ async function runDelivery(req: Request) {
         // archived or filtered replies are missed) and null also covers Gmail being unconnected or without consent.
         // So no "hasn't replied" claim is made; the owner gets the plain follow-up question instead.
       }
-      if (owner && whatsappTo && !topic && !isBriefing && !followup && Date.now() - started < 25000 &&
+      if (!factRef && owner && whatsappTo && !topic && !isBriefing && !followup && Date.now() - started < 25000 &&
         /\bdeparts?\b|^(?:\W*\s*)?(?:to\s+)?(?:check|see|look\s+up|find\s+out|get|tell\s+me|update\s+me|what|how\s+did)\b/i.test(raw)) {
         const jobs = await import('@/lib/agent/lookup-reminder').catch(() => null)
         const code = jobs?.departureFlightCode(raw) || ''
@@ -246,6 +247,16 @@ async function runDelivery(req: Request) {
           const answer = await jobs.answerLookupReminder(raw, { timezone: timezone || 'Asia/Kolkata' })
           if (answer) { text = '🔎 *Your update: ' + raw.replace(/^to\s+/i, '') + '*\n\n' + answer; jobDone = true }
         }
+      }
+      if (factRef) {
+        const actor = exactReminderOwner(reminder.telegram_id)
+        const { datedReminderText } = await import('@/lib/memory/dated-facts')
+        const day = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'Asia/Kolkata' }).format(new Date())
+        const current = owner && whatsappTo && actor ? await datedReminderText(actor, factRef, day, APP_URL) : null
+        if (!current) {
+          await finish('suppressed'); results.push({ id: reminder.id, status: 'suppressed' }); continue
+        }
+        text = current; jobDone = true
       }
       // Final consent check follows all content preparation. begin RPC fences
       // cancellation/move and commits recurrence + intent before the network boundary.

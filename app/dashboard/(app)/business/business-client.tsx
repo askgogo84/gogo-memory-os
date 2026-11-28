@@ -4,6 +4,7 @@
 // Mutations go through /api/workspaces/**, which re-check membership on the server; the controls shown
 // here by role are convenience only.
 import Link from 'next/link'
+import { DatedFacts } from '@/components/dashboard/dated-facts'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import type { MyInvite, MyWorkspace, WorkspaceDetail, WorkspaceMember } from '@/lib/workspaces/access'
@@ -132,6 +133,7 @@ export function BusinessWorkspace({ workspaces, detail }: { workspaces: MyWorksp
       {tab === 'people' && <People detail={detail} />}
     </section>
 
+    {tab === 'brief' && <DatedFacts key={detail.id} workspace={detail.id} canEdit={detail.myRole === 'owner' || detail.myRole === 'admin'} />}
     <WorkspaceAsk key={detail.id} workspaceId={detail.id} detail={detail} />
   </>
 }

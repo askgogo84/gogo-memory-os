@@ -3,7 +3,7 @@
 // Internal/system rows (usage counters, follow-up state JSON) are left out, exactly as the "my memory" view leaves them out.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
-export type ExportedFact = { id: string; source: 'memories' | 'user_insights' | 'user_memory_profile' | 'life_events' | 'reminders' | 'documents' | 'places'; text: string; at: string | null; provenance: Record<string, unknown> }
+export type ExportedFact = { id: string; source: 'memories' | 'user_insights' | 'user_memory_profile' | 'life_events' | 'reminders' | 'documents' | 'places' | 'dated_fact_export'; text: string; at: string | null; provenance: Record<string, unknown> }
 export type MemoryExport = { owner: string; generatedAt: string; counts: Record<string, number>; facts: ExportedFact[]; memoryEnabled: boolean | null; note: string }
 
 const INTERNAL = /^(?:askgogo_usage:|askgogo_meeting_notes_created:|\s*[\[{])|followup_state|meeting_action_items|reminder_ampm|calendar_conflict|founder pricing \/ paid plan launch/i
@@ -35,6 +35,14 @@ export async function exportMemory(telegramId: string, db: Db = supabaseAdmin, n
   for (const d of await read('documents', b => b.order('created_at', { ascending: false }).limit(200)))
     push({ id: String(d.id), source: 'documents', text: clean([d.title || d.file_name || d.name, d.category || d.kind].filter(Boolean).join(' · ')), at: d.created_at || null, provenance: { table: 'documents', id: d.id } })
 
+  const batchSize = 500
+  for (let offset = 0; ; offset += batchSize) {
+    const batch = await read('dated_fact_export', b => b.order('id').range(offset, offset + batchSize - 1))
+    for (const r of batch) push({ id: String(r.id), source: 'dated_fact_export', text: r.topic + ' — ' + r.answer,
+      at: r.recorded_at, provenance: { revision: r.id, effective_on: r.effective_on, source: r.source_label } })
+    if (batch.length < batchSize) break
+  }
+
   let memoryEnabled: boolean | null = null
   try { const { data } = await db.from('user_consent_settings').select('*').eq('telegram_id', tg).maybeSingle(); if (data && typeof data.memory_enabled === 'boolean') memoryEnabled = data.memory_enabled } catch {}
 
@@ -45,7 +53,7 @@ export async function exportMemory(telegramId: string, db: Db = supabaseAdmin, n
 
 /** A readable version of the same export. Pure. */
 export function formatMemoryExport(x: MemoryExport): string {
-  const label: Record<ExportedFact['source'], string> = { memories: 'Notes and things you told me', user_insights: 'Patterns I noticed', user_memory_profile: 'Profile', life_events: 'Trips, bookings and events', reminders: 'Open reminders', documents: 'Documents', places: 'Places' }
+  const label: Record<ExportedFact['source'], string> = { memories: 'Notes and things you told me', user_insights: 'Patterns I noticed', user_memory_profile: 'Profile', life_events: 'Trips, bookings and events', reminders: 'Open reminders', documents: 'Documents', places: 'Places', dated_fact_export: 'Dated facts and revisions' }
   const lines = [`# What AskGogo remembers`, `Generated ${x.generatedAt} · memory ${x.memoryEnabled === false ? 'off' : 'on'} · ${x.facts.length} items`, '']
   for (const src of Object.keys(label) as ExportedFact['source'][]) {
     const rows = x.facts.filter(f => f.source === src)
