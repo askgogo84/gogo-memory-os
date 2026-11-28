@@ -569,6 +569,26 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   console.log('PIM:start', { channel: params.channel, textLength: String(params.text || '').length })
 
   const incomingText = (params.text || '').trim()
+  // Explicit read-only discovery on the selected owner canary only. This does
+  // not route model-supplied names to executors or grant connector permissions.
+  const hachiEnv=(globalThis as any).process?.env||{}
+  if(!params.internalStep&&hachiEnv.GOGO_HACHI_ENFORCEMENT==='1'&&String(hachiEnv.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(resolvedUser.telegramId))&&/^(?:show|list|find|search)\s+(?:(?:my|available|workspace)\s+)?skills?\b/i.test(incomingText)){
+    const catalog=await import('@/lib/agent/governed-skill-catalog')
+    const query=catalog.skillQuery(incomingText)
+    if(query!==null){
+      const actor={userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'}
+      const runtime=await import('@/lib/agent/governed-runtime').then(m=>m.openPersonalGovernedRuntime(actor)).catch(()=>null)
+      const until=Date.now()+15_000
+      const result=runtime?await runtime.local('personal_skill_catalog',async()=>{
+        const a=await import('@/lib/agent/adaptive-autonomy')
+        return catalog.personalSkillCatalog(query,c=>a.capabilityPermissionLevel(actor.legacyTelegramId,c))
+      },()=>Date.now()<until):null
+      const reply=result?.state==='completed'?result.value:'The governed skill catalog is unavailable or has reached its limits. Nothing was executed.'
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      return {text:formatOutgoingText(params.channel,reply),handledBy:'governed-skill-catalog',resolvedUser}
+    }
+  }
   // Cheap pre-filter + env gate: the vm route harnesses never load the module.
   const alertFrequency=(globalThis as any).process?.env?.VERCEL_ENV&&/\b(?:less|fewer|more\s+often|only\s+(?:the\s+)?(?:important|urgent|critical)|too\s+many)\b/i.test(incomingText)
     ?await import('@/lib/agent/alert-preferences').then(m=>m.tryAlertFrequencyCommand({telegramId:resolvedUser.telegramId,text:incomingText}),()=>null):null
