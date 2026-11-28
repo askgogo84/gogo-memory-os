@@ -248,6 +248,81 @@ await check('numeric venue with time-first request uses Google Maps observed pub
   assert.equal(h.db.tables.agent_approvals.length,1)
   assert.ok(h.browserCalls.every(p=>p.mode==='read'))
 })
+// 28 Nov WhatsApp incident: no generic shopping results and no authority to book.
+const AVAILABILITY_REQUEST='Check availability for 2 people at 1522 The Pub Malleshwara tomorrow at 9 pm. Do not submit a booking.'
+await check('exact availability-only request goes through public Maps and queued provider research without booking authority',async()=>{
+  const venue='1522 The Pub Malleshwara'
+  const partner='https://www.eazydiner.com/bengaluru/1522-the-pub-malleshwaram-123456'
+  const h=loadReservation({search:()=>[],browser:async p=>{
+    assert.equal(p.mode,'read')
+    assert.equal(p.publicOnly,true)
+    if(p.googleDiningDiscovery)return {status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner','District Dining','Swiggy'],links:[{url:partner,label:'EazyDiner'}],nativeReview:false}}
+    assert.equal(p.url,partner)
+    return {status:'completed',url:partner,title:venue,pageText:venue+'. Selected date: 2026-10-20. Party of 2. Available slots: 9:00 PM.',summary:'',actions:[]}
+  }})
+  assert.equal(h.mod.isRestaurantReservationRequest(AVAILABILITY_REQUEST),false)
+  assert.equal(h.mod.isRestaurantAvailabilityRequest(AVAILABILITY_REQUEST),true)
+  const intent=h.mod.parseRestaurantAvailabilityIntent(AVAILABILITY_REQUEST)
+  assert.equal(intent.restaurant,venue)
+  assert.equal(intent.partySize,2)
+  assert.equal(intent.preferredStart,'21:00')
+  assert.equal(intent.requestedDate,'2026-10-20')
+  assert.equal(intent.availabilityOnly,true)
+  const queued=await h.mod.queueRestaurantReservationResearch({actor,text:AVAILABILITY_REQUEST})
+  assert.equal(queued.status,'queued')
+  assert.match(queued.text,/read-only check/)
+  assert.equal(h.browserCalls.length,0)
+  const run=h.db.tables.agent_runs[0]
+  assert.equal(run.metadata_json.availability_only,true)
+  assert.equal(run.metadata_json.request_text,AVAILABILITY_REQUEST)
+  run.status='running'
+  const out=await h.mod.runQueuedRestaurantReservationResearch({actor,runId:run.id})
+  assert.match(out.text,/9pm on 2026-10-20 for 2 guests as available/)
+  assert.match(out.text,/No reservation was prepared or submitted/)
+  assert.equal(h.browserCalls.length,2)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+  assert.equal(h.db.tables.life_event_actions?.length||0,0)
+  assert.equal(h.db.tables.life_events?.length||0,0)
+  assert.equal(h.questions.length,0)
+  assert.equal(h.db.tables.agent_runs.filter(r=>r.type==='restaurant_reservation_slot').length,0)
+})
+await check('availability-only request never trusts a wrong date, party, branch or summary-only slot',async()=>{
+  const venue='1522 The Pub Malleshwara'
+  const partner='https://www.eazydiner.com/bengaluru/1522-the-pub-malleshwaram-123456'
+  for(const pageText of [
+    venue+'. Selected date: 2026-10-21. Party of 2. Available slots: 9:00 PM.',
+    venue+'. Selected date: 2026-10-20. Party of 3. Available slots: 9:00 PM.',
+    venue+'. Selected date: 2026-10-20. Party of 2. Dinner 7:00 PM - 10:00 PM.',
+    '1522 The Pub Koramangala. Selected date: 2026-10-20. Party of 2. Available slots: 9:00 PM.',
+  ]){
+    const h=loadReservation({search:()=>[],browser:async p=>p.googleDiningDiscovery
+      ?{status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner'],links:[{url:partner,label:'EazyDiner'}],nativeReview:false}}
+      :{status:'completed',url:partner,title:'Reservation page',pageText,summary:'9pm available for 2 at '+venue,actions:[]}})
+    const out=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:AVAILABILITY_REQUEST})
+    assert.doesNotMatch(out.text,/as available when checked/)
+    assert.match(out.text,/No reservation was prepared or submitted/)
+    assert.equal(h.db.writes.length,0)
+  }
+})
+await check('availability-only authority cannot be removed from queued research metadata',async()=>{
+  const h=loadReservation({search:()=>[],browser:async()=>{throw Error('unexpected browser')}})
+  const queued=await h.mod.queueRestaurantReservationResearch({actor,text:AVAILABILITY_REQUEST})
+  const run=h.db.tables.agent_runs[0]
+  run.status='running';delete run.metadata_json.availability_only
+  const out=await h.mod.runQueuedRestaurantReservationResearch({actor,runId:queued.runId})
+  assert.match(out.text,/saved request needs review/)
+  assert.equal(h.browserCalls.length,0)
+  assert.equal(h.db.tables.agent_approvals?.length||0,0)
+})
+await check('read-only dining gets first refusal before retail discovery and generic answers',()=>{
+  const route=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
+  const start=route.indexOf('if (!preserveFriendFlow && isRestaurantAvailabilityRequest(text))')
+  const product=route.indexOf('const productDiscovery = await tryProductDiscovery({ text })')
+  const general=route.indexOf('const understoodReply = understandSkip')
+  assert.ok(start>0&&product>start&&general>start)
+  assert.match(route.slice(start,product),/queueRestaurantReservationResearch/)
+  assert.match(route.slice(start,product),/return new NextResponse/)
+})
 await check('native Google chooser with no public partner handoff never claims availability or creates approval',async()=>{
   const h=loadReservation({search:()=>[],browser:async p=>({status:'completed',url:p.url,actions:[],googleDining:{partners:['EazyDiner','District Dining','Swiggy'],links:[],nativeReview:false}})})
   const out=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:'Book a table for 2 tomorrow at 9pm at 1522 The Pub Malleshwara'})
