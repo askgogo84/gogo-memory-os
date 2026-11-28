@@ -742,7 +742,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       ? `That call has already been attempted or still needs its outcome checked. I won't call again until that is resolved.`
       : `I couldn't safely start that call. Ask for a fresh call plan and approve the exact details again. Nothing new was called.`, handledBy: 'voice-call' }
     await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: state.payload.approvalHash }).catch(() => {})
-    return { text: `📞 Calling ${plan.venue} now from ${displayPhone(String(process.env.BOLNA_FROM_NUMBER || DEFAULT_FROM_NUMBER))}. I'll message you here with what they said, usually within 2–3 minutes.`, handledBy: 'voice-call' }
+    return { text: governed?`📞 The calling provider accepted the request to ${plan.venue}. Check Activity for the recorded outcome. No booking is confirmed yet.`:`📞 Calling ${plan.venue} now from ${displayPhone(String(process.env.BOLNA_FROM_NUMBER || DEFAULT_FROM_NUMBER))}. I'll message you here with what they said, usually within 2–3 minutes.`, handledBy: 'voice-call' }
   }
 
   // 21 Nov live: at 9:05 pm a full call plan was shown and refused only after the yes. Every call that can be placed
