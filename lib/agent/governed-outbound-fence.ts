@@ -3,7 +3,8 @@
 import {AsyncLocalStorage} from 'node:async_hooks'
 import {currentGovernedRun} from './governed-run-context'
 type Permit={kind:'model'|'search';name:string;used:boolean;closed:boolean}
-const store=new AsyncLocalStorage<Permit>()
+const store:AsyncLocalStorage<Permit>=(globalThis as any).__gogoGovernedPermitStore||new AsyncLocalStorage<Permit>()
+;(globalThis as any).__gogoGovernedPermitStore=store
 const searchUrls:Record<string,string>={'tavily.basic.v1':'https://api.tavily.com/search','serper.search.v1':'https://google.serper.dev/search','parallel.fast.v1':'https://api.parallel.ai/v1/search'}
 function modelUrl(model:string):string|null{
   if(/^claude-/.test(model))return 'https://api.anthropic.com/v1/messages'

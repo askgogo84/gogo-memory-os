@@ -3,7 +3,8 @@ import {AsyncLocalStorage} from 'node:async_hooks'
 import {exactSessionOwnerId} from '@/lib/dashboard/owner-identity'
 import type {GovernedRuntime} from './governed-runtime'
 type ActiveRun={owner:string;runtime:GovernedRuntime;inTime:()=>boolean}
-const store=new AsyncLocalStorage<ActiveRun>()
+const store:AsyncLocalStorage<ActiveRun>=(globalThis as any).__gogoGovernedRunStore||new AsyncLocalStorage<ActiveRun>()
+;(globalThis as any).__gogoGovernedRunStore=store
 export function currentGovernedRun():ActiveRun|null{return store.getStore()||null}
 export async function withGovernedPersonalRun<T>(owner:string,runtime:GovernedRuntime,inTime:()=>boolean,work:()=>Promise<T>):Promise<T>{
   const parent=store.getStore()
