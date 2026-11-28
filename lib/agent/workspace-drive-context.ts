@@ -49,12 +49,14 @@ function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|nul
   if(!match)return null
   const tail=text.slice(match.index+match[0].length).trim()
   const quoted=tail.match(/^(?:"([^"\r\n]+)"|“([^”\r\n]+)”)/)
-  const name=quoted ? quoted[1]||quoted[2] : tail.split(/[.!?](?:\s|$)|[;\r\n]|\s+and\s+(?:tell|show|read|summari[sz]e)\b/i,1)[0].trim()
+  const title=quoted?.[0] ?? tail.split(/[.!?](?:\s|$)|[;\r\n]|\s+and\s+(?:tell|show|read|summari[sz]e|open|extract|review)\b/i,1)[0]
+  const name=quoted ? quoted[1]||quoted[2] : title.trim()
   const before=calendarAffirmativeText(outsideQuotes.slice(0,match.index))
+  const after=calendarAffirmativeText(tail.slice(title.length).replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,''))
   const request=outsideQuotes.replace(/’/g,"'")
   const wantsExistence=/\b(?:existence[- ]only|metadata[- ]only|only\s+(?:whether|if)|(?:whether|if)\b[^.;!?\n]*\b(?:exists?|exact\s+match))\b/i.test(request)
   const prohibitsReading=/\b(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|show(?:ing)?\s+(?:the\s+)?(?:file\s+)?contents?)\b/i.test(request)
-  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|review|open)\b/i.test(before)
+  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|review|open)\b/i.test(before+' '+after)
   return {name:name.trim()&&name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly:wantsExistence||prohibitsReading||!explicitlyReads}
 }
 

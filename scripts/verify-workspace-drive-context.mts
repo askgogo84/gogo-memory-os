@@ -119,6 +119,7 @@ for(const [files,hasMore,expected] of [
     'Read-only check: '+lookupText,
     'Review whether Google Drive has an exact match for the exact filename "'+lookupTitle+'".',
     'Read my Google Drive document with the exact filename "'+lookupTitle+'". Do not open it yet.',
+    'Check the exact filename "'+lookupTitle+'" in my Google Drive and do not summarize it.',
   ]){
     const lookup=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:lookupPrompt})
     assert.match(lookup.text,expected)
@@ -160,9 +161,15 @@ providerTitle=normalizedTitle
 assert.match((await checkExactTitle(exactProviderTitle)).text,/No file matched the exact filename/)
 
 deps['./google-workspace-read'].readWorkspaceDriveText=readFile
-const contentRead=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:'Read my Google Drive document with the exact filename "'+normalizedTitle+'".'})
-assert.equal(contentRead.status,'completed')
-assert.match(contentRead.text,/Private report/)
+for(const contentPrompt of [
+  'Read my Google Drive document with the exact filename "'+normalizedTitle+'".',
+  'Find my Google Drive document with the exact filename "'+normalizedTitle+'" and summarize it.',
+  'Find my Google Drive document with the exact filename '+normalizedTitle+' and read it.',
+]){
+  const contentRead=await api.tryRunWorkspaceDriveContext({actor,surface:'web',text:contentPrompt})
+  assert.equal(contentRead.status,'completed')
+  assert.match(contentRead.text,/Private report/)
+}
 deps['./google-workspace-read'].searchWorkspaceDrive=async()=>({files:[file]})
 
 for(const negative of ['Do not read my Google Drive document','Find a place to drive this weekend','Read my Google Drive brief and send it to Alice','Read my Google Drive brief and show my calendar tomorrow','Read my Google Drive brief and create a reminder'])
