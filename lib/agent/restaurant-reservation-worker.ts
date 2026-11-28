@@ -276,7 +276,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   // browser did not receive its response. Do not claim no booking or hand over
   // a second booking link when the first submission may already have succeeded.
   const possibleSubmit=Array.isArray(result?.actions)&&result.actions.some((a:any)=>(a?.kind==='submit'||a?.consequential===true)&&a?.status!=='skipped')
-  if(isReserveX&&possibleSubmit&&(unboundReserveX||result.status!=='completed'||!hasSubmit(result))){
+  if(isReserveX&&(unboundReserveX||(possibleSubmit&&(result.status!=='completed'||!hasSubmit(result))))){
     const summary='The ReserveX submission may have reached the provider, but its outcome is not verified. I will not submit again or switch booking routes. Reconcile this same reservation before trying again.'
     await failSafe({action,event,runId,approvalId,status:'outcome_unknown',summary,error:'restaurant_reservation_confirmation_unknown',actor})
     await notify(actor,summary)
