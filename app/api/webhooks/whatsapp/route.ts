@@ -2454,7 +2454,7 @@ _Reminder cancelled._`
     }
 
     await sendThinkingIfNeeded(from, text)
-    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null, pendingQuestionChecked: pendingQuestionCheckedFor === text, eventsChecked: eventsCheckedFor === text, semantic: brainObservation?.jev })
+    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', memorySource:forwardedMessage?'forwarded':!incoming.wasVoice&&text===originalText?'direct':'derived',memorySurface:'whatsapp', messageId: inboundMessageSid || null, pendingQuestionChecked: pendingQuestionCheckedFor === text, eventsChecked: eventsCheckedFor === text, semantic: brainObservation?.jev })
     await recordShadowRouterOutcome({
       telegramId:resolvedUser.telegramId,
       surface:'whatsapp',

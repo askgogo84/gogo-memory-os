@@ -607,4 +607,15 @@ begin
 end $$;
 revoke all on function public.gogo_prune_skill_learning_candidates() from public,anon,authenticated,service_role;
 grant execute on function public.gogo_prune_skill_learning_candidates() to service_role;
+-- Provenance follows the existing fact row (including its deletion). Never
+-- duplicate fact text in a new memory store or invent sources for legacy rows.
+alter table if exists public.memories add column if not exists gogo_provenance jsonb
+  check(gogo_provenance is null or (
+    jsonb_typeof(gogo_provenance)='object' and
+    gogo_provenance->>'origin'='authenticated_literal' and
+    gogo_provenance->>'surface' in ('whatsapp','dashboard') and
+    gogo_provenance->>'explicit_save'='true' and
+    jsonb_typeof(gogo_provenance->'observed_at')='string' and
+    (gogo_provenance - 'origin' - 'surface' - 'explicit_save' - 'observed_at')='{}'::jsonb
+  ));
 commit;

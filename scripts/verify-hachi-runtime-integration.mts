@@ -58,7 +58,8 @@ assert.doesNotMatch(await personalSkillCatalog('',async()=> 'read'),/merchant\.o
 assert.match(await personalSkillCatalog('',async()=> 'off'),/No matching/)
 assert.doesNotMatch(workspaceSkillCatalog('',true),/people\.brief|thread\.reply/)
 assert.match(workspaceSkillCatalog('stock',true),/workspace\.stock\.summary/)
-assert.match(workspaceSkillCatalog('',false),/No matching/)
+assert.match(workspaceSkillCatalog('',false),/workspace\.shared\.reports/)
+assert.match(workspaceSkillCatalog('stock',false),/No matching/)
 const {selectGovernedOwner,governedModelCall,openAICompatibleReceipt}=await import('../lib/agent/governed-model-call')
 const env={GOGO_HACHI_ENFORCEMENT:'1',GOGO_HACHI_PERSONAL_OWNERS:'101'}
 assert.deepEqual(selectGovernedOwner('101','101',env),{kind:'governed',owner:'101'})

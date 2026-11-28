@@ -1088,6 +1088,7 @@ async function handleChatPost(req: NextRequest) {
       userName: user.name || 'Gogo',
       messageType: 'text',
       messageId: shadowEventId,
+      memorySource:text===String(body?.text||'').trim().slice(0,2000)?'direct':'derived',memorySurface:'dashboard',
       semantic: webObservation?.jev,
       approxLocation: parseApproxLocation(body?.location),
       pendingQuestionChecked,
