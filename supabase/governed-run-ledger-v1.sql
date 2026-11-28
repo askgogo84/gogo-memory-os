@@ -381,4 +381,59 @@ begin
 end $$;
 revoke all on function public.gogo_record_memory_block_event(text,text,text,text,text) from public,anon,authenticated,service_role;
 grant execute on function public.gogo_record_memory_block_event(text,text,text,text,text) to service_role;
+-- Read the actual ledger totals without exposing prompts, identities of team
+-- members, run IDs or provider receipts. Values are exact decimal strings.
+create function public.gogo_read_scope_budget(p_scope_kind text,p_scope_id text,p_actor_id text)
+returns jsonb language plpgsql security invoker set search_path='' as $$
+declare
+  pol public.gogo_governed_policies%rowtype;
+  m date;
+  t record;
+  unresolved bigint;
+  held numeric;
+  blocks bigint;
+begin
+  if p_scope_kind is null or p_scope_kind not in ('personal','workspace') or p_scope_id is null or
+    p_actor_id is null or p_actor_id !~ '^-?[1-9][0-9]{0,18}$' then return null; end if;
+  perform 1 from public.users where telegram_id::text=p_actor_id and access_status='active' for share;
+  if not found then return null; end if;
+  if p_scope_kind='personal' then
+    if p_scope_id<>p_actor_id then return null; end if;
+  else
+    perform 1 from public.workspace_members where workspace_id::text=p_scope_id and telegram_id::text=p_actor_id and role::text in ('owner','admin') for share;
+    if not found then return null; end if;
+  end if;
+  select * into pol from public.gogo_governed_policies where scope_kind=p_scope_kind and scope_id=p_scope_id;
+  if not found then return null; end if;
+  m:=date_trunc('month',clock_timestamp() at time zone 'Asia/Kolkata')::date;
+  select coalesce(sum(charged_cost_micros),0) as cost,coalesce(sum(charged_tokens),0) as tokens,
+    coalesce(sum(model_calls),0) as models,coalesce(sum(tool_calls),0) as tools,coalesce(bool_or(overrun),false) as breached
+    into t from public.gogo_governed_runs where scope_kind=p_scope_kind and scope_id=p_scope_id and period_start=m;
+  select count(*),coalesce(sum(a.reserved_cost_micros),0) into unresolved,held
+    from public.gogo_governed_attempts a join public.gogo_governed_runs r using(scope_kind,scope_id,run_id)
+    where a.scope_kind=p_scope_kind and a.scope_id=p_scope_id and (a.state='unknown' or (a.state='reserved' and r.deadline_at<=clock_timestamp()));
+  select count(*) into blocks from public.gogo_memory_block_events where scope_kind=p_scope_kind and scope_id=p_scope_id and expires_at>clock_timestamp();
+  return jsonb_build_object('periodStart',m::text,'costMicros',t.cost::text,'costLimitMicros',pol.month_cost_micros::text,
+    'tokens',t.tokens::text,'tokenLimit',pol.month_tokens::text,'modelCalls',t.models::text,'modelCallLimit',pol.month_model_calls::text,
+    'toolCalls',t.tools::text,'toolCallLimit',pol.month_tool_calls::text,'unresolved',unresolved::text,'unresolvedCostMicros',held::text,
+    'recentMemoryBlocks',blocks::text,'enabled',pol.enabled and pol.valid_until>clock_timestamp(),'overrun',t.breached);
+end $$;
+revoke all on function public.gogo_read_scope_budget(text,text,text) from public,anon,authenticated,service_role;
+grant execute on function public.gogo_read_scope_budget(text,text,text) to service_role;
+
+-- Retention runs even after the execution canary is disabled. Bounded batches
+-- delete expired reason-only audit rows, never current memory or budget data.
+create index gogo_memory_block_expiry_idx on public.gogo_memory_block_events(expires_at);
+create function public.gogo_prune_memory_block_events()
+returns integer language plpgsql security invoker set search_path='' as $$
+declare removed integer;
+begin
+  delete from public.gogo_memory_block_events where id in (
+    select id from public.gogo_memory_block_events where expires_at<=clock_timestamp() order by expires_at,id limit 5000
+  );
+  get diagnostics removed=row_count;
+  return removed;
+end $$;
+revoke all on function public.gogo_prune_memory_block_events() from public,anon,authenticated,service_role;
+grant execute on function public.gogo_prune_memory_block_events() to service_role;
 commit;

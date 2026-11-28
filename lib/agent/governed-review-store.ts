@@ -113,8 +113,9 @@ export async function listSkillReview(actor:string,scope:Scope){
     const active=await currentDefinition(scope,base,p,sha)
     items.push({skillId:base.id,generation:generation(p),activeDigest:p?.active_digest||skillRevisionDigest(base),activeVersion:active?.sopVersion||null,activeRevisionId:p?.revision_id||null,proposals})
   }
+  const budget=await supabaseAdmin.rpc('gogo_read_scope_budget',{p_scope_kind:scope.kind,p_scope_id:scope.id,p_actor_id:actor})
   await access(actor,scope,true)
-  return {items,buildVerified:BUILD.test(sha)}
+  return {items,buildVerified:BUILD.test(sha),budget:budget.error?null:budget.data}
 }
 export type ReviewChange={action:'publish'|'rollback';skillId:string;revisionId?:string;expectedGeneration:number;expectedDigest:string}
 export async function changeSkillReview(actor:string,scope:Scope,x:ReviewChange){

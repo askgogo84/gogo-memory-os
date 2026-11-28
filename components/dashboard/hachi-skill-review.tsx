@@ -4,7 +4,13 @@ import {useEffect,useRef,useState} from 'react'
 
 type Proposal={id:string;version:string;title:string;purpose:string;summary:string;digest:string;baseDigest:string;reviewed:boolean;selfAuthored:boolean}
 type Skill={skillId:string;generation:number;activeDigest:string;activeVersion:string|null;activeRevisionId:string|null;proposals:Proposal[]}
-type ReviewSnapshot={items:Skill[];buildVerified:boolean}
+type Budget={periodStart:string;costMicros:string;costLimitMicros:string;tokens:string;tokenLimit:string;modelCalls:string;modelCallLimit:string;toolCalls:string;toolCallLimit:string;unresolved:string;unresolvedCostMicros:string;recentMemoryBlocks:string;enabled:boolean;overrun:boolean}
+type ReviewSnapshot={items:Skill[];buildVerified:boolean;budget:Budget|null}
+function rupees(v:string):string{
+  if(!/^[0-9]{1,30}$/.test(v))return 'unverified'
+  const whole=BigInt(v)/1000000n,fraction=String(BigInt(v)%1000000n).padStart(6,'0')
+  return '₹'+whole.toLocaleString('en-IN')+'.'+fraction.replace(/0+$/,'').padEnd(2,'0')
+}
 type Change={action:'publish'|'rollback';skillId:string;revisionId?:string;expectedGeneration:number;expectedDigest:string}
 
 const button='min-h-10 rounded-xl border border-[#36524d] bg-[#132a27] px-3 py-2 text-sm font-medium text-[#85d9cc] disabled:cursor-not-allowed disabled:opacity-45'
@@ -62,6 +68,20 @@ export function HachiSkillReview({workspaceId}:{workspaceId?:string}){
     {notice&&!busy&&<p role="status" className="text-sm text-[#85d9cc]">{notice}</p>}
     {error&&<p role="alert" className="text-sm text-[#e6be7e]">{error}</p>}
     {snapshot&&!snapshot.buildVerified&&<p className="text-sm text-[#e6be7e]">The running build has no verified commit identity. Publication is disabled.</p>}
+    {snapshot&&<div className="space-y-2 rounded-xl border border-[#303c39] p-3">
+      <h3 className="text-sm font-semibold text-[#f2efea]">Scope budget · IST month</h3>
+      {snapshot.budget?<><p className="text-xs text-[#a8a8a4]">Month beginning {snapshot.budget.periodStart} · conservative ledger charges, not provider invoices.</p>
+        <div className="grid grid-cols-2 gap-3 text-sm text-[#f2efea]">
+          <div><p className="text-xs text-[#a8a8a4]">Reserved / charged vs cap</p>{rupees(snapshot.budget.costMicros)} / {rupees(snapshot.budget.costLimitMicros)}</div>
+          <div><p className="text-xs text-[#a8a8a4]">Tokens vs cap</p>{snapshot.budget.tokens} / {snapshot.budget.tokenLimit}</div>
+          <div><p className="text-xs text-[#a8a8a4]">Model calls vs cap</p>{snapshot.budget.modelCalls} / {snapshot.budget.modelCallLimit}</div>
+          <div><p className="text-xs text-[#a8a8a4]">Tool calls vs cap</p>{snapshot.budget.toolCalls} / {snapshot.budget.toolCallLimit}</div>
+          <div><p className="text-xs text-[#a8a8a4]">Unresolved attempts, all periods</p>{snapshot.budget.unresolved} · {rupees(snapshot.budget.unresolvedCostMicros)} held</div>
+          <div><p className="text-xs text-[#a8a8a4]">Recent memory denials</p>{snapshot.budget.recentMemoryBlocks}</div>
+        </div>
+        {(!snapshot.budget.enabled||snapshot.budget.overrun||snapshot.budget.unresolved!=='0')&&<p role="status" className="text-xs text-[#e6be7e]">Budget execution is disabled, breached, or awaiting reconciliation. Check the operator ledger before another attempt.</p>}
+      </>:<p className="text-xs text-[#a8a8a4]">Usage totals could not be verified.</p>}
+    </div>}
     {snapshot?.items.length===0&&<p className="text-sm text-[#a8a8a4]">No skill descriptions are registered in this scope.</p>}
     {snapshot?.items.map(skill=><article key={skill.skillId} className="space-y-3 rounded-xl border border-[#303c39] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
