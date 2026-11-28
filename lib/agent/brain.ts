@@ -370,19 +370,30 @@ export function meterBrainCall(e: BrainMeterEvent): void {
 // handlers untranslated (Sonnet rewrote each into English), and Gogo's handlers read English. Sarvam-only addendum.
 export const SARVAM_HANDOFF_NOTE = 'Gogo\'s handlers read English. When you call handle and the message is not in English, write the instruction in English and set keep_original false. Keep every name, number, date, time and amount exactly, and keep every "not", "don\'t" and "never". When the message is in English, follow the rules above unchanged. Answer only what was asked: never add an offer of other help to a reply.'
 
+// One provider attempt per reservation on the selected canary. Existing
+// tests and non-selected requests retain their original SDK retry settings.
+async function completeBrainModel(client:Pick<Anthropic,'messages'>,params:Anthropic.MessageCreateParamsNonStreaming,options:{timeout:number;maxRetries:number},owner?:number){
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return client.messages.create(params,options)
+  const g=await import('./governed-model-call')
+  return g.governedModelCall(params.model,guarded=>client.messages.create(params,guarded?{timeout:options.timeout,maxRetries:0}:options),x=>x,owner)
+}
+
 export async function decide(p: { text: string; ctx: BrainContext; now?: Date; client?: Pick<Anthropic, 'messages'>; telegramId?: number; meter?: (e: BrainMeterEvent) => void; model?: string; source?: BrainMeterEvent['source'] }): Promise<BrainDecision & { ms: number; usage: BrainUsage }> {
   const t0 = Date.now()
   let model = p.model || MODEL()
   let usage: BrainUsage = brainUsage(null)
   let ok = false
   try {
+    const governed=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&await import('./governed-model-call').then(m=>m.modelGoverned(p.telegramId))
+    // Evaluation calls must not consume the selected customer's paid budget.
+    if(governed&&p.source==='brain_shadow')return {kind:'skip',reason:'governed_shadow_disabled',ms:Date.now()-t0,usage}
     // Sarvam is opt-in and canary-only because runBrain already limits eligible users.
     // Never reinterpret an approval: the existing decisionFromToolUse and action guards remain authoritative.
     if (!p.client && !p.model && sarvamEnabled('GOGO_SARVAM_BRAIN')) {
       try {
         const { sarvamChat } = await import('@/lib/services/sarvam')
         const res = await sarvamChat({
-          model: 'sarvam-105b', maxTokens: 1200, toolChoice: 'required', timeoutMs: TIMEOUT_MS,
+          model: 'sarvam-105b', maxTokens: 1200, toolChoice: 'required', timeoutMs: TIMEOUT_MS, governedOwner:p.telegramId,
           messages: [{ role: 'system', content: `${BRAIN_SYSTEM(p.ctx, p.now || new Date())}\n\n${SARVAM_HANDOFF_NOTE}` },
             ...brainMessages(p.ctx.turns, p.text).map(m => ({ role: m.role as 'user' | 'assistant', content: String(m.content) }))],
           tools: BRAIN_TOOLS.map(t => ({ name: t.name, description: t.description || t.name,
@@ -395,11 +406,12 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
         return { ...d, ms: Date.now() - t0, usage }
       } catch (e: any) {
         // No model-generated tool is executed by this branch. On failure preserve the Anthropic path.
+        if(e instanceof Error&&e.name==='GovernedModelError')throw e
         console.error('SARVAM_BRAIN_FALLBACK:', String(e?.code || 'error').slice(0, 50))
       }
     }
     // Shadow probabilities are telemetry only, NEVER authority for routing, writes or approvals.
-    if (!p.client && sarvamEnabled('GOGO_SARVAM_PRISM_SHADOW')) {
+    if (!governed && !p.client && sarvamEnabled('GOGO_SARVAM_PRISM_SHADOW')) {
       void import('@/lib/services/sarvam')
         .then(m => m.sarvamPrismIntentShadow(redactSecretShapedText(p.text), { timeoutMs: 1200 }))
         .then(r => console.log('SARVAM_PRISM_SHADOW:', JSON.stringify({
@@ -410,10 +422,10 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
     // Order matters for caching: tools, then the cached static block, then the dynamic block and the turns.
     // Sonnet 5.5 cannot be forced to call a tool: forModel() turns 'any' into 'auto', and the note below (a final,
     // uncached system block) tells it a tool call is required. A plain-text answer is still handled as 'no_tool_use'.
-    const res: any = await client.messages.create(forModel({
+    const res: any = await completeBrainModel(client,forModel({
       model, max_tokens: 700, system: toolRequiredSystem(model, brainSystemBlocks(p.ctx, p.now || new Date())),
       tools: BRAIN_TOOLS, tool_choice: { type: 'any' }, messages: brainMessages(p.ctx.turns, p.text),
-    }), { timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES })
+    }), { timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES },p.telegramId)
     usage = brainUsage(res)
     ok = true
     const use = (res?.content || []).find((b: any) => b.type === 'tool_use')
@@ -422,6 +434,8 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
     const d = use ? decisionFromToolUse(p.text, use.name, use.input) : plain ? decisionFromToolUse(p.text, 'reply', { text: plain }) : { kind: 'skip' as const, reason: 'no_tool_use' }
     return { ...d, ms: Date.now() - t0, usage }
   } catch (err: any) {
+    // Do not return a skip that would re-enter the ungoverned legacy pipeline.
+    if(err instanceof Error&&err.name==='GovernedModelError')return {kind:'reply',text:"I couldn't verify the usage allowance or complete that model request. I haven't executed a new action.",ms:Date.now()-t0,usage}
     return { kind: 'skip', reason: `error:${clean(err?.message || err, 120)}`, ms: Date.now() - t0, usage }
   } finally {
     const event: BrainMeterEvent = { telegramId: Number(p.telegramId), source: p.source || 'brain_decide', model, ms: Date.now() - t0, ok, usage }
@@ -793,10 +807,10 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       const t0 = Date.now()
       let res: any = null
       try {
-        res = await client.messages.create(forModel({
+        res = await completeBrainModel(client,forModel({
           model, max_tokens: 500, system: toolRequiredSystem(model, brainSystemBlocks(ctx, new Date(), `The search results were just sent (latest assistant message). Answer the user's earlier question from those results only. Be brief, name the option number, airline, time and fare.`)),
           tools: BRAIN_TOOLS.filter(t => t.name === 'reply'), tool_choice: { type: 'tool', name: 'reply' }, messages: brainMessages(ctx.turns, `(Earlier, while you were searching, I asked:) ${question}`),
-        }), { timeout: TIMEOUT_MS * 2, maxRetries: 1 })
+        }), { timeout: TIMEOUT_MS * 2, maxRetries: 1 },p.telegramId)
       } finally {
         try { (p.meter || meterBrainCall)({ telegramId: p.telegramId, source: 'brain_followup', model, ms: Date.now() - t0, ok: !!res, usage: brainUsage(res) }) } catch { /* never */ }
       }

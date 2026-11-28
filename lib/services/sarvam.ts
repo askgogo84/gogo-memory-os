@@ -79,16 +79,19 @@ async function requestJson<T>(path: string, body: unknown, opts: RequestDeps = {
 export type SarvamChatResult = { text: string; tool: { name: string; input: Record<string, unknown> } | null; usage: SarvamUsage; model: SarvamChatModel }
 export async function sarvamChat(params: {
   model?: SarvamChatModel; messages: SarvamMessage[]; tools?: SarvamTool[];
-  maxTokens?: number; toolChoice?: 'auto' | 'required' | 'none';
+  maxTokens?: number; toolChoice?: 'auto' | 'required' | 'none'; governedOwner?:string|number;
 } & RequestDeps): Promise<SarvamChatResult> {
   const model = params.model || 'sarvam-105b'
   if (!CHAT_MODELS.includes(model)) throw new SarvamProviderError('model_unsupported')
   if (!params.messages.length || params.messages.some(m => !m.content || !['system','user','assistant'].includes(m.role))) throw new SarvamProviderError('messages_invalid')
   const tools = params.tools?.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }))
-  const result: any = await requestJson('/v1/chat/completions', {
+  const invoke=()=>requestJson<any>('/v1/chat/completions', {
     model, messages: params.messages, max_tokens: Math.max(64, Math.min(params.maxTokens || 1600, 4096)),
     reasoning_effort: null, ...(tools?.length ? { tools, tool_choice: params.toolChoice || 'auto' } : {}),
   }, params)
+  const result:any=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+    ?await import('@/lib/agent/governed-model-call').then(g=>g.governedModelCall(model,invoke,g.openAICompatibleReceipt,params.governedOwner))
+    :await invoke()
   const choice = result?.choices?.[0]
   if (!choice || choice.finish_reason === 'length' || choice.finish_reason === 'content_filter') throw new SarvamProviderError('incomplete')
   const calls = choice.message?.tool_calls
@@ -124,6 +127,12 @@ export async function sarvamPrism(params: { state: string | Record<string, unkno
     if (!q.instructions.trim()) throw new SarvamProviderError('prism_question_invalid')
     if (q.type === 'choice' && (Object.keys(q.criteria).length < 2 || Object.keys(q.criteria).length > 255)) throw new SarvamProviderError('prism_choices_invalid')
     if (q.type === 'score' && (q.criteria.length < 2 || q.criteria.length > 10)) throw new SarvamProviderError('prism_scale_invalid')
+  }
+  // Prism's usage receipt has a different contract. Do not let it bypass
+  // the selected owner's budget while that contract is unverified.
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'){
+    const g=await import('@/lib/agent/governed-model-call')
+    if(g.modelGoverned())throw new g.GovernedModelError('unpriced_prism')
   }
   const result: any = await requestJson('/v2/systemone', { model: 'sarvam-prism', state: params.state, questions }, params)
   if (!result?.answers || typeof result.answers !== 'object') throw new SarvamProviderError('prism_invalid')

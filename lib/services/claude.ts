@@ -20,9 +20,18 @@ const client = new Anthropic({
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
 const OPENAI_FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini'
 
+// Existing SDK behavior is unchanged outside the exact selected owner canary.
+const hachiModelGate=()=>((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1')
+const isGovernanceError=(e:unknown)=>e instanceof Error&&e.name==='GovernedModelError'
+async function completeAnthropic(params:Anthropic.MessageCreateParamsNonStreaming){
+  if(!hachiModelGate())return client.messages.create(params)
+  const g=await import('@/lib/agent/governed-model-call')
+  return g.governedModelCall(params.model,guarded=>guarded?client.messages.create(params,{maxRetries:0,timeout:25_000}):client.messages.create(params),value=>value)
+}
+
 async function askOpenAiFallback(params:{system?:string;messages:Message[];maxTokens:number}){
   if(!openai) throw new Error('openai_fallback_not_configured')
-  const response=await openai.chat.completions.create({
+  const request:OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming={
     model:OPENAI_FALLBACK_MODEL,
     max_tokens:params.maxTokens,
     temperature:0.3,
@@ -30,7 +39,10 @@ async function askOpenAiFallback(params:{system?:string;messages:Message[];maxTo
       ...(params.system?[{role:'system' as const,content:params.system}]:[]),
       ...params.messages.map(m=>({role:m.role,content:m.content})),
     ],
-  })
+  }
+  const response=hachiModelGate()
+    ?await import('@/lib/agent/governed-model-call').then(g=>g.governedModelCall(OPENAI_FALLBACK_MODEL,guarded=>guarded?openai!.chat.completions.create(request,{maxRetries:0,timeout:25_000}):openai!.chat.completions.create(request),g.openAICompatibleReceipt))
+    :await openai.chat.completions.create(request)
   return response.choices?.[0]?.message?.content?.trim()||''
 }
 
@@ -184,11 +196,11 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
       const r = await sarvamChat({ model: 'sarvam-105b-conversations', maxTokens, timeoutMs: 12000,
         messages: [{ role: 'system', content: systemPrompt }, ...messages] })
       return finishChatReply(userMessage, r.text, preferenceBlock)
-    } catch (e: any) { console.error('SARVAM_DIALOGUE_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
+    } catch (e: any) { if(isGovernanceError(e))throw e;console.error('SARVAM_DIALOGUE_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
   }
 
   try{
-    const response = await client.messages.create(forModel({
+    const response = await completeAnthropic(forModel({
       model: SONNET_MODEL,
       max_tokens: maxTokens,
       system: systemPrompt,
@@ -196,6 +208,7 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
     }))
     return finishChatReply(userMessage, textOf(response.content), preferenceBlock)
   }catch(error:any){
+    if(isGovernanceError(error))throw error
     console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
     return finishChatReply(userMessage, await askOpenAiFallback({system:systemPrompt,messages,maxTokens}), preferenceBlock)
   }
@@ -227,13 +240,14 @@ RULES — follow every one:
 FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write any URL bare. Keep it concise (2-5 sentences).`
 
   try {
-    const response = await client.messages.create(forModel({
+    const response = await completeAnthropic(forModel({
       model: SONNET_MODEL,
       max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
     }))
     return textOf(response.content)
   } catch (error: any) {
+    if(isGovernanceError(error))throw error
     console.error('ANTHROPIC_FLIGHT_STATUS_FAILED_FALLING_BACK:', providerErrorSummary(error))
     return await askOpenAiFallback({ messages: [{ role: 'user', content: prompt }], maxTokens: 900 })
   }
@@ -400,16 +414,17 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
       const r = await sarvamChat({ model: 'sarvam-105b', maxTokens: 1500, timeoutMs: 12000,
         messages: [{ role: 'user', content: prompt }] })
       return finishWebAnswer(userMessage, r.text, context)
-    } catch (e: any) { console.error('SARVAM_WEB_ANSWER_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
+    } catch (e: any) { if(isGovernanceError(e))throw e;console.error('SARVAM_WEB_ANSWER_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
   }
   try{
-    const response = await client.messages.create(forModel({
+    const response = await completeAnthropic(forModel({
       model: SONNET_MODEL,
       max_tokens: 1500,
       messages:[{role:'user',content:prompt}],
     }))
     return finishWebAnswer(userMessage, textOf(response.content), context)
   }catch(error:any){
+    if(isGovernanceError(error))throw error
     console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
     return finishWebAnswer(userMessage, await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500}), context)
   }

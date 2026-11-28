@@ -27,6 +27,7 @@ export async function askMercury(
   const controller = typeof AbortController === 'function' ? new AbortController() : null
   const timer = controller ? setTimeout(() => controller.abort(), opts.timeoutMs ?? MERCURY_TIMEOUT_MS) : null
   try {
+    const invoke=async(guarded:boolean)=>{
     const res = await (opts.fetchImpl || fetch)(BASE_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
@@ -39,16 +40,23 @@ export async function askMercury(
       signal: controller?.signal,
     } as any)
     if (!res.ok) {
+      if(guarded)throw Error('mercury_http_'+res.status)
       const body = await res.text().catch(() => '')
       console.error('MERCURY_FAILED:', JSON.stringify({ label: opts.label || 'chat', status: res.status, model, body: body.slice(0, 200) }))
       return null
     }
-    const data: any = await res.json()
+    return res.json()
+    }
+    const data:any=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+      ?await import('@/lib/agent/governed-model-call').then(g=>g.governedModelCall(model,invoke,g.openAICompatibleReceipt))
+      :await invoke(false)
+    if(!data)return null
     const text = String(data?.choices?.[0]?.message?.content || '').trim()
     const ms = Date.now() - started
     console.log('MERCURY:', JSON.stringify({ label: opts.label || 'chat', model, ms, chars: text.length, usage: data?.usage || null }))
     return text ? { text, ms, model } : null
   } catch (error: any) {
+    if(error instanceof Error&&error.name==='GovernedModelError')throw error
     console.error('MERCURY_FAILED:', JSON.stringify({ label: opts.label || 'chat', model, error: String(error?.name === 'AbortError' ? 'timeout' : error?.message || error).slice(0, 160) }))
     return null
   } finally {
