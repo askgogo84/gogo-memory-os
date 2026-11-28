@@ -2,10 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { consumeGmailOauthState, consumeGmailSendOauthState, exchangeGmailCode, getGoogleEmail } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { encryptGoogleToken, hasGoogleTokenEncryptionKey } from '@/lib/security/google-token-crypto'
+import { clearOauthBindingCookie, oauthBindingMatches, readOauthBindingCookie } from '@/lib/security/oauth-browser-binding'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  return clearOauthBindingCookie(await handle(req), 'gmail')
+}
+
+async function handle(req: NextRequest): Promise<NextResponse> {
   try {
     const url = new URL(req.url)
     const code = url.searchParams.get('code')
@@ -14,8 +19,10 @@ export async function GET(req: NextRequest) {
     const readTelegramId=sendTelegramId?null:consumeGmailOauthState(state)
     const telegramId=sendTelegramId||readTelegramId
     const sendUpgrade=Boolean(sendTelegramId)
+    // OAuth CSRF fix: refused before the code is exchanged unless this browser holds the cookie issued for THIS state.
+    const boundToThisBrowser=oauthBindingMatches('gmail',state,readOauthBindingCookie(req,'gmail'))
 
-    if (!code || !telegramId) {
+    if (!code || !telegramId || !boundToThisBrowser) {
       return NextResponse.json(
         { ok: false, error: 'Invalid or expired Google authorization' },
         { status: 400 }
