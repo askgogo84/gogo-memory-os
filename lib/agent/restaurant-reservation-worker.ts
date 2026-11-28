@@ -77,7 +77,7 @@ function reserveXReceipt(result:any,payload:any){
   }catch{return null}
   const page=String(result.pageText||'').normalize('NFKC').replace(/\s+/g,' ').trim()
   if(/\b(?:not\s+(?:yet\s+)?confirmed|unconfirmed|pending\s+(?:confirmation|approval)|(?:booking|reservation)\s+(?:is\s+)?(?:pending|failed|cancelled|canceled|unsuccessful)|status\s*:\s*(?:pending|failed|cancelled|canceled|unconfirmed|rejected))\b/i.test(page))return null
-  if(!/\b(?:booking|reservation)\s+(?:(?:is|was|has been)\s+)?(?:confirmed|completed|successful)\b|\b(?:status\s*:\s*)(?:confirmed|completed)\b|\b(?:successfully\s+(?:booked|confirmed)|thank you for your (?:booking|reservation))\b/i.test(page))return null
+  if(!/\b(?:booking|reservation)\s+(?:(?:is|was|has been)\s+)?(?:confirmed|completed|successful)\b|\b(?:status\s*:\s*)(?:confirmed|completed)\b|\bsuccessfully\s+(?:booked|confirmed)\b/i.test(page))return null
   const dates=[...page.matchAll(/\b(?:booking\s+|reservation\s+)?date\s*:\s*(20\d{2}-\d{2}-\d{2})\b/gi)].map(m=>m[1])
   const guests=[...page.matchAll(/\b(?:number of\s+)?guests\s*:\s*(\d{1,2})\b/gi)].map(m=>Number(m[1]))
   const clocks=[...page.matchAll(/\b(?:booking\s+|reservation\s+)?time\s*:\s*(\d{1,2}):(\d{2})\s*(am|pm)\b/gi)].map(m=>Number(m[1])>=1&&Number(m[1])<=12&&Number(m[2])<=59?normalizeClock(Number(m[1]),Number(m[2]),m[3]):'')
@@ -209,8 +209,8 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   if(!policy.allowed)throw new Error(`policy_${policy.reason}`)
   const url=String(payload.reservationUrl||'')
   if(reserveXHost(url)&&!reserveXBookingUrl(url)){
-    const summary='This older ReserveX approval does not point to a public venue booking page. No browser action was attempted; refresh the same reservation task before approving another route.'
-    await failSafe({action,event,runId,approvalId,status:'paused',summary,error:'restaurant_context_review_required',expireApproval:true,actor})
+    const summary='This ReserveX approval does not point to a public venue booking page. I have not attempted a new browser action. Reconcile the existing reservation before approving another route.'
+    await failSafe({action,event,runId,approvalId,status:'paused',summary,error:'restaurant_reconciliation_pending',actor})
     await notify(actor,summary)
     return{status:'paused' as const,runId}
   }
