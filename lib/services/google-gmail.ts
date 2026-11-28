@@ -1,3 +1,9 @@
+import { currentGovernedForeground, currentGovernedRun } from '@/lib/agent/governed-run-context'
+
+async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1'&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return fetch(url,init)
+  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
+}
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -237,7 +243,7 @@ export async function revokeGoogleToken(token:string):Promise<boolean> {
 
 export async function refreshGmailAccessToken(refreshToken: string): Promise<string | null> {
   try {
-    const response = await fetch('https://oauth2.googleapis.com/token', {
+    const response = await governedRead('google.workspace.refresh','https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -264,7 +270,7 @@ function getHeader(headers: any[], name: string) {
 
 async function gmailFetchJson(accessToken: string, url: string) {
   const res = await withTimeout(
-    fetch(url, {
+    governedRead('google.gmail.read',url, {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',
     }),
@@ -510,7 +516,7 @@ export type GmailReplyDraft = {
   newMessage?:boolean
 }
 
-export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft){
+export function gmailSendWireBody(draft:GmailReplyDraft){
   const subject=draft.newMessage||/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`
   const headers=[
     `To: ${sanitizeHeader(draft.to)}`,
@@ -524,12 +530,15 @@ export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft){
     headers.push(`References: ${mid}`)
   }
   const raw=base64Url(`${headers.join('\r\n')}\r\n\r\n${draft.body}`)
-  const res=await withTimeout(fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
-    method:'POST',
-    headers:{Authorization:`Bearer ${accessToken}`,'Content-Type':'application/json'},
-    body:JSON.stringify(draft.newMessage?{raw}:{raw,threadId:draft.threadId}),
-    cache:'no-store',
-  }),12000)
+  return JSON.stringify(draft.newMessage?{raw}:{raw,threadId:draft.threadId})
+}
+
+export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft,approvedFetch?:typeof fetch){
+  const url='https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+  const init:RequestInit={method:'POST',headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},body:gmailSendWireBody(draft),cache:'no-store'}
+  // A governed adapter has its own pre-dispatch deadline and transport timeout;
+  // do not race it with a caller timer that could expire before authorization.
+  const res=approvedFetch?await approvedFetch(url,init):await withTimeout(fetch(url,init),12000)
   const data=await res.json().catch(()=>({}))
   if(!res.ok||!data?.id){
     const err=res.status===403?'gmail_send_scope_required':`gmail_send_failed_${res.status}`

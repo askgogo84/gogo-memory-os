@@ -1,3 +1,9 @@
+import { currentGovernedForeground, currentGovernedRun } from './governed-run-context'
+
+async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1'&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return fetch(url,init)
+  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
+}
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { extractServerlessPdfText } from '@/lib/services/pdf-js-serverless'
 import { refreshGmailAccessToken } from '@/lib/google-gmail'
@@ -70,7 +76,7 @@ async function workspaceFetch(actor:AgentActor,url:string){
   const creds=await credentials(actor)
   let token=String(creds.gmail_access_token||'')
   if(!token&&creds.gmail_refresh_token)token=await refresh(actor,String(creds.gmail_refresh_token))
-  const run=(accessToken:string)=>fetch(url,{headers:{Authorization:`Bearer ${accessToken}`},cache:'no-store'})
+  const run=(accessToken:string)=>governedRead('google.drive.read',url,{headers:{Authorization:`Bearer ${accessToken}`},cache:'no-store'},actor.legacyTelegramId)
   let response=await run(token)
   if(response.status===401&&creds.gmail_refresh_token){
     token=await refresh(actor,String(creds.gmail_refresh_token))

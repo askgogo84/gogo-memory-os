@@ -20,6 +20,7 @@ const db={from(table:string){
   }).then(resolve,reject)}};return q
 }}
 const mocks:any={
+  './governed-run-context':{currentGovernedRun:()=>null,currentGovernedForeground:()=>null},
   '@/lib/security/email-redaction':emailRedaction,
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(v:string)=>v},

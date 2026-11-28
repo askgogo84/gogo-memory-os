@@ -13,7 +13,7 @@ assert.match(route, /if \(scoped && threadId\) q = q\.eq\('thread_id', threadId\
 assert.match(route, /data = \(data \|\| \[\]\)\.filter\(\(row: any\) => !row\?\.thread_id\)\.slice\(0, 50\)/)
 assert.match(route, /if \(error\) \(\{ data, error \} = await historyQuery\(false\)\)/, 'pre-migration fallback for the main view')
 // Send: rows created by this request are tagged, owner-scoped, untagged only, only after a successful reply.
-assert.match(route, /export async function POST\(req: NextRequest\) \{ return withChatChannel\(req\) \}\n\nasync function handleChatPost\(req: NextRequest\)/)
+assert.match(route, /export async function POST\(req: NextRequest\)\s*\{[\s\S]*?GOGO_HACHI_ENFORCEMENT==='1'[\s\S]*?withGovernedForeground\(\(\)=>withChatChannel\(req\)\)[\s\S]*?:withChatChannel\(req\)\s*\}\s*async function handleChatPost\(req: NextRequest\)/, 'both legacy and governed POST must preserve channel wrapper')
 assert.match(route, /if \(threadValue && res\.status < 400\)/)
 assert.match(route, /\.eq\('telegram_id', tg\)\.is\('thread_id', null\)\.gte\('created_at', startedAt\)/)
 assert.match(route, /await import\('@\/lib\/agent\/thread-context'\)/, 'lazy import keeps strict route harnesses working')

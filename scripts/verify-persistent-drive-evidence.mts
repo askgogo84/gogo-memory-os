@@ -81,7 +81,7 @@ function harness(steps = [drive('Read \"Budget\" from my Google Drive'),task('Li
   './specialist-registry':{capabilityForSpecialist,selectSpecialistRoute:()=>({primary:'tasks',supporting:[]})},
   './run-notify':{notifyRunOutcome:async()=>{}},
  })
- const workspace=load('lib/agent/google-workspace-read.ts')
+ const workspace=load('lib/agent/google-workspace-read.ts',{'./governed-run-context':{currentGovernedRun:()=>null,currentGovernedForeground:()=>null}})
  const read=existsSync('lib/agent/persistent-drive-read.ts')?load('lib/agent/persistent-drive-read.ts',{'./google-workspace-read':workspace}):{}
  const travelRead=load('lib/agent/persistent-travel-read.ts')
  const projection=load('lib/agent/persistent-flight-result.ts')

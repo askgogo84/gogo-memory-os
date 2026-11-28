@@ -67,7 +67,7 @@ import { detectFriendReminder, isFriendReminderFollowupCandidate, normalizePhone
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
 import { pickRecurringDuplicate, mayExecuteChatReminderDirective } from '@/lib/bot/reminder-dedup'
-import { stripSecretShapedMemories } from '@/lib/bot/memory-redaction'
+import { stripSecretShapedMemories, explicitMemoryFact, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
@@ -195,6 +195,9 @@ async function recordWebSearch(
 
 export type ProcessIncomingParams = {
   internalStep?: boolean
+  /** Set only by an authenticated surface after comparing its original text. */
+  memorySource?: 'direct'|'forwarded'|'derived'
+  memorySurface?: 'whatsapp'|'dashboard'
   /** Set on the halves of a split "remind me … and also what's …?" so they are not split again. */
   splitPart?: boolean
   channel: Channel
@@ -271,10 +274,10 @@ async function getMemories(telegramId: number): Promise<string[]> {
   return stripSecretShapedMemories(rows.filter(isIndexable)).slice(0,20)
 }
 
-async function saveMemory(telegramId: number, content: string, topic: string | null = null) {
+async function saveMemory(telegramId: number, content: string, topic: string | null = null, provenance?:{origin:'authenticated_literal';surface:'whatsapp'|'dashboard';explicit_save:true;observed_at:string}) {
   const { data, error } = await supabaseAdmin
     .from('memories')
-    .insert({ telegram_id: telegramId, content })
+    .insert({ telegram_id: telegramId, content, ...(provenance?{gogo_provenance:provenance}:{}) })
     .select('id')
     .single()
   if(error||!data?.id)throw new Error('memory_save_failed')
@@ -566,9 +569,36 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'assistant',reply)
     return {text:reply,handledBy:'secret-guard',resolvedUser}
   }
-  console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
+  console.log('PIM:start', { channel: params.channel, textLength: String(params.text || '').length })
 
   const incomingText = (params.text || '').trim()
+  // Explicit read-only discovery on the selected owner canary only. This does
+  // not route model-supplied names to executors or grant connector permissions.
+  const hachiEnv=(globalThis as any).process?.env||{}
+  const governedMemory=hachiEnv.GOGO_HACHI_ENFORCEMENT==='1'&&String(hachiEnv.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(resolvedUser.telegramId))
+  const sourceDenied=Boolean(params.internalStep)||params.memorySource==='forwarded'||params.memorySource==='derived'||(governedMemory&&(params.memorySource!=='direct'||!params.memorySurface||params.splitPart===true||params.messageType!=='text'))
+  const memoryProvenance=governedMemory&&!sourceDenied&&params.memorySurface?{origin:'authenticated_literal' as const,surface:params.memorySurface,explicit_save:true as const,observed_at:new Date().toISOString()}:undefined
+  if(!params.internalStep&&hachiEnv.GOGO_HACHI_ENFORCEMENT==='1'&&String(hachiEnv.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(resolvedUser.telegramId))&&/^(?:show|list|find|search)\s+(?:(?:my|available|workspace)\s+)?skills?\b/i.test(incomingText)){
+    const catalog=await import('@/lib/agent/governed-skill-catalog')
+    const query=catalog.skillQuery(incomingText)
+    if(query!==null){
+      const actor={userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'}
+      const runtime=await import('@/lib/agent/governed-run-context').then(async c=>{
+        const r=await import('@/lib/agent/governed-runtime'),owner=String(actor.legacyTelegramId)
+        return c.currentGovernedForeground()?c.foregroundRuntime(owner,()=>r.openPersonalGovernedRuntime(actor)):null
+      }).catch(()=>null)
+      const until=Date.now()+15_000
+      const result=runtime?await runtime.local('personal_skill_catalog',async()=>{
+        const a=await import('@/lib/agent/adaptive-autonomy')
+        const reviewed=await import('@/lib/agent/governed-review-store').then(m=>m.reviewedCatalogDefinitions(String(actor.legacyTelegramId),{kind:'personal',id:String(actor.legacyTelegramId)}))
+        return catalog.personalSkillCatalog(query,c=>a.capabilityPermissionLevel(actor.legacyTelegramId,c),reviewed)
+      },()=>Date.now()<until):null
+      const reply=result?.state==='completed'?result.value:'The governed skill catalog is unavailable or has reached its limits. Nothing was executed.'
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      return {text:formatOutgoingText(params.channel,reply),handledBy:'governed-skill-catalog',resolvedUser}
+    }
+  }
   // Cheap pre-filter + env gate: the vm route harnesses never load the module.
   const alertFrequency=(globalThis as any).process?.env?.VERCEL_ENV&&/\b(?:less|fewer|more\s+often|only\s+(?:the\s+)?(?:important|urgent|critical)|too\s+many)\b/i.test(incomingText)
     ?await import('@/lib/agent/alert-preferences').then(m=>m.tryAlertFrequencyCommand({telegramId:resolvedUser.telegramId,text:incomingText}),()=>null):null
@@ -1011,7 +1041,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       messageId: params.messageId ?? null,
     })
     // "24k" right after "22K or 24K gold?": handle the full request it completes, exactly as if typed.
-    if (pendingAnswer?.rewrite) return processIncomingMessage({ ...params, text: pendingAnswer.rewrite, semantic: null, pendingQuestionChecked: true })
+    if (pendingAnswer?.rewrite) return processIncomingMessage({ ...params, text: pendingAnswer.rewrite, memorySource:'derived', semantic: null, pendingQuestionChecked: true })
     if (pendingAnswer) {
       await saveConversation(resolvedUser.telegramId, 'user', incomingText)
       await saveConversation(resolvedUser.telegramId, 'assistant', pendingAnswer.text)
@@ -1969,8 +1999,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // Topic bucket save (1.5): "remember for <topic>: <fact>" / "save to <topic> bucket: <fact>"
   {
     const ts = parseTopicSave(incomingText)
-    if (ts) {
-      await saveMemory(resolvedUser.telegramId, ts.fact, ts.topic)
+    if(ts&&sourceDenied){
+      const reply="I haven't saved that as a new fact. Please send the fact in your own direct text message to save it."
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      return {text:formatOutgoingText(params.channel,reply),resolvedUser}
+    }
+    if (ts && !params.internalStep) {
+      if(isSecretShapedMemory(ts.fact)||isSecretShapedMemory(ts.topic)){
+        const reply="I haven't saved that. Please use the secure Vault for sensitive information."
+        await saveConversation(resolvedUser.telegramId,'assistant',reply)
+        return {text:reply,handledBy:'secret-guard',resolvedUser}
+      }
+      await saveMemory(resolvedUser.telegramId, ts.fact, ts.topic, memoryProvenance)
       const reply = `Got it \u2014 saved to your *${ts.topic}* bucket: "${ts.fact}".`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -1997,12 +2037,22 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
-  if (intent.type === 'save_memory') {
-    const fact = incomingText
-      .replace(/^\s*(?:please\s+)?remember(?:\s+that)?\s+/i, '')
-      .replace(/^\s*save this memory[:\s]*/i, '')
-      .trim() || incomingText.trim()
-    await saveMemory(resolvedUser.telegramId, fact)
+  // Intent classification alone does not authorize a durable write: a quoted
+  // "remember that" in an email or an internal step is not a save request.
+  const directMemory = intent.type === 'save_memory' ? explicitMemoryFact(incomingText, sourceDenied) : null
+  if(intent.type==='save_memory'&&sourceDenied){
+    const reply="I haven't saved that as a new fact. Please send a direct text message with the fact you want saved."
+    await saveConversation(resolvedUser.telegramId,'assistant',reply)
+    return {text:formatOutgoingText(params.channel,reply),resolvedUser}
+  }
+  if (intent.type === 'save_memory' && directMemory) {
+    const fact = directMemory
+    if(isSecretShapedMemory(fact)){
+        const reply="I haven't saved that. Please use the secure Vault for sensitive information."
+        await saveConversation(resolvedUser.telegramId,'assistant',reply)
+        return {text:reply,handledBy:'secret-guard',resolvedUser}
+    }
+    await saveMemory(resolvedUser.telegramId, fact, null, memoryProvenance)
     const reply = `Got it \u2014 I'll remember that ${rememberedForReply(fact)}.`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -2053,8 +2103,21 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   let finalReply = parsed !== parsedRaw ? stripDirectiveLines(rawClaude) : rawClaude
 
   if (parsed.type === 'memory') {
-    await saveMemory(resolvedUser.telegramId, parsed.fact)
-    finalReply = parsed.replyText || 'Got it — I will remember that.'
+    // A model directive is not permission and its fact is not source evidence.
+    // Save only the literal current user's explicit fact, not the generated text.
+    const fact = explicitMemoryFact(incomingText, sourceDenied)
+    if (!fact || isSecretShapedMemory(fact)) {
+      // Record only a bounded no-content denial receipt for an opted-in
+      // selected owner. Never persist parsed.fact or a hash of its text.
+      const env=(globalThis as any).process?.env||{}
+      if(env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((x:string)=>x.trim()).includes(String(resolvedUser.telegramId))){
+        await import('@/lib/agent/governed-memory').then(m=>m.recordPersonalMemoryBlock(String(resolvedUser.telegramId),fact?'secret_rejected':'untrusted_directive')).catch(()=>false)
+      }
+      finalReply = "I haven't saved a new memory. To save a non-sensitive fact, say ‘Remember that …’ in your own message."
+    } else {
+      await saveMemory(resolvedUser.telegramId, fact, null, memoryProvenance)
+      finalReply = `Got it — I'll remember that ${rememberedForReply(fact)}.`
+    }
   }
 
   if (parsed.type === 'reminder') {

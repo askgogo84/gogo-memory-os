@@ -121,3 +121,16 @@ export function redactSecretShapedText(content: string): string {
 export function stripSecretShapedMemories(memories: string[]): string[] {
   return memories.filter((m) => !isSecretShapedMemory(m))
 }
+
+// Only a literal, direct, current-turn save request is authority for a freeform
+// memory write. Quoted mail, retrieved content and internal planner steps are not.
+// Retain the user's spelling; never use a model's paraphrased MEMORY directive.
+// The transport must still authenticate the sender; this parser is not an
+// authentication or forwarded-message provenance check.
+export function explicitMemoryFact(text: unknown, internalStep = false): string | null {
+  if (internalStep || typeof text !== 'string' || /[\r\n\u0000-\u001f\u007f]/.test(text) || text.length > 2200) return null
+  const m = text.trim().match(/^(?:(?:hey\s+gogo[, ]+|gogo[, ]+))?(?:(?:can|could|would)\s+you\s+|i\s+want\s+you\s+to\s+)?(?:please\s+)?(?:remember(?:\s+that)?\s+|save\s+this\s+memory\s*:\s*|note\s+this\s+down\s*:\s*)(.+)$/i)
+  const fact = m?.[1]?.trim()
+  if (!fact || fact.length > 2000 || /^to\s|^[\s"'“‘>]|\?$/.test(fact)) return null
+  return fact
+}

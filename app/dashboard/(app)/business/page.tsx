@@ -1,6 +1,7 @@
 import { getSession } from '@/lib/dashboard/session'
 import { getWorkspaceDetail, listMyInvites, listMyWorkspaces, UUID_RE, WorkspaceError, type MyInvite, type MyWorkspace, type WorkspaceDetail } from '@/lib/workspaces/access'
 import { BusinessWorkspace, CreateWorkspaceForm, InviteBanner } from './business-client'
+import {HachiSkillReview} from '@/components/dashboard/hachi-skill-review'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,6 +48,7 @@ export default async function BusinessPage({ searchParams }: { searchParams?: Pr
         </section>
       </>}
       {loaded.state === 'ok' && loaded.detail && <BusinessWorkspace workspaces={loaded.workspaces} detail={loaded.detail} />}
+      {loaded.state==='ok'&&loaded.detail&&['owner','admin'].includes(loaded.detail.myRole)&&process.env.GOGO_HACHI_ENFORCEMENT==='1'&&String(process.env.GOGO_HACHI_WORKSPACES||'').split(',').map(x=>x.trim()).includes(loaded.detail.id)&&<HachiSkillReview key={loaded.detail.id} workspaceId={loaded.detail.id}/>}
     </div>
   )
 }

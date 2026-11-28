@@ -30,6 +30,10 @@ new Function('require', 'module', 'exports', js)(
     if (name === '@/lib/security/google-token-crypto') return {
       decryptGoogleToken() { throw new Error('NO_REAL_TOKEN_ACCESS') },
     }
+    if (name === '@/lib/agent/governed-run-context') return {
+      currentGovernedRun: () => null,
+      currentGovernedForeground: () => null,
+    }
     throw new Error('Unexpected original module import: ' + name)
   },
   moduleStub, moduleStub.exports,

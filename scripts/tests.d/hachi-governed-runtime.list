@@ -1,0 +1,2 @@
+npx tsx scripts/verify-hachi-governed-runtime.mts
+npx tsx scripts/verify-governed-budget-ledger.mts

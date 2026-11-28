@@ -23,7 +23,7 @@ export async function exportMemory(telegramId: string, db: Db = supabaseAdmin, n
   const push = (f: ExportedFact) => { if (f.text && !INTERNAL.test(f.text)) facts.push(f) }
 
   for (const m of await read('memories', b => b.order('created_at', { ascending: false }).limit(1000)))
-    if (!INTERNAL.test(String(m.content || ''))) push({ id: String(m.id), source: 'memories', text: clean(m.content), at: m.created_at || null, provenance: { table: 'memories', id: m.id, created_at: m.created_at } })
+    if (!INTERNAL.test(String(m.content || ''))) push({ id: String(m.id), source: 'memories', text: clean(m.content), at: m.created_at || null, provenance: { table: 'memories', id: m.id, created_at: m.created_at, ...(m.gogo_provenance?.origin==='authenticated_literal'&&['whatsapp','dashboard'].includes(m.gogo_provenance.surface)&&m.gogo_provenance.explicit_save===true&&Number.isFinite(Date.parse(m.gogo_provenance.observed_at))?{origin:'authenticated_literal',surface:m.gogo_provenance.surface,explicit_save:true,observed_at:m.gogo_provenance.observed_at}:{}) } })
   for (const i of await read('user_insights', b => b.eq('status', 'active').order('confidence', { ascending: false }).limit(200)))
     push({ id: String(i.id), source: 'user_insights', text: clean(i.insight || i.summary || i.content || i.text), at: i.updated_at || i.created_at || null, provenance: { table: 'user_insights', id: i.id, confidence: i.confidence ?? null, kind: i.kind || i.insight_type || null } })
   for (const p of await read('user_memory_profile', b => b.limit(1)))

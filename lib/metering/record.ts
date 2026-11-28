@@ -31,7 +31,13 @@ export function keepAlive<T>(work: Promise<T>): Promise<T> {
 
 /** Record one metered call. Never throws and never blocks the caller for long. */
 export function recordMeterEvent(e: MeterEvent, telegramId?: string | number | null): Promise<void> {
-  return keepAlive(writeMeterEvent(e, telegramId))
+  // A deferred clone/read/rate lookup may finish after the provider permit.
+  // Preserve its existing owner trace while authorizing only rate-card reads
+  // and cost-event inserts, never additional provider calls.
+  const work=(globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+    ?import('@/lib/agent/governed-outbound-fence').then(m=>m.withTrustedMeterWrite(()=>writeMeterEvent(e,telegramId)))
+    :writeMeterEvent(e,telegramId)
+  return keepAlive(work)
 }
 async function writeMeterEvent(e: MeterEvent, telegramId?: string | number | null): Promise<void> {
   if (Date.now() < disabledUntil || process.env.ADMIN_METERING_ENABLED === 'false') return

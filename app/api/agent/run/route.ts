@@ -37,6 +37,11 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 export async function POST(request: Request) {
+  return (globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+    ?import('@/lib/agent/governed-run-context').then(m=>m.withGovernedForeground(()=>handleAgentRun(request),300_000))
+    :handleAgentRun(request)
+}
+async function handleAgentRun(request:Request){
   const blocked = requireAgentMutationOrigin(request)
   if (blocked) return blocked
 
@@ -49,6 +54,7 @@ export async function POST(request: Request) {
 
   try {
     const actor = await resolveAgentActor(session)
+    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1')await import('@/lib/agent/governed-run-context').then(m=>m.bindGovernedForegroundOwner(actor.legacyTelegramId))
     // Core v1 objective-first account creation must use the same deterministic
     // account flow on the Agent API surface as it does on WhatsApp. Never let a
     // generic planner claim completion without the secure browser/provider evidence.
@@ -70,6 +76,10 @@ export async function POST(request: Request) {
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, body?.messageId)
     if (contentDraft) return NextResponse.json({...contentDraft, status: 'completed', capability: 'memory', risk: 'low'})
+    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'&&typeof body?.text==='string'&&body.text.trim()===text){
+      const recovered=await (await import('@/lib/agent/governed-recovery-execution')).tryGovernedRecoveryProfile(actor,text,true)
+      if(recovered)return NextResponse.json(recovered)
+    }
     const typedReply=await tryTypedTimeRouting({actor,text,surface:session.surface,messageId:`agent-${randomUUID()}`})
     if(typedReply)return NextResponse.json(typedReply)
     const brainReply = await trySameBrainIntrospection({ actor, text })

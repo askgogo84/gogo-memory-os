@@ -16,7 +16,25 @@ export async function GET(request: Request) {
   try {
     // 60 s limit: learning gets up to 40 s, then semantic sync runs only if at least 12 s remain.
     const started = Date.now()
-    const result = await processLearningPass({ budgetMs: 40_000 })
+    // Separate retention flag: expired audit records still need pruning when
+    // execution is disabled. Never modify the existing cron schedule.
+    let hachiRetention:unknown=null
+    if(process.env.GOGO_HACHI_RETENTION_ENABLED==='1'){
+      try{
+        const {supabaseAdmin}=await import('@/lib/supabase-admin')
+        const r=await supabaseAdmin.rpc('gogo_prune_memory_block_events').abortSignal(AbortSignal.timeout(2000))
+        const candidates=await supabaseAdmin.rpc('gogo_prune_skill_learning_candidates').abortSignal(AbortSignal.timeout(1500))
+        hachiRetention=r.error||candidates.error?{error:'retention_unverified'}:{removed:r.data,candidatesRemoved:candidates.data}
+      }catch{hachiRetention={error:'retention_unverified'}}
+    }
+    let hachiLearning:unknown=null
+    if(process.env.GOGO_HACHI_LEARNING_ENABLED==='1'&&Date.now()-started<5000){
+      try{
+        const {generateGovernedLearningCandidates}=await import('@/lib/agent/governed-learning-candidates')
+        hachiLearning=await generateGovernedLearningCandidates(process.env,started+7000)
+      }catch{hachiLearning={error:'candidate_generation_unavailable'}}
+    }
+    const result = await processLearningPass({ budgetMs: Math.max(1000,40_000-(Date.now()-started)) })
     if (result.deferred > 0) console.log('AGENT_LEARNING_DEFERRED:', JSON.stringify({ deferred: result.deferred, processed: result.processed, ms: result.ms }))
     // Same Brain 3.0 Phase 1: semantic graph sync for flagged owners only (GOGO_SEMANTIC / GOGO_SEMANTIC_OWNERS). Never fails the pass.
     let semantic: unknown = null
@@ -33,7 +51,7 @@ export async function GET(request: Request) {
         if ((semantic as any)?.timedOut || (semantic as any)?.deferred) console.log('SEMANTIC_SYNC_DEFERRED:', JSON.stringify(semantic))
       } catch (e: any) { console.error('SEMANTIC_SYNC_CRON_FAILED', e?.message || e); semantic = { error: 'semantic_sync_failed' } }
     }
-    return NextResponse.json({ ok: true, ...result, semantic })
+    return NextResponse.json({ ok: true, ...result, semantic, ...(hachiRetention?{hachiRetention}:{}),...(hachiLearning?{hachiLearning}:{}) })
   } catch (err: any) {
     console.error('AGENT_LEARNING_CRON_FAILED:', err?.message || err)
     return NextResponse.json({ ok: false, error: 'learning_worker_failed' }, { status: 500 })

@@ -12,6 +12,7 @@ const instruction="Search connected Gmail for subscription receipts and renewal 
 const urls:string[]=[]
 let consent=true,failedMessage=false,auditNoise=false
 const mocks:any={
+  './governed-run-context':{currentGovernedRun:()=>null,currentGovernedForeground:()=>null},
   '@/lib/security/email-redaction':emailRedaction,
   '@/lib/supabase-admin':{supabaseAdmin:{from(table:string){const q:any={select(){return q},eq(key:string,value:any){assert.equal(key,'telegram_id');assert.equal(String(value),'101');return q},maybeSingle(){return q},then(resolve:any){return Promise.resolve({data:table==='users'?{gmail_connected:true,gmail_access_token:'fixture'}:{gmail_enabled:consent},error:null}).then(resolve)}};return q}}},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(v:string)=>v},

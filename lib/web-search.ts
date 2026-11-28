@@ -6,6 +6,13 @@
 }
 
 import { searchReferenceFx } from './services/reference-fx'
+import type { SearchOperation } from './agent/governed-runtime'
+
+async function boundedSearchFetch(operation:SearchOperation,url:string,init:RequestInit){
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT!=='1')return fetch(url,init)
+  return (await import('./agent/governed-search-call')).governedSearchFetch(operation,url,init)
+}
+const isGovernedSearchError=(err:unknown)=>err instanceof Error&&err.name==='GovernedModelError'
 
 function cleanText(input: string) {
   return (input || '').replace(/\s+/g, ' ').trim()
@@ -24,7 +31,7 @@ async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Pro
   }
 
   const includeDomains = (opts.includeDomains || []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)
-  const res = await fetch('https://api.tavily.com/search', {
+  const res = await boundedSearchFetch('tavily.basic.v1','https://api.tavily.com/search', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -63,6 +70,12 @@ async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Pro
 }
 
 export async function searchWithAnthropic(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
+  // The hosted web-search tool may bill separately from model tokens. Do not
+  // charge only tokens or send a paid continuation until its receipt is vetted.
+  if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'){
+    const g=await import('./agent/governed-model-call')
+    if(g.modelGoverned())throw new g.GovernedModelError('unpriced_server_search')
+  }
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return []
   const includeDomains = (opts.includeDomains || []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)
@@ -168,7 +181,7 @@ async function searchWithSerper(query: string, opts: WebSearchOptions = {}): Pro
   const q = includeDomains.length ? `${query} (${includeDomains.map(d => `site:${d}`).join(' OR ')})` : query
   const min = opts.startDate ? serperDay(opts.startDate) : '', max = opts.endDate ? serperDay(opts.endDate) : ''
   const tbs = min || max ? `cdr:1${min ? `,cd_min:${min}` : ''}${max ? `,cd_max:${max}` : ''}` : undefined
-  const res = await fetch('https://google.serper.dev/search', {
+  const res = await boundedSearchFetch('serper.search.v1','https://google.serper.dev/search', {
     method: 'POST',
     headers: {'X-API-KEY': apiKey, 'Content-Type': 'application/json'},
     body: JSON.stringify({q, gl: 'in', hl: 'en', num: 8, ...(tbs ? {tbs} : {})}),
@@ -230,7 +243,7 @@ export function parallelResults(data: any, opts: WebSearchOptions = {}): WebSear
 async function searchWithParallel(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const apiKey = process.env.PARALLEL_API_KEY
   if (!apiKey) throw new Error('parallel_missing_key')
-  const res = await fetch('https://api.parallel.ai/v1/search', {
+  const res = await boundedSearchFetch('parallel.fast.v1','https://api.parallel.ai/v1/search', {
     method: 'POST', headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(parallelSearchBody(query, opts)), cache: 'no-store',
     signal: AbortSignal.timeout(Math.max(1000, Math.min(opts.timeoutMs || 12_000, 30_000))),
@@ -264,6 +277,7 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
       console.log('SEARCH:', JSON.stringify({ provider, ms: Date.now() - started, results: results.length }))
       if (results.length) return results
     } catch (err: any) {
+      if(isGovernedSearchError(err))throw err
       noteProviderFailure(provider, err)
       console.error(provider === 'tavily' ? 'searchWebResults failed:' : provider === 'parallel' ? 'PARALLEL_SEARCH_FAILED:' : 'SERPER_SEARCH_FAILED:', err?.message || err, `(${Date.now() - started}ms)`)
     }
@@ -274,6 +288,7 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
   // from "searched and found nothing".
   if (opts.pageTextOnly) { if (!answered) throw new Error('search_unavailable'); return [] }
   return await searchWithAnthropic(cleanQuery, opts).catch((fallbackErr: any) => {
+    if(isGovernedSearchError(fallbackErr))throw fallbackErr
     console.error('WEB_SEARCH_FALLBACK_FAILED:', fallbackErr?.message || fallbackErr)
     return []
   })
@@ -323,6 +338,7 @@ export async function searchWeb(query: string): Promise<string> {
 
     return formatSearchContext(results)
   } catch (err: any) {
+    if(isGovernedSearchError(err))throw err
     console.error('searchWeb failed:', err)
     return ''
   }

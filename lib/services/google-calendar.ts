@@ -1,5 +1,17 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
+import { currentGovernedForeground, currentGovernedRun } from '@/lib/agent/governed-run-context'
+
+async function governedRead(operation:import('@/lib/agent/governed-connector-shapes').GoogleOperation,url:string,init:RequestInit={},owner?:string|number){
+  if(process.env.GOGO_HACHI_ENFORCEMENT!=='1'&&!currentGovernedRun()&&!currentGovernedForeground()?.governanceRequired)return fetch(url,init)
+  return (await import('@/lib/agent/governed-google-read')).governedGoogleFetch(operation,url,init,owner)
+}
+
+export function fetchPrimaryCalendarEventResponse(accessToken:string,eventId:string){
+  return governedRead('google.calendar.read',
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {headers:{Authorization:`Bearer ${accessToken}`},cache:'no-store'})
+}
 
 const CALENDAR_CALLBACK_URL = 'https://app.askgogo.in/api/calendar/callback'
 const CALENDAR_STATE_TTL_MS = 10 * 60 * 1000
@@ -119,7 +131,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<string |
   try {
     const decryptedRefreshToken = decryptGoogleToken(refreshToken)
     if (!decryptedRefreshToken) return null
-    const response = await fetch('https://oauth2.googleapis.com/token', {
+    const response = await governedRead('google.calendar.refresh','https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -172,7 +184,7 @@ export async function createCalendarEvent(
   // Never claim success from the POST alone. Read the created resource back from
   // Google so a permission/scope/account inconsistency cannot masquerade as success.
   try {
-    const verify = await fetch(
+    const verify = await governedRead('google.calendar.read',
       `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(body.id)}`,
       { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' }
     )
@@ -196,7 +208,7 @@ export async function createCalendarEvent(
  * Returns null when it cannot be read or the calendar was renamed to something that is not an email. */
 export async function fetchPrimaryCalendarAccount(accessToken: string): Promise<string | null> {
   try {
-    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1&fields=summary', {
+    const response = await governedRead('google.calendar.read','https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1&fields=summary', {
       headers: { 'Authorization': `Bearer ${accessToken}` },
       cache: 'no-store',
     })
@@ -231,7 +243,7 @@ async function readPrimaryCalendarEventsPage(accessToken:string,timeMin:string,t
   })
   if(limit)params.set('maxResults',String(limit))
 
-  const response = await fetch(
+  const response = await governedRead('google.calendar.read',
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
     {
       headers: { 'Authorization': `Bearer ${accessToken}` },
@@ -272,7 +284,7 @@ export async function listUpcomingEvents(accessToken: string, days = 7): Promise
     orderBy: 'startTime',
     maxResults: '50',
   })
-  const response = await fetch(
+  const response = await governedRead('google.calendar.read',
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
     { headers: { Authorization: `Bearer ${accessToken}` }, cache:'no-store' }
   )
@@ -283,7 +295,8 @@ export async function listUpcomingEvents(accessToken: string, days = 7): Promise
 export async function updateCalendarEvent(
   accessToken: string,
   eventId: string,
-  patch: { summary?: string; startTime?: string; endTime?: string; location?: string; ifMatch?: string; timezone?: string }
+  patch: { summary?: string; startTime?: string; endTime?: string; location?: string; ifMatch?: string; timezone?: string },
+  approvedFetch?:typeof fetch
 ): Promise<{ ok: boolean; event?: any; error?: string; verification?: 'verified' | 'unknown' | 'rejected' }> {
   const body: any = {}
   if (patch.summary) body.summary = patch.summary
@@ -291,7 +304,7 @@ export async function updateCalendarEvent(
   if (patch.endTime) body.end = { dateTime: patch.endTime, timeZone: patch.timezone || 'Asia/Kolkata' }
   if (patch.location) body.location = patch.location
 
-  const response = await fetch(
+  const response = await (approvedFetch||fetch)(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
     {
       method: 'PATCH',
@@ -301,9 +314,9 @@ export async function updateCalendarEvent(
   )
   const data = await response.json().catch(() => ({}))
   if (!response.ok) return { ok: false, verification: [400,401,403,404,409,410,412,422,429].includes(response.status) ? 'rejected' : 'unknown', error: data?.error?.message || `HTTP ${response.status}` }
-  const readback = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
-  const actual = await readback.json().catch(() => null)
-  const matches = readback.ok && actual?.id === eventId && actual?.status !== 'cancelled'
+  const readback = await fetchPrimaryCalendarEventResponse(accessToken,eventId).catch(() => null)
+  const actual = readback?.ok ? await readback.json().catch(() => null) : null
+  const matches = readback?.ok && actual?.id === eventId && actual?.status !== 'cancelled'
     && (!patch.startTime || Date.parse(actual?.start?.dateTime) === Date.parse(patch.startTime))
     && (!patch.endTime || Date.parse(actual?.end?.dateTime) === Date.parse(patch.endTime))
     && (!patch.summary || actual?.summary === patch.summary)

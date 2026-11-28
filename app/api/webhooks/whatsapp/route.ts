@@ -279,7 +279,9 @@ const TASTE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|m
 export async function POST(req: NextRequest) {
   // QA: replies to simulated messages (MessageSid SMqa…) are logged as QA_REPLY.
   const qaSid=String((await req.clone().formData().catch(()=>null))?.get('MessageSid')||'')
-  return runWithQaTrace(qaSid,()=>handleWhatsAppPost(req))
+  return runWithQaTrace(qaSid,()=> (globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1'
+    ?import('@/lib/agent/governed-run-context').then(m=>m.withGovernedForeground(()=>handleWhatsAppPost(req)))
+    :handleWhatsAppPost(req))
 }
 
 async function makeDocWasLastReply(telegramId: number | string) {
@@ -389,6 +391,7 @@ async function handleWhatsAppPost(req: NextRequest) {
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
     meterAs(resolvedUser.telegramId, 'whatsapp')
+    if((globalThis as any).process?.env?.GOGO_HACHI_ENFORCEMENT==='1')await import('@/lib/agent/governed-run-context').then(m=>m.bindGovernedForegroundOwner(resolvedUser.telegramId))
 
     brainUserKey = `user:${resolvedUser.telegramId}`
     // Several photos forwarded together arrive as separate webhooks while the first is still
@@ -1260,7 +1263,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
     if (!preserveFriendFlow && !callCommand && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
-      const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp', forwarded: forwardedMessage })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+      const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp', forwarded: forwardedMessage,directLiteral:!forwardedMessage&&!incoming.wasVoice&&text===originalText })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
       if (brain?.reply) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', brain.reply)
@@ -2454,7 +2457,7 @@ _Reminder cancelled._`
     }
 
     await sendThinkingIfNeeded(from, text)
-    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null, pendingQuestionChecked: pendingQuestionCheckedFor === text, eventsChecked: eventsCheckedFor === text, semantic: brainObservation?.jev })
+    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', memorySource:forwardedMessage?'forwarded':!incoming.wasVoice&&text===originalText?'direct':'derived',memorySurface:'whatsapp', messageId: inboundMessageSid || null, pendingQuestionChecked: pendingQuestionCheckedFor === text, eventsChecked: eventsCheckedFor === text, semantic: brainObservation?.jev })
     await recordShadowRouterOutcome({
       telegramId:resolvedUser.telegramId,
       surface:'whatsapp',

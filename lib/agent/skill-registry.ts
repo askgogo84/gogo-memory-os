@@ -11,6 +11,7 @@
 //     GOGO_SKILL_ADAPTERS; a skill that requires one is not runnable while it is off. None bypass anti-bot or auth.
 import type { AgentCapability, AgentExecutionPolicyInput, AgentPermissionLevel } from './policy'
 import { evaluateAgentExecutionPolicy } from './policy'
+import {profileForSkill,type RecoveryProfile} from './governed-recovery-profiles'
 
 export const SKILL_REGISTRY_VERSION = 'gogo-skills-v1'
 
@@ -42,6 +43,8 @@ export type SkillDefinition = {
   /** Risk the policy evaluates the skill's consequential steps at. */
   risk: 'low' | 'medium' | 'high'
   irreversible: boolean
+  /** A reviewed code-owned read profile, not an executable payload. */
+  runtimeProfile?: RecoveryProfile
 }
 
 /** Bindings are process objects a trusted caller attaches (an adapter, an actor); they are never part of the validated input. */
@@ -61,6 +64,7 @@ export function vetSkill(def: SkillDefinition): VetResult {
   if (!SEMVER.test(def.sopVersion)) r.push('sopVersion must be semver')
   if (!def.title?.trim() || !def.purpose?.trim()) r.push('title and purpose required')
   if (!def.requiredCapabilities?.length) r.push('at least one required capability')
+  if (def.runtimeProfile!==undefined&&(profileForSkill(def.id)!==def.runtimeProfile||def.risk!=='low'||def.irreversible||def.exactActionApproval)) r.push('invalid recovery profile')
   if (!Number.isInteger(def.limits?.maxSteps) || def.limits.maxSteps < 1 || def.limits.maxSteps > 50) r.push('maxSteps 1..50')
   if (!(def.limits?.maxMinutes > 0 && def.limits.maxMinutes <= 240)) r.push('maxMinutes 0..240')
   if (!Number.isInteger(def.limits?.maxCostPaise) || def.limits.maxCostPaise < 0 || def.limits.maxCostPaise > 50_000_00) r.push('maxCostPaise 0..₹50,000')

@@ -7,7 +7,10 @@ export function voicePlanHash(owner: string, plan: Record<string, unknown>) {
   const fields = ['venue','to','source','guestName','partySize','date','dateLabel','timeLabel','flexWindow','seating','purpose','test','createdAt','startClock','kind','opening','details']
   // Preserve the identity of English plans and persisted attempts created before localized calls.
   if (plan.callLanguage !== undefined || plan.voiceAgentId !== undefined) fields.push('callLanguage','voiceAgentId')
-  return createHash('sha256').update(JSON.stringify([owner, ...fields.map(key => plan[key] ?? null)])).digest('hex')
+  const values=fields.map(key=>plan[key]??null)
+  // JSONB may reorder object keys. Bind the ordered, named voice fields.
+  if(plan.governedCall!==undefined){const b=plan.governedCall as Record<string,unknown>;values.push(['governedCall',...['version','agentId','from','contact','maxSeconds'].map(key=>b?.[key]??null)])}
+  return createHash('sha256').update(JSON.stringify([owner,...values])).digest('hex')
 }
 export function voiceAttemptId(owner: string, plan: Record<string, unknown>, attempt = Number(plan.redials || 0)) {
   const h = createHash('sha256').update(`voice-call-v1:${voicePlanHash(owner, plan)}:${attempt}`).digest('hex')
@@ -62,16 +65,17 @@ export async function beginApprovedVoiceCall(p: {
     if (error || !data) throw Error('voice_acceptance_persistence_failed')
     return { status: 'started', runId, executionId }
   } catch (error) {
-    const rejected = !executionId && isDefiniteProviderRejection(error)
+    const denied=!executionId&&/^governed_model_(?:not_authorized|authorization_revoked|authorization_unavailable|reservation_unavailable|unavailable|breach|deadline|duplicate|steps|cost|tokens|unresolved|policy_unavailable|price_unavailable|connector_identity_mismatch|unreviewed_connector_shape)$/.test(String((error as Error)?.message||''))
+    const rejected = !executionId && (denied||isDefiniteProviderRejection(error))
     // Best effort only: the deterministic pre-call intent remains even if this write fails.
     try {
       await p.db.from('agent_runs').update({ status: rejected ? 'failed' : 'outcome_unknown',
-        summary: rejected ? 'The provider rejected this call attempt.' : 'The call may have started. Do not repeat it until its outcome is checked.',
+        summary: denied ? 'Current approval, policy or budget blocked the call before dispatch.' : rejected ? 'The provider rejected this call attempt.' : 'The call may have started. Do not repeat it until its outcome is checked.',
         metadata_json: { ...metadata, ...(executionId ? { execution_id: executionId } : {}), call_state: rejected ? 'rejected' : 'outcome_unknown',
           outcome_state: rejected ? 'failed' : 'unknown', reconciliation_required: !rejected },
         updated_at: new Date().toISOString(),
       }).eq('id', runId).eq('telegram_id', p.owner).eq('status', 'running')
     } catch { /* keep the persisted intent; never call a second time */ }
-    return { status: rejected ? 'rejected' : 'outcome_unknown', runId, ...(executionId ? { executionId } : {}) }
+    return { status: rejected ? 'rejected' : 'outcome_unknown', runId, ...(denied?{reason:'governed_dispatch_denied'}:{}), ...(executionId ? { executionId } : {}) }
   }
 }
