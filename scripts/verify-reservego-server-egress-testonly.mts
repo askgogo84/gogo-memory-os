@@ -54,7 +54,8 @@ await check('positive: plaintext HTTP destination fails closed before a server f
 await check('positive: reservation handler connects provider URL to this server-side helper', () => {
   const src = readFileSync('lib/agent/restaurant-reservation.ts', 'utf8')
   assert.match(src, /reservego\.findReservegoWidget\(provider\.url\)/)
-  assert.match(src, /if\(intent\.sourceUrl\)return\{url:intent\.sourceUrl/)
+  assert.match(src, /if\(intent\.sourceUrl\)\{\s*if\(isReserveXHost\(intent\.sourceUrl\)&&!publicReserveXVenue\(intent\.sourceUrl\)\)return \[\]\s*return \[\{url:intent\.sourceUrl/)
+  assert.match(src, /const providers=await discoverProviders\(intent\)\s*let provider=providers\[0\]/)
 })
 
 for (const [label, url] of [
