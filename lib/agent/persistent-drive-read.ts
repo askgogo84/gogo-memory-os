@@ -34,7 +34,8 @@ export async function executePersistentDriveRead(context: AutonomousToolContext,
   const instruction = input.replace(/["“][^"”]*["”]/g, '[file title]')
   if (!verb || !/\b(?:google\s+drive|my\s+drive)\b/i.test(instruction) || MUTATION.test(instruction) || /\b(?:all|every|entire|complete)\b/i.test(instruction)) return blocked('unsupported_request')
   const contentRead = ['read','open','preview'].includes(verb)
-  const quotes = Array.from(input.matchAll(/["“]([^"”]{1,240})["”]/g)).map(match => normalize(match[1]))
+  const quotes = Array.from(String(step.instruction || '').matchAll(/"([^"\r\n]{1,240})"|“([^”\r\n]{1,240})”/g))
+    .map(match => match[1] ?? match[2])
   if (contentRead && quotes.length !== 1) return blocked('unsupported_request')
   const ownerId = String(context.actor.legacyTelegramId)
   const permission = await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id', ownerId).eq('capability','files').maybeSingle()
@@ -54,7 +55,7 @@ export async function executePersistentDriveRead(context: AutonomousToolContext,
     if (result.hasMore) return {status:'blocked',error:'persistent_drive_paginated',output:{...evidence,files,partial:true}}
     if (!contentRead) return {status:'completed',verified:true,output:{...evidence,verificationScope:'drive_metadata_search',files,
       text:files.length?`Found ${files.length} matching Google Drive files${result.hasMore?' in this page; more matches exist':''}. Document contents were not read.`:'No matching files were returned by this Google Drive lookup. Document contents were not read.'}}
-    const matches = result.files.filter(file => normalize(file.name).toLowerCase() === quotes[0].toLowerCase())
+    const matches = result.files.filter(file => file.matchesExactName === true)
     if (!matches.length) return blocked('not_found')
     if (matches.length !== 1) return blocked('ambiguous')
     const file = matches[0]

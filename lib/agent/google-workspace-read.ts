@@ -584,6 +584,7 @@ export async function searchWorkspaceDrive(actor:AgentActor, input:string, opts:
   if (!data || (data.files !== undefined && !Array.isArray(data.files)) || (data.files?.length || 0) > MAX_FILES) throw new Error('workspace_drive_response_invalid')
   const files=(Array.isArray(data?.files)?data.files:[]).slice(0,MAX_FILES).map((file:any)=>({
     id:String(file?.id||''),name:clean(file?.name||'Untitled',240),mimeType:String(file?.mimeType||''),
+    ...(opts.exactName===undefined?{}:{matchesExactName:file?.name===opts.exactName}),
     modifiedTime:String(file?.modifiedTime||''),webViewLink:String(file?.webViewLink||''),size:Number(file?.size||0)||null,
   })).filter((x:any)=>x.id)
   return {queryTerms:terms,files,hasMore:Boolean(data.nextPageToken || data.incompleteSearch)}

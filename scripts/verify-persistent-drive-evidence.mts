@@ -75,7 +75,10 @@ function harness(steps = [drive('Read \"Budget\" from my Google Drive'),task('Li
   }})
   return exports
  }
- const general=load('lib/agent/general-planner.ts')
+ const general=load('lib/agent/general-planner.ts',{
+  './make-request':{sourceBoundReport:()=>null},
+  './planner-provider':{completeAgentPlanPrompt:async()=>JSON.stringify({title:'Fixture tasks',reason:'Read and list',steps})},
+ })
  const runtime=load('lib/agent/autonomous-runtime.ts',{
   '@/lib/metering/core':{runMeteredTask:(_owner:any,_trace:any,fn:any)=>fn()},
   './specialist-registry':{capabilityForSpecialist,selectSpecialistRoute:()=>({primary:'tasks',supporting:[]})},
@@ -86,7 +89,7 @@ function harness(steps = [drive('Read \"Budget\" from my Google Drive'),task('Li
  const travelRead=load('lib/agent/persistent-travel-read.ts')
  const projection=load('lib/agent/persistent-flight-result.ts')
  const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':read,'./persistent-travel-read':travelRead,'./persistent-flight-result':projection})
- const start=()=>persistent.tryRunPersistentGeneralPlan({actor,surface:'web',text:'Fixture task objective',prepared:{plan:{title:'Fixture tasks',reason:'Two typed task operations',steps},startedAt:new Date().toISOString(),modelUsage:[]}})
+ const start=(plannedSteps=steps)=>persistent.tryRunPersistentGeneralPlan({actor,surface:'web',text:'Fixture task objective',prepared:{plan:{title:'Fixture tasks',reason:'Two typed task operations',steps:plannedSteps},startedAt:new Date().toISOString(),modelUsage:[]}})
  const resume=()=>persistent.resumePersistentGeneralPlan({actor,runId:tables.agent_runs[0].id})
  return {tables,queries,requests,start,resume,persistent,general,read,actor,setSearch:(v:any)=>{searchBody=v},setContent:(v:string)=>{content=v},setStatus:(s:number,c=200)=>{searchStatus=s;contentStatus=c},setHttpFault:(f:typeof httpFault)=>{httpFault=f},fallback:()=>fallback,setFault:(f:typeof fault)=>{fault=f},setPermission:(level:string)=>{tables.agent_permissions=[{telegram_id:'123',capability:'files',level}]}}
 }
@@ -112,6 +115,21 @@ await check('unsupported format cannot masquerade as read content',async()=>{
 })
 await check('nonmatching document is not substituted for an exact quoted title',async()=>{
  const h=harness();h.setSearch({files:[{id:'file-a',name:'Budget old',mimeType:'text/plain'}]});await h.start();blocked(h);assert.equal(h.requests.length,1)
+})
+await check('exact titles retain whitespace and literal entities throughout a persistent read',async()=>{
+ const title=' Budget  &amp; notes '
+ const h=harness([drive('Read "'+title+'" from my Google Drive'),task('List all open tasks')])
+ h.setSearch({files:[{id:'file-a',name:title,mimeType:'text/plain'}]})
+ const plan=await h.general.planGeneralAgentRequest('Read this file from my Google Drive and list my tasks.')
+ assert.ok(plan.steps[0].instruction.includes('"'+title+'"'))
+ assert.equal((await h.start(plan.steps)).status,'completed')
+ assert.equal(new URLSearchParams(h.requests[0].query).get('q'),"trashed = false and name = '"+title+"'")
+ assert.equal(h.requests.length,2)
+})
+await check('an equivalent display title cannot authorize persistent document content',async()=>{
+ const h=harness([drive('Read "Budget & notes" from my Google Drive'),task('List all open tasks')])
+ h.setSearch({files:[{id:'file-a',name:' Budget  &amp; notes ',mimeType:'text/plain'}]})
+ await h.start();blocked(h);assert.equal(h.requests.length,1)
 })
 await check('empty metadata lookup is an evidenced empty search, not content success',async()=>{
  const h=harness([drive('Search Google Drive for Budget'),task('List all open tasks')]);h.setSearch({files:[]});await h.start()

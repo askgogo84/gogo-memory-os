@@ -16,6 +16,7 @@ type DriveFile = {
   id:string
   name:string
   mimeType:string
+  matchesExactName?:boolean
   modifiedTime?:string
   webViewLink?:string
   size?:number|null
@@ -40,6 +41,39 @@ export function isWorkspaceDriveContextRequest(text:string){
 
 function quotedNames(text:string){
   return Array.from(String(text||'').matchAll(/["“]([^"”]{2,160})["”]/g)).map(m=>safe(m[1],160).toLowerCase()).filter(Boolean)
+}
+
+function exactDriveFilename(text:string):{name:string; metadataOnly:boolean}|null{
+  const outsideQuotes=text.replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,value=>'_'.repeat(value.length))
+  const markers=Array.from(outsideQuotes.matchAll(/\bexact\s+(?:file\s*name|file\s+title|title)\s*(?:is\s+|:\s*)?/gi))
+  const quotedMarkers=markers.filter(marker=>/^\s*["“]/.test(text.slice((marker.index??0)+marker[0].length)))
+  if(quotedMarkers.length>1)return {name:'',metadataOnly:true}
+  const match=quotedMarkers[0]||markers[0]
+  if(!match)return null
+  const tail=text.slice((match.index??0)+match[0].length).trim()
+  const quoted=tail.match(/^(?:"([^"\r\n]+)"|“([^”\r\n]+)”)/)
+  const title=quoted?.[0] ?? tail.split(/[.!?](?:\s|$)|[;\r\n]|\s+and\s+(?:tell|show|read|summari[sz]e|open|extract|review)\b/i,1)[0]
+  const name=quoted ? quoted[1]||quoted[2] : title.replace(/\s+(?:from|in|on)\s+(?:my\s+)?(?:connected\s+)?(?:google\s+)?drive\s*$/i,'').trim()
+  const before=calendarAffirmativeText(outsideQuotes.slice(0,match.index))
+  const after=calendarAffirmativeText(tail.slice(title.length).replace(/"[^"\r\n]*"|“[^”\r\n]*”/g,''))
+  const request=outsideQuotes.replace(/’/g,"'")
+  // An "if" clause can authorize a read subject to finding the file.
+  const questions=request.replace(/\b(?:tell\s+me|check|confirm|verify|see|report|say|find\s+out)\s+if\b/gi,'whether')
+  const asksForExactMatch=/\bwhether\s+(?:there\s+(?:is|was)|(?:my\s+)?(?:google\s+)?drive\s+(?:has|contains|found|returned))\s+(?:an?\s+)?exact\s+match\b/i.test(questions)
+  const asksIfFileExists=/\bwhether\s+(?:(?:the|this|that|a|an|my|exact)\s+)*(?:file(?:\s*name)?|document|title|it|_{2,})\s+(?:exists?|is\s+(?:present|there|in\s+(?:my\s+)?(?:google\s+)?drive))\b/i.test(questions)
+  const wantsExistence=asksForExactMatch||asksIfFileExists||/\b(?:existence[- ]only|metadata[- ]only)\b/i.test(request)
+  const restrictions=request.match(/\b(?:do not|don't|dont|never|without)\s+[^.;!?\n]*/gi)||[]
+  const prohibitsReading=restrictions.some(clause=>{
+    const action=/^(?:do not|don't|dont|never|without)\s+(?:open(?:ing)?|read(?:ing)?|summari[sz](?:e|ing)|extract(?:ing)?|review(?:ing)?|(?:show(?:ing)?|display(?:ing)?)\s+(?:me\s+)?(?:the\s+)?(?:other\s+(?:file(?:\s*name)?s?|titles)\s+or\s+)?(?:(?:file|document)\s+)?(?:contents?|text))\b/i.exec(clause)
+    return action!==null&&!/^(?:\s+(?:and|or)\s+(?:open|read|review))*\s+(?:(?:any|all|the)\s+)?other\s+(?:files?|docs?|documents?|spreadsheets?|presentations?)\s*$/i.test(clause.slice(action[0].length))
+  })
+  const affirmative=before+' '+after
+  const usesDocument=/\buse\s+(?:(?:my|the|this|that|google|drive)\s+)*(?:document|file|spreadsheet|sheet|presentation)\b/i.test(before)
+    && /\bto\s+(?:answer|tell|check|find|identify|determine|give|explain|compare)\b/i.test(after)
+  const explicitlyReads=/\b(?:read(?!-only\b|\s+only\s+(?:check|lookup|search)\b)|summari[sz]e|extract|open)\b/i.test(affirmative)
+    || /\breview\s+(?:it\b|(?:(?:my|the|this|that|google|drive)\s+)*(?:document|file|spreadsheet|sheet|presentation|contents?)\b)/i.test(affirmative)
+    || /\b(?:show|display)\s+(?:me\s+)?(?:the\s+)?(?:(?:file|document)\s+)?(?:contents?|text)\b/i.test(affirmative)
+  return {name:name.trim()&&name.length<=160 && !/^[“”"]/.test(name) ? name : '',metadataOnly:wantsExistence||prohibitsReading||!(explicitlyReads||usesDocument)}
 }
 
 export function selectWorkspaceDriveFile(files:DriveFile[],text:string):{status:'selected';file:DriveFile}|{status:'not_found'|'ambiguous';files:DriveFile[]}{
@@ -144,9 +178,15 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
   const {actor,text}=params
   const runId=await createRun(actor,text)
   try{
+    const exact=exactDriveFilename(text)
+    if(exact&&!exact.name){
+      const summary='Please put the exact filename in quotation marks so I can check Google Drive.'
+      await finishRun(actor,runId,{status:'paused',summary})
+      return {runId,status:'paused',capability:'files',risk:'low',text:summary,handledBy:'workspace-drive-context'}
+    }
     let search:any
     try{
-      search=await searchWorkspaceDrive(actor,text)
+      search=await searchWorkspaceDrive(actor,text,exact?{exactName:exact.name}:{})
     }catch(err:any){
       const code=String(err?.message||'')
       if(['workspace_not_connected','workspace_reconnect_required','workspace_scope_required'].includes(code)){
@@ -157,7 +197,22 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
       throw err
     }
 
-    const choice=selectWorkspaceDriveFile(search?.files||[],text)
+    const files:DriveFile[]=search?.files||[]
+    const exactMatches=exact?files.filter(file=>file.id&&file.matchesExactName):[]
+    if(exact&&(exact.metadataOnly||search?.hasMore||exactMatches.length!==1)){
+      const summary=search?.hasMore
+        ? 'Google Drive answered, but the search was incomplete. I could not verify the exact filename.'
+        : exactMatches.length===0
+          ? 'Google Drive answered. No file matched the exact filename.'
+          : exactMatches.length===1
+            ? 'Google Drive answered. One file matched the exact filename. I did not open it.'
+            : 'Google Drive answered. Multiple files used the exact filename. I did not open any of them.'
+      const status=search?.hasMore||exactMatches.length>1?'paused':'completed'
+      await finishRun(actor,runId,{status,summary,metadata:{plan_type:'workspace_drive_context',input_text:text,mutationsAllowed:false,
+        exactName:exact.name,matchCount:exactMatches.length,complete:!search?.hasMore,contentRead:false}})
+      return {runId,status,capability:'files',risk:'low',text:summary,handledBy:'workspace-drive-context'}
+    }
+    const choice=selectWorkspaceDriveFile(exact?exactMatches:files,text)
     await rememberTypedObjects(actor.legacyTelegramId,'files',choice.status==='selected'?[{id:choice.file.id,title:choice.file.name}]:choice.files.map(f=>({id:f.id,title:f.name})),choice.status==='selected'?choice.file.id:null)
     if(choice.status==='not_found'){
       const summary='I could not find a matching file in your connected Google Drive. I did not substitute a web result or guess another document.'

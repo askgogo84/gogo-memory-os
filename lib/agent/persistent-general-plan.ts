@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { prepareGeneralPlan, executeTaskStep, taskStepIntent, type PreparedGeneralPlan, type GeneralPlanStep } from './general-planner'
+import { prepareGeneralPlan, executeTaskStep, taskStepIntent, normalizeFileInstruction, type PreparedGeneralPlan, type GeneralPlanStep } from './general-planner'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import {
   executeVerifiedMissionList,
@@ -97,7 +97,7 @@ async function loadDefinition(context: AutonomousToolContext): Promise<GeneralPl
   return {
     tool: raw.tool,
     title: safe(raw.title, 160),
-    instruction: safe(raw.instruction, 1200),
+    instruction: raw.tool === 'files' ? normalizeFileInstruction(raw.instruction, 1200) : safe(raw.instruction, 1200),
     artifactType: raw.artifactType,
     artifactTitle: raw.artifactTitle,
   } as GeneralPlanStep
