@@ -23,20 +23,25 @@ export async function withGovernedPersonalRun<T>(owner:string,runtime:GovernedRu
 // signed-in or signature-verified owner has been resolved. One promise, one
 // ledger run per request, shared by all model calls and search fallbacks.
 // A failed open remains failed; it never grants a fresh budget later.
-type Foreground={owner:string|null;closed:boolean;deadline:number;runtime?:Promise<GovernedRuntime|null>}
+type Foreground={owner:string|null;closed:boolean;deadline:number;governanceRequired:boolean;runtime?:Promise<GovernedRuntime|null>}
 const foregroundStore:AsyncLocalStorage<Foreground>=(globalThis as any).__gogoGovernedForegroundStore||new AsyncLocalStorage<Foreground>()
 ;(globalThis as any).__gogoGovernedForegroundStore=foregroundStore
 export function currentGovernedForeground():Foreground|null{return foregroundStore.getStore()||null}
 export async function withGovernedForeground<T>(work:()=>Promise<T>,maxMs=120_000):Promise<T>{
   const old=foregroundStore.getStore()
   if(old){if(old.closed||Date.now()>=old.deadline)throw Error('governed_foreground_closed');return work()}
-  const scope:Foreground={owner:null,closed:false,deadline:Date.now()+Math.max(1000,Math.min(300_000,maxMs))}
+  const scope:Foreground={owner:null,closed:false,governanceRequired:false,deadline:Date.now()+Math.max(1000,Math.min(300_000,maxMs))}
   try{return await foregroundStore.run(scope,work)}finally{scope.closed=true}
 }
-export function bindGovernedForegroundOwner(raw:string|number):void{
+export function bindGovernedForegroundOwner(raw:string|number,requireGoverned=false):void{
   const scope=foregroundStore.getStore(),owner=exactSessionOwnerId(raw)
   if(!scope||scope.closed||!owner||scope.owner!==null&&scope.owner!==owner)throw Error('governed_foreground_identity')
   scope.owner=owner
+  const env=(globalThis as any).process?.env||{}
+  const selected=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(owner)
+  // Once selected (or inherited from an originally governed worker), the
+  // request can lose permission but must never fall back to legacy execution.
+  scope.governanceRequired ||= requireGoverned||selected
 }
 export function foregroundInTime(owner:string):boolean{
   const s=foregroundStore.getStore()

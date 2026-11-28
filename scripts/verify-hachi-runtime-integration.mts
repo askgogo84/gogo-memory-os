@@ -293,3 +293,30 @@ await withReservedOutbound('connector',gmailUrl,async()=>{
 },'POST',authority.authorize)
 assert.equal(mailDispatches,1)
 console.log('Approved Gmail connector wire payload, current authority, read/write separation and physical fence fixtures passed')
+
+
+// Pin governance across a mid-request kill-switch or owner-selection change.
+// The actual adapter must not invoke its legacy callback after revocation.
+const savedEnforcement=process.env.GOGO_HACHI_ENFORCEMENT,savedOwners=process.env.GOGO_HACHI_PERSONAL_OWNERS
+try{
+  process.env.GOGO_HACHI_ENFORCEMENT='1'
+  process.env.GOGO_HACHI_PERSONAL_OWNERS='101'
+  await withGovernedForeground(async()=>{
+    bindGovernedForegroundOwner('101')
+    process.env.GOGO_HACHI_ENFORCEMENT='0'
+    let calls=0
+    await assert.rejects(()=>governedModelCall('claude-fixture',async()=>{calls++;return response},x=>x,'101'),/identity_mismatch|governance_revoked/)
+    assert.equal(calls,0)
+    assert.equal((await import('../lib/agent/governed-model-call')).selectedModelOwner('101').kind,'invalid')
+  })
+  await withGovernedForeground(async()=>{
+    bindGovernedForegroundOwner('101',true)
+    let calls=0
+    await assert.rejects(()=>governedModelCall('claude-fixture',async()=>{calls++;return response},x=>x,'101'),/identity_mismatch|governance_revoked/)
+    assert.equal(calls,0)
+  })
+}finally{
+  if(savedEnforcement===undefined)delete process.env.GOGO_HACHI_ENFORCEMENT;else process.env.GOGO_HACHI_ENFORCEMENT=savedEnforcement
+  if(savedOwners===undefined)delete process.env.GOGO_HACHI_PERSONAL_OWNERS;else process.env.GOGO_HACHI_PERSONAL_OWNERS=savedOwners
+}
+console.log('Originally governed foreground and resumed worker cannot downgrade to legacy after selection revocation')

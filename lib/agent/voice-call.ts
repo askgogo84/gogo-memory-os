@@ -716,7 +716,7 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     const env=(globalThis as any).process?.env||{}
     const governed=env.GOGO_HACHI_ENFORCEMENT==='1'&&String(env.GOGO_HACHI_PERSONAL_OWNERS||'').split(',').map((s:string)=>s.trim()).includes(String(tg))
     if(plan.governedCall&&!governed)return {text:'That call plan was approved under a different calling policy. Nothing was called. A new reviewed plan is required.',handledBy:'voice-call'}
-    let place=()=>placeCall(plan,contact,fetch,String(tg))
+    let placementFetch:typeof fetch=fetch
     if(governed){
       const gv=await import('./governed-voice'),provider=await import('./governed-provider-call')
       if(!plan.governedCall||!await gv.voiceBindingStillValid(String(tg),plan,String(process.env.BOLNA_FROM_NUMBER||DEFAULT_FROM_NUMBER),params.actor.whatsappId))return {text:'The reviewed call profile or plan has changed. Ask for a fresh call plan; nothing was called.',handledBy:'voice-call'}
@@ -730,12 +730,12 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
         if(typeof input!=='string'||!init)throw Error('voice_provider_shape_invalid')
         return provider.governedVoiceFetch({operation:'bolna.call.v1',owner:String(tg),url:input,init,expectedBody,authorize})
       }) as typeof fetch
-      place=()=>placeCall(plan,contact,guardedFetch,String(tg))
+      placementFetch=guardedFetch
     }
     const placement = await beginApprovedVoiceCall({ owner: String(tg), plan,
       approvedPlanHash: String(state?.payload?.approvalHash || ''),
       shownText: await latestAssistantText(tg), expectedText: callPlanText(plan), surface: params.surface,
-      db: supabaseAdmin, place })
+      db: supabaseAdmin, place:()=>placeCall(plan,contact,placementFetch,String(tg)) })
     if (placement.status === 'outcome_unknown') return { text: `The call to ${plan.venue} may have started, but I couldn't confirm its status. I haven't repeated it. Check the task before trying again.`, handledBy: 'voice-call' }
     if (placement.status === 'rejected') return { text: placement.reason==='governed_dispatch_denied'?'The call was blocked by the current approval, policy or budget. Nothing was called.':`The calling provider rejected this attempt to ${plan.venue}. Nothing was called or booked. Ask for a fresh call plan to try again.`, handledBy: 'voice-call' }
     if (placement.status === 'blocked') return { text: placement.reason === 'call_already_attempted' || placement.reason === 'previous_call_requires_reconciliation'
@@ -948,9 +948,9 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
         const client=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY})
         const request={model:'claude-haiku-4-5',max_tokens:400,messages:[{role:'user' as const,content:prompt}]}
         const res:any=governed?await import('./governed-run-context').then(ctx=>ctx.withGovernedForeground(async()=>{
-          ctx.bindGovernedForegroundOwner(owner)
+          ctx.bindGovernedForegroundOwner(owner,true)
           const g=await import('./governed-model-call')
-          return g.governedModelCall(request.model,()=>client.messages.create(request,{maxRetries:0,timeout:25_000}),x=>x,owner)
+          return g.governedModelCall(request.model,guarded=>{if(!guarded)throw Error('governed_voice_synthesis_revoked');return client.messages.create(request,{maxRetries:0,timeout:25_000})},x=>x,owner)
         })):await client.messages.create(request)
         outcome = parseOutcome(String(res?.content?.[0]?.text || ''))
       } catch (err: any) { console.error('VOICE_CALL_OUTCOME_CLAUDE_FAILED:', String(err?.message || err).slice(0, 120)) }

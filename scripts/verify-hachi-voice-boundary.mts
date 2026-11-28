@@ -23,3 +23,6 @@ permit=true;tariff=false;await assert.rejects(()=>governedVoiceFetch(request,dep
 tariff=true;assert.equal((await governedVoiceFetch(request,deps)).status,200);assert.equal(calls,1)
 await assert.rejects(()=>governedVoiceFetch({...request,owner:'102'},deps),/identity_mismatch/);assert.equal(calls,1)
 console.log('Governed voice plan binding, exact endpoints, price/authority denial and receipt fixture passed; no real call')
+
+const reordered={...plan,governedCall:Object.fromEntries(Object.entries(plan.governedCall).reverse())}
+assert.equal(voicePlanHash('101',plan),voicePlanHash('101',reordered),'JSONB field ordering must not change approval identity')

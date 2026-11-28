@@ -30,7 +30,7 @@ export function selectedModelOwner(explicit?:Owner):Selection{
     const request=currentGovernedForeground()
     if(!request)return selectGovernedOwner(explicit,context,process.env)
     const selected=selectGovernedOwner(explicit,request.owner||context,process.env)
-    if(selected.kind==='legacy')return selected
+    if(selected.kind==='legacy')return request.governanceRequired?{kind:'invalid'}:selected
     if(selected.kind!=='governed'||!foregroundInTime(selected.owner)||context!=null&&context!==''&&exactSessionOwnerId(context)!==selected.owner)return {kind:'invalid'}
     return selected
   }
@@ -51,7 +51,10 @@ export async function governedModelCall<T>(model:string,invoke:(guarded:boolean)
   const d=deps||{selection:()=>selectedModelOwner(explicit),open:openPersonalGovernedRuntimeForOwner,now:Date.now}
   const selected=d.selection(),parent=currentGovernedRun()
   if(parent&&(selected.kind!=='governed'||selected.owner!==parent.owner||!parent.inTime()))throw new GovernedModelError('nested_scope_mismatch')
-  if(selected.kind==='legacy')return invoke(false)
+  if(selected.kind==='legacy'){
+    if(currentGovernedForeground()?.governanceRequired)throw new GovernedModelError('governance_revoked')
+    return invoke(false)
+  }
   if(selected.kind!=='governed')throw new GovernedModelError('identity_mismatch')
   const deadline=d.now()+30_000
   const request=currentGovernedForeground()
